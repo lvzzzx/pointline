@@ -39,7 +39,7 @@ Why:
 
 Where:
 - `ingest_seq` is a deterministic sequence within the source file (e.g., line number).
-d- **Lineage tracking**: In Silver metadata, store `bronze_file_name` and `file_line_number` to ensure `ingest_seq` is robust and debuggable.
+- **Lineage tracking**: In Silver metadata, store `bronze_file_name` and `file_line_number` to ensure `ingest_seq` is robust and debuggable.
 
 ---
 
@@ -103,7 +103,8 @@ Symbols change over time (renames, delistings). Maintain a **Slowly Changing Dim
 When ingesting Silver, join against `dim_symbol` using:
 - `exchange_id` (match context)
 - `exchange_symbol` (match raw string)
-- `trading_date` (filter where `valid_from_ts <= date < valid_until_ts`)
+- `ts_local_us` (or `ts_exch_us`) within the validity window:
+  - `valid_from_ts <= ts < valid_until_ts` (use a half-open interval)
 
 This resolves the stable `symbol_id` even if tickers are reused or ambiguous across exchanges.
 
