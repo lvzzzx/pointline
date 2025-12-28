@@ -39,6 +39,7 @@ Why:
 
 Where:
 - `ingest_seq` is a deterministic sequence within the source file (e.g., line number).
+d- **Lineage tracking**: In Silver metadata, store `bronze_file_name` and `file_line_number` to ensure `ingest_seq` is robust and debuggable.
 
 ---
 
@@ -91,13 +92,27 @@ This boosts row-group pruning and fast as-of joins.
 For compression + exact comparisons:
 - Encode prices and sizes as integers.
 
-Recommended approach:
-- Maintain a PIT-valid reference table `instrument_meta_pit` containing increments:
-  - `price_increment`, `amount_increment`, `contract_multiplier`, etc.
+### 4.1 Symbol Master (SCD Type 2)
+Symbols change over time (renames, delistings). Maintain a **Slowly Changing Dimension (SCD) Type 2** table `dim_symbol`:
+- `symbol_id` (pk, surrogate key)
+- `exchange_symbol` (raw string)
+- `exchange_id`
+- `valid_from_ts`, `valid_until_ts`
+- `tick_size`, `contract_size`, `price_increment`, `amount_increment`
 
-Then encode:
+When ingesting Silver, join against `dim_symbol` using:
+- `exchange_id` (match context)
+- `exchange_symbol` (match raw string)
+- `trading_date` (filter where `valid_from_ts <= date < valid_until_ts`)
+
+This resolves the stable `symbol_id` even if tickers are reused or ambiguous across exchanges.
+
+### 4.2 Fixed-point Logic
+Recommended approach:
 - `price_int = round(price / price_increment)`
 - `qty_int   = round(qty   / amount_increment)`
+
+**Alternative (Robustness):** Standardize on a fixed multiplier (e.g., `1e8` or `1e9`) if metadata is flaky. "Tick-based" is better for compression; "Fixed Multiplier" is safer for operations.
 
 Store both:
 - `price_int`, `qty_int` (required)
@@ -130,6 +145,7 @@ Tardis incremental L2 updates are **absolute sizes** at a price level (not delta
 
 **Optional convenience columns:**
 - `msg_id` (group rows belonging to the same source message)
+- `event_group_id` (if vendor provides transaction IDs spanning multiple updates)
 - `source_file` / `source_offset` (lineage)
 
 ---
@@ -138,6 +154,8 @@ Tardis incremental L2 updates are **absolute sizes** at a price level (not delta
 Snapshots are full top-N book states (e.g., 25 levels).
 
 **Recommended storage: list columns (Silver)**
+**Verdict:** Stick to `list<i64>`. DuckDB/Polars handle lists natively and efficiently. Wide columns explode schema metadata.
+
 **Table:** `silver.book_snapshots_top25`
 
 | Column | Type | Notes |
@@ -153,9 +171,10 @@ Snapshots are full top-N book states (e.g., 25 levels).
 | asks_px | list<i64> | length N |
 | asks_sz | list<i64> | length N |
 
-**Gold option: wide columns (fastest for Pandas)**
+**Gold option: wide columns (Legacy Support)**
 `gold.book_snapshots_top25_wide` with columns:
-- `bid_px_01..bid_px_25`, `bid_sz_01..bid_sz_25`, `ask_px_01..ask_px_25`, `ask_sz_01..ask_sz_25`
+- `bid_px_01..bid_px_25`, `bid_sz_01..bid_sz_25`, ...
+Use this strictly for Gold if legacy tools (Pandas without explode) require it.
 
 ---
 
@@ -277,6 +296,29 @@ Options chain is typically cross-sectional and heavy. Store updates per contract
 
 ---
 
+### 5.9 `gold.bars_1m` (OHLCV)
+Derived from `silver.trades`. Standard time bars for signal generation.
+- **Interval:** 1 minute (or 1s/1h)
+- **Time labeling:** `ts_open` (inclusive) or `ts_close` (exclusive) - define convention clearly.
+
+**Table:** `gold.bars_1m`
+
+| Column | Type |
+|---|---:|
+| trading_date | date |
+| exchange_id | u16 |
+| symbol_id | u32 |
+| ts_bucket_start_us | i64 |
+| open_px_int | i64 |
+| high_px_int | i64 |
+| low_px_int | i64 |
+| close_px_int | i64 |
+| volume_qty_int | i64 |
+| volume_notional | f64 |
+| trade_count | u32 |
+
+---
+
 ## 6) Partitioning strategy
 
 Default directory partitioning:
@@ -294,6 +336,11 @@ Inside files:
 
 For large universes:
 - cluster by `symbol_id` within each date file (sorting already helps).
+
+**Options Refinement:**
+For massive universes (e.g., Deribit Options), single daily files may be too large.
+- **Strategy A:** rely on sorting + row groups (if row groups are ~512MB, readers skip efficiently).
+- **Strategy B:** Secondary partitioning: `exchange=deribit/date=2025-12-28/expiry_month=DEC25/part-000.parquet`.
 
 ---
 
@@ -330,6 +377,11 @@ When joining streams:
 - Keep `ingest_seq` to break ties within the same microsecond.
 
 This prevents lookahead bias from “future” book states.
+
+### 8.1 The "Clock" Stream
+For true PIT replay, include a `clock` stream (e.g., 1s or 1m ticks).
+- **Why:** `l2_updates` only exist when market moves. A backtest iterating only on data updates will skip quiet periods, missing scheduled timer events (e.g., "close position at 16:00:00").
+- **Implementation:** Union the data stream with a `clock` stream, sorted by `ts_local_us`.
 
 ---
 
@@ -415,7 +467,7 @@ Core “safe” APIs (suggested):
 ### ID dictionaries
 - `exchange_id`: u16
 - `symbol_id`: u32
-- Provide `dim_exchange`, `dim_symbol`, `dim_option_symbol` tables.
+- See **Section 4.1** for `dim_symbol` (SCD Type 2) structure.
 
 ---
 
