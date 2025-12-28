@@ -50,7 +50,10 @@ Store raw Tardis files exactly as downloaded.
 
 Example:
 
-/lake/bronze/tardis/exchange=deribit/type=incremental_book_L2/date=2025-12-28/symbol=BTC-PERPETUAL.csv.gz
+/lake/bronze/tardis/exchange=deribit/type=incremental_book_L2/date=2025-12-28/symbol=BTC-PERPETUAL/deribit_incremental_book_L2_2025-12-28_BTC-PERPETUAL.csv.gz
+
+**Tardis downloader filename template (recommended):**
+`tardis/exchange={exchange}/type={data_type}/date={date}/symbol={symbol}/{exchange}_{data_type}_{date}_{symbol}.{format}`
 
 No transformations besides checksums/manifests.
 
