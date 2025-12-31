@@ -1,10 +1,10 @@
 # Plan: Storage-IO Infrastructure Setup
 
-## Phase 1: Environment & Configuration
+## Phase 1: Environment & Configuration [checkpoint: a003667]
 - [x] Task: Create base directory structure (`src/io/`, `src/services/`) [253a9d2]
 - [x] Task: Write failing tests for `src/config.py` to verify path resolution and storage defaults (Red Phase) [6104640]
 - [x] Task: Implement `src/config.py` with `LAKE_ROOT`, `TABLE_PATHS`, and storage settings (Green Phase) [6104640]
-- [ ] Task: Conductor - User Manual Verification 'Environment & Configuration' (Protocol in workflow.md)
+- [x] Task: Conductor - User Manual Verification 'Environment & Configuration' (Protocol in workflow.md)
 
 ## Phase 2: Repository Protocols
 - [ ] Task: Write failing tests/checks for `src/io/protocols.py` to ensure `TableRepository` enforces the correct interface (Red Phase)
