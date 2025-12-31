@@ -1,6 +1,6 @@
 # Plan: Create Researcher's Guide
 
-## Phase 1: Documentation Creation
+## Phase 1: Documentation Creation [checkpoint: deb3e2a]
 Goal: Author and publish the guide.
 
 - [x] Task: Create `docs/guides/` directory
@@ -10,4 +10,4 @@ Goal: Author and publish the guide.
     - [x] Write Core Concepts (PIT, Symbol Resolution, Math)
     - [x] Write Common Workflows (Recipes)
     - [x] Write Agent Interface section
-- [ ] Task: Conductor - User Manual Verification 'Phase 1: Documentation Creation' (Protocol in workflow.md) [checkpoint: ]
+- [x] Task: Conductor - User Manual Verification 'Phase 1: Documentation Creation' (Protocol in workflow.md) [checkpoint: deb3e2a]

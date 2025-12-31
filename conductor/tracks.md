@@ -10,5 +10,5 @@ This file tracks all major tracks for the project. Each track has its own detail
 ## [x] Track: Refactor Documentation Structure
 *Link: [./conductor/tracks/docs_refactor_20251231/](./conductor/tracks/docs_refactor_20251231/)*
 
-## [ ] Track: Create Researcher's Guide
+## [x] Track: Create Researcher's Guide
 *Link: [./conductor/tracks/researcher_guide_20251231/](./conductor/tracks/researcher_guide_20251231/)*
