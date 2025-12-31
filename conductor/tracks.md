@@ -12,3 +12,8 @@ This file tracks all major tracks for the project. Each track has its own detail
 
 ## [x] Track: Create Researcher's Guide
 *Link: [./conductor/tracks/researcher_guide_20251231/](./conductor/tracks/researcher_guide_20251231/)*
+
+---
+
+## [~] Track: Implement Storage-IO Infrastructure Setup (Protocols, Base Repository, and Config)
+*Link: [./conductor/tracks/storage_io_infra_20251231/](./conductor/tracks/storage_io_infra_20251231/)*
