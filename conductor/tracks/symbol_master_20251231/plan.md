@@ -20,6 +20,6 @@ Goal: Reach >90% test coverage and ensure code quality.
     - [x] Identify coverage gaps (e.g., empty updates, multiple symbols, simultaneous changes)
     - [x] Write tests to cover gaps
     - [x] Verify >90% coverage for `src/dim_symbol.py`
-- [ ] Task: Run final quality checks (Ruff, type hints)
-    - [ ] Fix any remaining linting or typing issues
+- [x] Task: Run final quality checks (Ruff, type hints) 9564fb7
+    - [x] Fix any remaining linting or typing issues
 - [ ] Task: Conductor - User Manual Verification 'Phase 2: Coverage & Quality' (Protocol in workflow.md) [checkpoint: ]
