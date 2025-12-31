@@ -6,8 +6,8 @@
 - [x] Task: Conductor - User Manual Verification 'Base Service Infrastructure' (Protocol in workflow.md)
 
 ## Phase 2: DimSymbolService Core Logic
-- [ ] Task: Write failing tests for `DimSymbolService` covering SCD2 orchestration, validation, and deduplication (Red Phase)
-- [ ] Task: Implement `DimSymbolService` in `src/services/dim_symbol_service.py` (Green Phase)
+- [x] Task: Write failing tests for `DimSymbolService` covering SCD2 orchestration, validation, and deduplication (Red Phase) [20145b6]
+- [x] Task: Implement `DimSymbolService` in `src/services/dim_symbol_service.py` (Green Phase) [20145b6]
 - [ ] Task: Conductor - User Manual Verification 'DimSymbolService Core Logic' (Protocol in workflow.md)
 
 ## Phase 3: Resilience & Audit
