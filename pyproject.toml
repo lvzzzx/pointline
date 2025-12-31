@@ -6,6 +6,7 @@ readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
   "polars>=0.20",
+  "deltalake>=0.15",
 ]
 
 [project.optional-dependencies]
