@@ -16,10 +16,10 @@ Goal: Implement missing features and improve performance.
 ## Phase 2: Coverage & Quality
 Goal: Reach >90% test coverage and ensure code quality.
 
-- [ ] Task: Increase test coverage for `scd2_upsert` edge cases
-    - [ ] Identify coverage gaps (e.g., empty updates, multiple symbols, simultaneous changes)
-    - [ ] Write tests to cover gaps
-    - [ ] Verify >90% coverage for `src/dim_symbol.py`
+- [x] Task: Increase test coverage for `scd2_upsert` edge cases 881cd10
+    - [x] Identify coverage gaps (e.g., empty updates, multiple symbols, simultaneous changes)
+    - [x] Write tests to cover gaps
+    - [x] Verify >90% coverage for `src/dim_symbol.py`
 - [ ] Task: Run final quality checks (Ruff, type hints)
     - [ ] Fix any remaining linting or typing issues
 - [ ] Task: Conductor - User Manual Verification 'Phase 2: Coverage & Quality' (Protocol in workflow.md) [checkpoint: ]
