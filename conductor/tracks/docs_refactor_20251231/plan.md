@@ -3,10 +3,10 @@
 ## Phase 1: Restructuring
 Goal: Move files and create the entry point.
 
-- [ ] Task: Move `design.md` to `docs/architecture/design.md`
-    - [ ] Create directory `docs/architecture`
-    - [ ] Move file
-    - [ ] Verify file content is intact
+- [x] Task: Move `design.md` to `docs/architecture/design.md` 923f1e7
+    - [x] Create directory `docs/architecture`
+    - [x] Move file
+    - [x] Verify file content is intact
 - [ ] Task: Create root `README.md`
     - [ ] Draft content covering Overview, Links, and Getting Started
     - [ ] Write file
