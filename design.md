@@ -35,7 +35,7 @@ Why:
 - `ts_local_us` (int64 µs)
 
 **Stable ordering key for every table:**
-- `(exchange_id, symbol_id, trading_date, ts_local_us, ingest_seq)`
+- `(exchange_id, symbol_id, date, ts_local_us, ingest_seq)`
 
 Where:
 - `ingest_seq` is a deterministic sequence within the source file (e.g., line number).
@@ -79,14 +79,15 @@ Gold tables are reproducible from Silver (and versioned).
 
 ## 3) Storage format & performance defaults
 
-**Format:** Parquet  
-**Compression:** ZSTD (best compression) or LZ4 (fastest decode)  
-**Row group sizing:** target ~128–512MB row groups (tune by workload)  
-**File sizing:** 256MB–2GB files (avoid tiny-file overhead)
+**Format:** Delta Lake (via `delta-rs`)  
+**Compression:** ZSTD (best compression)  
+**Row group sizing:** target ~128–512MB row groups  
+**File sizing:** 256MB–1GB files (controlled by Delta writer)
 
-**Sort inside each Parquet file**:
-- `(symbol_id, ts_local_us, ingest_seq)`  
-This boosts row-group pruning and fast as-of joins.
+**Data Organization inside partitions**:
+- **Z-Order / Cluster by:** `(symbol_id, ingest_seq)`
+- or **Sort by:** `(symbol_id, ts_local_us, ingest_seq)`
+This boosts pruning for specific symbols without creating thousands of tiny partition directories.
 
 ---
 
@@ -96,20 +97,55 @@ For compression + exact comparisons:
 - Encode prices and sizes as integers.
 
 ### 4.1 Symbol Master (SCD Type 2)
-Symbols change over time (renames, delistings). Maintain a **Slowly Changing Dimension (SCD) Type 2** table `dim_symbol`:
-- `symbol_id` (pk, surrogate key)
-- `exchange_symbol` (raw string)
-- `exchange_id`
-- `valid_from_ts`, `valid_until_ts`
-- `tick_size`, `contract_size`, `price_increment`, `amount_increment`
+Symbols change over time (renames, delistings, tick size changes). Maintain a **Slowly Changing Dimension (SCD) Type 2** table `dim_symbol`.
 
-When ingesting Silver, join against `dim_symbol` using:
-- `exchange_id` (match context)
-- `exchange_symbol` (match raw string)
-- `ts_local_us` (or `ts_exch_us`) within the validity window:
-  - `valid_from_ts <= ts < valid_until_ts` (use a half-open interval)
+**Implementation:** Delta Table (`silver.dim_symbol`)
+- **Storage:** Single versioned table (not partitioned, as it's small).
+- **Surrogate Key (`symbol_id`):** `u32` integer. 
+  - *Strategy:* Use a deterministic hash of `(exchange_id, exchange_symbol, valid_from_ts)` or a managed autoincrementing sequence during registry updates.
+- **Natural Key:** `(exchange_id, exchange_symbol)`.
 
-This resolves the stable `symbol_id` even if tickers are reused or ambiguous across exchanges.
+| Column | Type | Description |
+|---|---|---|
+| **symbol_id** | u32 | Surrogate Key (Primary Key) |
+| **exchange_id** | u16 | Dictionary ID (e.g., 1=deribit, 2=binance) |
+| **exchange_symbol** | string | Raw vendor ticker (e.g., `BTC-PERPETUAL`) |
+| **base_asset** | string | e.g., `BTC` |
+| **quote_asset** | string | e.g., `USD` or `USDT` |
+| **asset_type** | u8 | 0=spot, 1=perp, 2=future, 3=option |
+| **tick_size** | f64 | Minimum price step allowed by the exchange |
+| **lot_size** | f64 | Minimum tradable quantity allowed by the exchange |
+| **price_increment** | f64 | The value of "1" in `price_int` (Storage Encoding) |
+| **amount_increment** | f64 | The value of "1" in `qty_int` (Storage Encoding) |
+
+**Note on Duplication:**
+- In **Tick-based encoding** (recommended for compression), `price_increment == tick_size`.
+- In **Fixed Multiplier encoding** (recommended for cross-symbol math consistency), `price_increment` is a constant like `1e-8`, regardless of the current `tick_size`.
+- We store both to allow the backtester to know the *exchange rules* (`tick_size`) while the database driver uses `price_increment` for decoding.
+| **contract_size** | f64 | Value of 1 contract in base/quote units |
+| **valid_from_ts** | i64 | Inclusive µs timestamp |
+| **valid_until_ts** | i64 | Exclusive µs timestamp (default: `2^63 - 1`) |
+| **is_current** | bool | Helper for latest version queries |
+
+**Update Logic:**
+1. If a symbol's metadata (e.g., `tick_size`) changes:
+   - Update the existing record: set `valid_until_ts = change_ts` and `is_current = false`.
+   - Insert a new record: set `valid_from_ts = change_ts`, `valid_until_ts = infinity`, and `is_current = true`.
+2. This ensures that Silver data ingested on `date=X` joins against the metadata that was **active on `date=X`**, preserving historical accuracy.
+
+**Ingestion Join:**
+```sql
+SELECT 
+    b.*, 
+    s.symbol_id
+FROM bronze_data b
+JOIN silver.dim_symbol s 
+  ON  b.exchange_id = s.exchange_id
+  AND b.exchange_symbol = s.exchange_symbol
+  AND b.ts_local_us >= s.valid_from_ts 
+  AND b.ts_local_us <  s.valid_until_ts
+```
+
 
 ### 4.2 Fixed-point Logic
 Recommended approach:
@@ -136,7 +172,7 @@ Tardis incremental L2 updates are **absolute sizes** at a price level (not delta
 
 | Column | Type | Notes |
 |---|---:|---|
-| trading_date | date | derived from `ts_local_us` in UTC |
+| date | date | derived from `ts_local_us` in UTC |
 | exchange_id | u16 | dictionary-encoded |
 | symbol_id | u32 | dictionary-encoded |
 | ts_local_us | i64 | primary replay timeline |
@@ -164,7 +200,7 @@ Snapshots are full top-N book states (e.g., 25 levels).
 
 | Column | Type | Notes |
 |---|---:|---|
-| trading_date | date | |
+| date | date | |
 | exchange_id | u16 | |
 | symbol_id | u32 | |
 | ts_local_us | i64 | |
@@ -187,7 +223,7 @@ Use this strictly for Gold if legacy tools (Pandas without explode) require it.
 
 | Column | Type | Notes |
 |---|---:|---|
-| trading_date | date | |
+| date | date | |
 | exchange_id | u16 | |
 | symbol_id | u32 | |
 | ts_local_us | i64 | |
@@ -206,7 +242,7 @@ Use this strictly for Gold if legacy tools (Pandas without explode) require it.
 
 | Column | Type |
 |---|---:|
-| trading_date | date |
+| date | date |
 | exchange_id | u16 |
 | symbol_id | u32 |
 | ts_local_us | i64 |
@@ -236,7 +272,7 @@ Includes mark/index, funding, OI, etc.
 
 | Column | Type | Notes |
 |---|---:|---|
-| trading_date | date | |
+| date | date | |
 | exchange_id | u16 | |
 | symbol_id | u32 | |
 | ts_local_us | i64 | |
@@ -257,7 +293,7 @@ Includes mark/index, funding, OI, etc.
 
 | Column | Type |
 |---|---:|
-| trading_date | date |
+| date | date |
 | exchange_id | u16 |
 | symbol_id | u32 |
 | ts_local_us | i64 |
@@ -277,7 +313,7 @@ Options chain is typically cross-sectional and heavy. Store updates per contract
 
 | Column | Type | Notes |
 |---|---:|---|
-| trading_date | date | |
+| date | date | |
 | exchange_id | u16 | |
 | underlying_symbol_id | u32 | underlying |
 | option_symbol_id | u32 | contract |
@@ -309,7 +345,7 @@ Derived from `silver.trades`. Standard time bars for signal generation.
 
 | Column | Type |
 |---|---:|
-| trading_date | date |
+| date | date |
 | exchange_id | u16 |
 | symbol_id | u32 |
 | ts_bucket_start_us | i64 |
@@ -325,26 +361,22 @@ Derived from `silver.trades`. Standard time bars for signal generation.
 
 ## 6) Partitioning strategy
 
-Default directory partitioning:
-- `exchange` and `date` as partitions.
-- `symbol` partition only if universe is small enough to avoid tiny files.
+**Primary Partitioning:**
+- `exchange`
+- `date` (daily partitions, derived from `ts_local_us` in UTC)
 
-Examples:
+**Do NOT partition by `symbol`**.
+- High-cardinality partitioning creates too many tiny files and metadata overhead in Delta Lake.
+- Instead, rely on **Z-Ordering** (or local sorting) within the daily partition to cluster data by `symbol_id`.
 
-/lake/silver/l2_updates/exchange=deribit/date=2025-12-28/part-000.parquet
-/lake/silver/trades/exchange=deribit/date=2025-12-28/part-000.parquet
-/lake/silver/book_snapshots_top25/exchange=deribit/date=2025-12-28/part-000.parquet
+**Path structure:**
+`/lake/silver/l2_updates/exchange=deribit/date=2025-12-28/part-000-uuid.parquet`
 
-Inside files:
-- sort by `(symbol_id, ts_local_us, ingest_seq)`
-
-For large universes:
-- cluster by `symbol_id` within each date file (sorting already helps).
-
-**Options Refinement:**
-For massive universes (e.g., Deribit Options), single daily files may be too large.
-- **Strategy A:** rely on sorting + row groups (if row groups are ~512MB, readers skip efficiently).
-- **Strategy B:** Secondary partitioning: `exchange=deribit/date=2025-12-28/expiry_month=DEC25/part-000.parquet`.
+**Handling Massive Universes (e.g., Options):**
+For datasets like `options_chain` where a single day is massive:
+- The `exchange/date` strategy still holds.
+- Delta Lake will automatically split the data into multiple files (e.g., 1GB each) within that folder.
+- **Critical:** Run `OPTIMIZE ... ZORDER BY (symbol_id)` (or underlying/strike) after writing. This ensures that all rows for a specific contract are co-located in the same file(s), allowing the reader to skip 99% of the data.
 
 ---
 
@@ -426,8 +458,13 @@ Stages:
    - compute `ingest_seq`
    - encode instrument IDs
    - convert price/qty to fixed-point ints (using metadata)
-   - write sorted Parquet
-3. **Derive (Gold)**
+   - **Write to Delta Table**:
+     - `mode="append"` (or `overwrite` for full reloads)
+     - `partition_by=["exchange", "date"]`
+3. **Maintenance (Delta)**
+   - **Optimize / Z-Order:** Reorganize files to cluster by `symbol_id` for fast reads.
+   - **Vacuum:** Clean up old file versions to save space (after retention period).
+4. **Derive (Gold)**
    - create wide snapshot tables (optional)
    - create `tob_quotes` (if desired)
    - create options surface grid (optional)
@@ -445,15 +482,27 @@ All outputs are **idempotent**:
 ## 11) Researcher workflows (Polars/DuckDB)
 
 Recommended patterns:
-- Use DuckDB for ad-hoc SQL over Parquet.
-- Use Polars LazyFrame scans for feature pipelines (predicate pushdown + streaming).
+- Use DuckDB for ad-hoc SQL over Delta Tables.
+- Use Polars LazyFrame scans (`pl.read_delta`) for feature pipelines.
 
 Core “safe” APIs (suggested):
-- `load_l2_updates(exchange, symbols, start, end)`
+- `load_l2_updates(exchange, symbols, start, end)` -> wraps `deltalake` reader
 - `load_snapshots_top25(exchange, symbols, start, end)`
 - `load_trades(exchange, symbols, start, end)`
 - `asof_join(left, right, on="ts_local_us", by=["exchange_id","symbol_id"])`
 - `book_asof(symbol, t_local)` (anchor snapshot + replay updates)
+
+**DuckDB Example:**
+```sql
+SELECT * FROM delta_scan('/lake/silver/trades') 
+WHERE date = '2025-12-28' AND symbol_id = 123
+```
+
+**Polars Example:**
+```python
+pl.read_delta("/lake/silver/trades", version=None) \
+  .filter(pl.col("date") == ... )
+```
 
 ---
 
@@ -472,18 +521,3 @@ Core “safe” APIs (suggested):
 - `exchange_id`: u16
 - `symbol_id`: u32
 - See **Section 4.1** for `dim_symbol` (SCD Type 2) structure.
-
----
-
-## Next steps (to finalize the design)
-To lock in partitioning and file sizing, decide:
-1. Exchanges / venues (Deribit, Binance, OKX, Bybit, etc.)
-2. Universe size (#symbols, #options contracts)
-3. Daily volume (rows/day per dataset)
-4. Typical research queries (single-symbol intraday vs cross-sectional at time t)
-
-With those, we can tune:
-- symbol partitioning vs clustering
-- snapshot cadence for derived gold anchors
-- row group sizing and file batching strategy
-- which gold tables materially reduce researcher compute costs

@@ -96,3 +96,23 @@ def test_resolve_symbol_ids_asof():
     assert resolved.filter(pl.col("ts_local_us") == 250)["tick_size"][0] == 1.0
     # ts=50 should have null symbol_id (or no match)
     assert resolved.filter(pl.col("ts_local_us") == 50)["symbol_id"][0] is None
+
+
+def test_assign_symbol_id_hash_determinism():
+    df = _base_updates(100)
+    # The hash for (1, "BTC-PERPETUAL", 100) with blake2b(4 bytes) should be stable
+    dim = scd2_bootstrap(df)
+    symbol_id = dim["symbol_id"][0]
+    
+    # Asserting the specific value to ensure we don't break existing IDs
+    assert symbol_id == 3019004731
+    
+    # Test with multiple rows
+    df_multi = pl.concat([
+        _base_updates(100),
+        _base_updates(200),
+    ])
+    dim_multi = scd2_bootstrap(df_multi)
+    assert dim_multi.height == 2
+    assert dim_multi["symbol_id"][0] == 3019004731
+    assert dim_multi["symbol_id"][1] != 3019004731
