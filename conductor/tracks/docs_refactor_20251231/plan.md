@@ -12,4 +12,4 @@ Goal: Move files and create the entry point.
     - [x] Write file
 - [x] Task: Update `pyproject.toml` cba6663
     - [x] Change `readme` path to `README.md` (or point to the new location of design doc if that's preferred, but usually README is best)
-- [ ] Task: Conductor - User Manual Verification 'Phase 1: Restructuring' (Protocol in workflow.md) [checkpoint: ]
+- [~] Task: Conductor - User Manual Verification 'Phase 1: Restructuring' (Protocol in workflow.md) [checkpoint: ]
