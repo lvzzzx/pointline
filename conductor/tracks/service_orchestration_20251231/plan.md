@@ -11,6 +11,6 @@
 - [x] Task: Conductor - User Manual Verification 'DimSymbolService Core Logic' (Protocol in workflow.md)
 
 ## Phase 3: Resilience & Audit
-- [ ] Task: Write failing tests for retry logic (simulating write conflicts) and audit logging (Red Phase)
-- [ ] Task: Implement optimistic concurrency retries and audit logging in `DimSymbolService` (Green Phase)
+- [x] Task: Write failing tests for retry logic (simulating write conflicts) and audit logging (Red Phase) [0eca289]
+- [x] Task: Implement optimistic concurrency retries and audit logging in `DimSymbolService` (Green Phase) [0eca289]
 - [ ] Task: Conductor - User Manual Verification 'Resilience & Audit' (Protocol in workflow.md)
