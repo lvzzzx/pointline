@@ -1,6 +1,6 @@
 # Plan: Complete and Verify Symbol Master (dim_symbol)
 
-## Phase 1: Robustness & Feature Completeness
+## Phase 1: Robustness & Feature Completeness [checkpoint: 20c2159]
 Goal: Implement missing features and improve performance.
 
 - [x] Task: Implement `resolve_symbol_ids` helper using `join_asof` 6fe18a4
@@ -11,7 +11,7 @@ Goal: Implement missing features and improve performance.
     - [x] Write performance/functional tests
     - [x] Implement vectorized hashing if possible, or use a more efficient approach
     - [x] Verify tests pass
-- [ ] Task: Conductor - User Manual Verification 'Phase 1: Robustness & Feature Completeness' (Protocol in workflow.md) [checkpoint: ]
+- [x] Task: Conductor - User Manual Verification 'Phase 1: Robustness & Feature Completeness' (Protocol in workflow.md) [checkpoint: 20c2159]
 
 ## Phase 2: Coverage & Quality
 Goal: Reach >90% test coverage and ensure code quality.
