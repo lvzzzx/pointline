@@ -1,6 +1,6 @@
 # Plan: Refactor Documentation Structure
 
-## Phase 1: Restructuring
+## Phase 1: Restructuring [checkpoint: 183cc5e]
 Goal: Move files and create the entry point.
 
 - [x] Task: Move `design.md` to `docs/architecture/design.md` 923f1e7
@@ -12,4 +12,4 @@ Goal: Move files and create the entry point.
     - [x] Write file
 - [x] Task: Update `pyproject.toml` cba6663
     - [x] Change `readme` path to `README.md` (or point to the new location of design doc if that's preferred, but usually README is best)
-- [~] Task: Conductor - User Manual Verification 'Phase 1: Restructuring' (Protocol in workflow.md) [checkpoint: ]
+- [x] Task: Conductor - User Manual Verification 'Phase 1: Restructuring' (Protocol in workflow.md) [checkpoint: 183cc5e]
