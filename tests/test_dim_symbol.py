@@ -116,3 +116,72 @@ def test_assign_symbol_id_hash_determinism():
     assert dim_multi.height == 2
     assert dim_multi["symbol_id"][0] == 3019004731
     assert dim_multi["symbol_id"][1] != 3019004731
+
+
+def test_upsert_empty_updates_returns_original():
+    dim = scd2_bootstrap(_base_updates(100))
+    # Empty updates with correct schema
+    empty_updates = pl.DataFrame(schema=dim.select(required_update_columns()).schema)
+    dim2 = scd2_upsert(dim, empty_updates)
+    assert dim2.equals(dim)
+
+
+def test_upsert_multiple_symbols_mixed_changes():
+    # Symbol 1: change, Symbol 2: new, Symbol 3: no change
+    dim = pl.concat([
+        _base_updates(100),  # Symbol 1 (ID 1)
+        _base_updates(100).with_columns(pl.lit("ETH-PERPETUAL").alias("exchange_symbol")),  # Symbol 3
+    ])
+    dim = scd2_bootstrap(dim)
+
+    updates = pl.concat([
+        _base_updates(200, tick_size=1.0),  # Change Symbol 1
+        _base_updates(200).with_columns(pl.lit("SOL-PERPETUAL").alias("exchange_symbol")),  # New Symbol 2
+        _base_updates(200).with_columns(pl.lit("ETH-PERPETUAL").alias("exchange_symbol")),  # No change Symbol 3
+    ])
+
+    dim2 = scd2_upsert(dim, updates)
+
+    # Symbol 1 should have 2 rows (history + current)
+    # Symbol 2 should have 1 row (current)
+    # Symbol 3 should have 1 row (current)
+    assert dim2.height == 4
+
+    # Verify Symbol 1
+    s1 = dim2.filter(pl.col("exchange_symbol") == "BTC-PERPETUAL")
+    assert s1.height == 2
+    assert s1.filter(pl.col("is_current"))["tick_size"][0] == 1.0
+
+    # Verify Symbol 2
+    s2 = dim2.filter(pl.col("exchange_symbol") == "SOL-PERPETUAL")
+    assert s2.height == 1
+    assert s2.select("is_current").item() is True
+
+    # Verify Symbol 3
+    s3 = dim2.filter(pl.col("exchange_symbol") == "ETH-PERPETUAL")
+    assert s3.height == 1
+
+
+def test_upsert_custom_valid_from_col():
+    dim = scd2_bootstrap(_base_updates(100))
+    updates = _base_updates(200, tick_size=1.0).rename({"valid_from_ts": "event_time"})
+    
+    dim2 = scd2_upsert(dim, updates, valid_from_col="event_time")
+    assert dim2.height == 2
+    assert dim2.filter(pl.col("is_current"))["valid_from_ts"][0] == 200
+
+
+def test_upsert_missing_columns_raises_error():
+    import pytest
+    dim = scd2_bootstrap(_base_updates(100))
+    bad_updates = pl.DataFrame({"exchange_id": [1]})
+    with pytest.raises(ValueError, match="missing required columns"):
+        scd2_upsert(dim, bad_updates)
+
+
+def test_normalize_schema_missing_columns_raises_error():
+    from src.dim_symbol import normalize_dim_symbol_schema
+    import pytest
+    bad_df = pl.DataFrame({"exchange_id": [1]})
+    with pytest.raises(ValueError, match="missing required columns"):
+        normalize_dim_symbol_schema(bad_df)
