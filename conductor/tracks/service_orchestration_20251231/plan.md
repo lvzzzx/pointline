@@ -1,9 +1,9 @@
 # Plan: Service Layer Orchestration (Base & DimSymbol)
 
-## Phase 1: Base Service Infrastructure
+## Phase 1: Base Service Infrastructure [checkpoint: 7c6c24a]
 - [x] Task: Write failing tests for `BaseService` ABC to ensure it enforces the lifecycle interface (Red Phase) [1fe84c3]
 - [x] Task: Implement `BaseService` in `src/services/base_service.py` (Green Phase) [1fe84c3]
-- [ ] Task: Conductor - User Manual Verification 'Base Service Infrastructure' (Protocol in workflow.md)
+- [x] Task: Conductor - User Manual Verification 'Base Service Infrastructure' (Protocol in workflow.md)
 
 ## Phase 2: DimSymbolService Core Logic
 - [ ] Task: Write failing tests for `DimSymbolService` covering SCD2 orchestration, validation, and deduplication (Red Phase)
