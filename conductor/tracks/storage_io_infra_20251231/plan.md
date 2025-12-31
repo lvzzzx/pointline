@@ -11,7 +11,7 @@
 - [x] Task: Implement `TableRepository` protocol in `src/io/protocols.py` (Green Phase) [50f421f]
 - [x] Task: Conductor - User Manual Verification 'Repository Protocols' (Protocol in workflow.md)
 
-## Phase 3: Base Delta Repository Implementation
+## Phase 3: Base Delta Repository Implementation [checkpoint: 2dafe4f]
 - [x] Task: Write failing tests for `BaseDeltaRepository` covering `read_all` and `write_full` with ZSTD (Red Phase) [2f5b3bd]
 - [x] Task: Implement `BaseDeltaRepository` in `src/io/base_repository.py` (Green Phase) [2f5b3bd]
-- [ ] Task: Conductor - User Manual Verification 'Base Delta Repository Implementation' (Protocol in workflow.md)
+- [x] Task: Conductor - User Manual Verification 'Base Delta Repository Implementation' (Protocol in workflow.md)
