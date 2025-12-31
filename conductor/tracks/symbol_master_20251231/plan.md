@@ -3,10 +3,10 @@
 ## Phase 1: Robustness & Feature Completeness
 Goal: Implement missing features and improve performance.
 
-- [ ] Task: Implement `resolve_symbol_ids` helper using `join_asof`
-    - [ ] Write failing tests for as-of join resolution
-    - [ ] Implement `resolve_symbol_ids` in `src/dim_symbol.py`
-    - [ ] Verify tests pass
+- [x] Task: Implement `resolve_symbol_ids` helper using `join_asof` 6fe18a4
+    - [x] Write failing tests for as-of join resolution
+    - [x] Implement `resolve_symbol_ids` in `src/dim_symbol.py`
+    - [x] Verify tests pass
 - [ ] Task: Optimize `assign_symbol_id_hash` (avoid `map_elements`)
     - [ ] Write performance/functional tests
     - [ ] Implement vectorized hashing if possible, or use a more efficient approach
