@@ -7,9 +7,9 @@ Goal: Move files and create the entry point.
     - [x] Create directory `docs/architecture`
     - [x] Move file
     - [x] Verify file content is intact
-- [ ] Task: Create root `README.md`
-    - [ ] Draft content covering Overview, Links, and Getting Started
-    - [ ] Write file
+- [x] Task: Create root `README.md` c395a46
+    - [x] Draft content covering Overview, Links, and Getting Started
+    - [x] Write file
 - [ ] Task: Update `pyproject.toml`
     - [ ] Change `readme` path to `README.md` (or point to the new location of design doc if that's preferred, but usually README is best)
 - [ ] Task: Conductor - User Manual Verification 'Phase 1: Restructuring' (Protocol in workflow.md) [checkpoint: ]
