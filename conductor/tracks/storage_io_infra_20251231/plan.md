@@ -7,8 +7,8 @@
 - [x] Task: Conductor - User Manual Verification 'Environment & Configuration' (Protocol in workflow.md)
 
 ## Phase 2: Repository Protocols
-- [ ] Task: Write failing tests/checks for `src/io/protocols.py` to ensure `TableRepository` enforces the correct interface (Red Phase)
-- [ ] Task: Implement `TableRepository` protocol in `src/io/protocols.py` (Green Phase)
+- [x] Task: Write failing tests/checks for `src/io/protocols.py` to ensure `TableRepository` enforces the correct interface (Red Phase) [50f421f]
+- [x] Task: Implement `TableRepository` protocol in `src/io/protocols.py` (Green Phase) [50f421f]
 - [ ] Task: Conductor - User Manual Verification 'Repository Protocols' (Protocol in workflow.md)
 
 ## Phase 3: Base Delta Repository Implementation
