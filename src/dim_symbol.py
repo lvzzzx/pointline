@@ -73,12 +73,6 @@ SCHEMA: dict[str, pl.DataType] = {
 }
 
 
-def _hash_symbol_id(exchange_id: int, exchange_symbol: str, valid_from_ts: int) -> int:
-    payload = f"{exchange_id}|{exchange_symbol}|{valid_from_ts}".encode("utf-8")
-    digest = hashlib.blake2b(payload, digest_size=4).digest()
-    return int.from_bytes(digest, "little", signed=False)
-
-
 def assign_symbol_id_hash(df: pl.DataFrame) -> pl.DataFrame:
     """Assign deterministic symbol_id based on natural key + valid_from_ts.
 
@@ -87,14 +81,25 @@ def assign_symbol_id_hash(df: pl.DataFrame) -> pl.DataFrame:
     if "symbol_id" in df.columns:
         return df
 
-    return df.with_columns(
-        pl.struct(["exchange_id", "exchange_symbol", "valid_from_ts"])  # type: ignore[arg-type]
-        .map_elements(
-            lambda row: _hash_symbol_id(row["exchange_id"], row["exchange_symbol"], row["valid_from_ts"]),
-            return_dtype=pl.UInt32,
-        )
-        .alias("symbol_id")
+    # Create payload string column in Polars (fast)
+    payloads = pl.format(
+        "{}|{}|{}",
+        pl.col("exchange_id"),
+        pl.col("exchange_symbol"),
+        pl.col("valid_from_ts"),
     )
+
+    # Hash the payloads (Python loop over strings in batches is faster than map_elements on structs)
+    def _hash_payloads(s: pl.Series) -> pl.Series:
+        return pl.Series(
+            [
+                int.from_bytes(hashlib.blake2b(x.encode("utf-8"), digest_size=4).digest(), "little")
+                for x in s
+            ],
+            dtype=pl.UInt32,
+        )
+
+    return df.with_columns(payloads.map_batches(_hash_payloads).alias("symbol_id"))
 
 
 def normalize_dim_symbol_schema(df: pl.DataFrame) -> pl.DataFrame:
