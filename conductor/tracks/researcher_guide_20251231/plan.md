@@ -3,8 +3,8 @@
 ## Phase 1: Documentation Creation
 Goal: Author and publish the guide.
 
-- [ ] Task: Create `docs/guides/` directory
-    - [ ] Run `mkdir -p docs/guides`
+- [x] Task: Create `docs/guides/` directory
+    - [x] Run `mkdir -p docs/guides`
 - [ ] Task: Draft `docs/guides/researcher_guide.md`
     - [ ] Write Introduction and Access Patterns
     - [ ] Write Core Concepts (PIT, Symbol Resolution, Math)
