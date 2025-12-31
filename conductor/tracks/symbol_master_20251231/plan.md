@@ -7,10 +7,10 @@ Goal: Implement missing features and improve performance.
     - [x] Write failing tests for as-of join resolution
     - [x] Implement `resolve_symbol_ids` in `src/dim_symbol.py`
     - [x] Verify tests pass
-- [ ] Task: Optimize `assign_symbol_id_hash` (avoid `map_elements`)
-    - [ ] Write performance/functional tests
-    - [ ] Implement vectorized hashing if possible, or use a more efficient approach
-    - [ ] Verify tests pass
+- [x] Task: Optimize `assign_symbol_id_hash` (avoid `map_elements`) f938b6a
+    - [x] Write performance/functional tests
+    - [x] Implement vectorized hashing if possible, or use a more efficient approach
+    - [x] Verify tests pass
 - [ ] Task: Conductor - User Manual Verification 'Phase 1: Robustness & Feature Completeness' (Protocol in workflow.md) [checkpoint: ]
 
 ## Phase 2: Coverage & Quality
