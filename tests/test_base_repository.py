@@ -26,6 +26,22 @@ def test_base_delta_repository_read_write(tmp_path):
     
     assert read_df.equals(df)
 
+def test_base_delta_repository_append(tmp_path):
+    from src.io.base_repository import BaseDeltaRepository
+    
+    table_path = tmp_path / "test_append_table"
+    repo = BaseDeltaRepository(table_path)
+    
+    df1 = pl.DataFrame({"a": [1]})
+    df2 = pl.DataFrame({"a": [2]})
+    
+    repo.write_full(df1)
+    repo.append(df2)
+    
+    read_df = repo.read_all().sort("a")
+    assert read_df.height == 2
+    assert read_df["a"].to_list() == [1, 2]
+
 def test_base_delta_repository_merge_interface(tmp_path):
     from src.io.base_repository import BaseDeltaRepository
     

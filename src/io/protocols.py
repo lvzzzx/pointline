@@ -15,6 +15,10 @@ class TableRepository(Protocol):
     def write_full(self, df: pl.DataFrame) -> None:
         """Writes/overwrites the full table with the provided DataFrame."""
         ...
+
+    def append(self, df: pl.DataFrame) -> None:
+        """Appends data to the table. Most efficient for immutable event data."""
+        ...
         
     def merge(self, df: pl.DataFrame, keys: list[str]) -> None:
         """Merges incremental updates into the table based on primary keys."""

@@ -48,6 +48,27 @@ class BaseDeltaRepository:
             mode="overwrite",
             delta_write_options=write_options
         )
+
+    def append(self, df: pl.DataFrame) -> None:
+        """
+        Appends the DataFrame to the Delta table.
+        
+        Args:
+            df: The DataFrame to append.
+        """
+        from deltalake import WriterProperties
+        
+        write_options = {}
+        if "compression" in STORAGE_OPTIONS:
+            write_options["writer_properties"] = WriterProperties(
+                compression=STORAGE_OPTIONS["compression"].upper()
+            )
+        
+        df.write_delta(
+            self.table_path,
+            mode="append",
+            delta_write_options=write_options
+        )
         
     def merge(self, df: pl.DataFrame, keys: list[str]) -> None:
         """
