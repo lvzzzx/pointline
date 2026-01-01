@@ -1,7 +1,7 @@
 import polars as pl
 from pathlib import Path
 from typing import Optional
-from src.config import STORAGE_OPTIONS
+from pointline.config import STORAGE_OPTIONS
 
 class BaseDeltaRepository:
     """

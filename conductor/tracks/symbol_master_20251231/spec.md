@@ -1,7 +1,7 @@
 # Spec: Complete and Verify Symbol Master (dim_symbol)
 
 ## Goal
-Finalize the Symbol Master implementation (`src/dim_symbol.py`) to ensure it strictly follows the design requirements for SCD Type 2 market data metadata. Ensure the implementation is robust, high-performance, and has excellent test coverage.
+Finalize the Symbol Master implementation (`pointline/dim_symbol.py`) to ensure it strictly follows the design requirements for SCD Type 2 market data metadata. Ensure the implementation is robust, high-performance, and has excellent test coverage.
 
 ## Requirements
 1.  **SCD Type 2 Correctness**:
@@ -20,6 +20,6 @@ Finalize the Symbol Master implementation (`src/dim_symbol.py`) to ensure it str
     -   Type safety with Python type hints.
 
 ## Implementation Details
--   `src/dim_symbol.py` is the primary module.
+-   `pointline/dim_symbol.py` is the primary module.
 -   `tests/test_dim_symbol.py` is the primary test suite.
 -   Utilize Polars for all data manipulations.

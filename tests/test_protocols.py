@@ -3,8 +3,8 @@ import polars as pl
 from typing import runtime_checkable, Protocol
 
 def test_table_repository_protocol_definition():
-    # This will fail because src.io.protocols doesn't exist yet
-    from src.io.protocols import TableRepository
+    # This will fail because pointline.io.protocols doesn't exist yet
+    from pointline.io.protocols import TableRepository
     
     class MockRepo:
         def read_all(self) -> pl.DataFrame:
@@ -17,7 +17,7 @@ def test_table_repository_protocol_definition():
     assert isinstance(MockRepo(), TableRepository)
 
 def test_table_repository_protocol_enforcement():
-    from src.io.protocols import TableRepository
+    from pointline.io.protocols import TableRepository
     
     class IncompleteRepo:
         def read_all(self) -> pl.DataFrame:

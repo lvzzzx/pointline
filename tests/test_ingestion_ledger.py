@@ -4,9 +4,9 @@ from pathlib import Path
 from datetime import date
 import time
 
-from src.io.protocols import BronzeFileMetadata, IngestionResult
-from src.io.local_source import LocalBronzeSource
-from src.io.delta_manifest_repo import DeltaManifestRepository
+from pointline.io.protocols import BronzeFileMetadata, IngestionResult
+from pointline.io.local_source import LocalBronzeSource
+from pointline.io.delta_manifest_repo import DeltaManifestRepository
 
 @pytest.fixture
 def temp_bronze_dir(tmp_path):

@@ -5,7 +5,7 @@ from abc import ABC
 def test_base_service_is_abstract():
     # Attempt to import BaseService
     # This will fail initially because the file doesn't exist
-    from src.services.base_service import BaseService
+    from pointline.services.base_service import BaseService
     
     # Ensure it inherits from ABC
     assert issubclass(BaseService, ABC)
@@ -15,7 +15,7 @@ def test_base_service_is_abstract():
         BaseService()
 
 def test_concrete_service_must_implement_abstract_methods():
-    from src.services.base_service import BaseService
+    from pointline.services.base_service import BaseService
     
     class IncompleteService(BaseService):
         pass
@@ -25,7 +25,7 @@ def test_concrete_service_must_implement_abstract_methods():
         IncompleteService()
 
 def test_base_service_lifecycle_execution():
-    from src.services.base_service import BaseService
+    from pointline.services.base_service import BaseService
     
     # Create a concrete mock service
     class MockService(BaseService):

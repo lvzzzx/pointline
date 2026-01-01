@@ -2,9 +2,9 @@ import logging
 import time
 import polars as pl
 from deltalake.exceptions import CommitFailedError
-from src.services.base_service import BaseService
-from src.io.protocols import TableRepository
-from src.dim_symbol import scd2_upsert, required_update_columns
+from pointline.services.base_service import BaseService
+from pointline.io.protocols import TableRepository
+from pointline.dim_symbol import scd2_upsert, required_update_columns
 
 logger = logging.getLogger(__name__)
 

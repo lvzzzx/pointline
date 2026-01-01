@@ -1,6 +1,6 @@
 import polars as pl
 
-from src.dim_symbol import (
+from pointline.dim_symbol import (
     DEFAULT_VALID_UNTIL_TS_US,
     required_dim_symbol_columns,
     required_update_columns,
@@ -72,7 +72,7 @@ def test_required_update_columns_contract():
 
 
 def test_resolve_symbol_ids_asof():
-    from src.dim_symbol import resolve_symbol_ids
+    from pointline.dim_symbol import resolve_symbol_ids
 
     # Setup dim with two versions of the same symbol
     dim = scd2_bootstrap(_base_updates(100, tick_size=0.5))
@@ -181,7 +181,7 @@ def test_upsert_missing_columns_raises_error():
 
 
 def test_normalize_schema_missing_columns_raises_error():
-    from src.dim_symbol import normalize_dim_symbol_schema
+    from pointline.dim_symbol import normalize_dim_symbol_schema
     import pytest
     bad_df = pl.DataFrame({"exchange_id": [1]})
     with pytest.raises(ValueError, match="missing required columns"):

@@ -5,7 +5,7 @@ This module keeps the implementation storage-agnostic; it operates on Polars Dat
 Example:
     import polars as pl
 
-    from src.dim_symbol import scd2_bootstrap, scd2_upsert
+    from pointline.dim_symbol import scd2_bootstrap, scd2_upsert
 
     initial = pl.DataFrame(
         {

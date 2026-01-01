@@ -4,7 +4,7 @@
 Establish the Service Layer to orchestrate data flow between the Domain logic and the I/O Adapter (Repositories). This track implements an Abstract Base Class (`BaseService`) and a concrete `DimSymbolService` to handle the lifecycle of the symbol metadata table.
 
 ## Functional Requirements
-- **Base Service ABC:** Implement `src/services/base_service.py` defining the standard lifecycle:
+- **Base Service ABC:** Implement `pointline/services/base_service.py` defining the standard lifecycle:
     - `validate()`: Pre-processing checks.
     - `compute_state()`: Transformation logic.
     - `write()`: Persistence orchestration.

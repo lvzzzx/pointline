@@ -1,11 +1,11 @@
 import pytest
 import polars as pl
 from unittest.mock import MagicMock, patch
-from src.io.protocols import TableRepository
-from src.dim_symbol import scd2_bootstrap
+from pointline.io.protocols import TableRepository
+from pointline.dim_symbol import scd2_bootstrap
 
 def test_dim_symbol_service_retry_on_conflict():
-    from src.services.dim_symbol_service import DimSymbolService
+    from pointline.services.dim_symbol_service import DimSymbolService
     
     # Mock repo
     mock_repo = MagicMock(spec=TableRepository)
@@ -35,11 +35,11 @@ def test_dim_symbol_service_retry_on_conflict():
     assert mock_repo.write_full.call_count == 2
 
 def test_dim_symbol_service_audit_logging():
-    from src.services.dim_symbol_service import DimSymbolService
+    from pointline.services.dim_symbol_service import DimSymbolService
     mock_repo = MagicMock(spec=TableRepository)
     mock_repo.read_all.return_value = pl.DataFrame()
     
-    with patch("src.services.dim_symbol_service.logger") as mock_logger:
+    with patch("pointline.services.dim_symbol_service.logger") as mock_logger:
         service = DimSymbolService(mock_repo)
         updates = pl.DataFrame({
             "exchange_id": [1], "exchange_symbol": ["A"], "valid_from_ts": [100],

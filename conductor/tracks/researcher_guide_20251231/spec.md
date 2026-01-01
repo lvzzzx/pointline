@@ -12,7 +12,7 @@ Create a comprehensive documentation guide for Quantitative Researchers (both hu
     -   **Core Concepts:** Explanation of PIT semantics, Symbol Resolution (SCD2), and Fixed-Point Math.
     -   **Common Workflows:** Code recipes for common tasks (L2 loading, Order Book reconstruction, As-Of Joins, VWAP).
     -   **Agent Interface:** Schema descriptions and query templates optimized for LLMs.
-4.  **Consistency:** Must align with `docs/architecture/design.md` and `src/dim_symbol.py`.
+4.  **Consistency:** Must align with `docs/architecture/design.md` and `pointline/dim_symbol.py`.
 
 ## Implementation Details
 -   Create directory `docs/guides`.

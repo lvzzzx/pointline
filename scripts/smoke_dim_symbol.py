@@ -12,9 +12,9 @@ from pathlib import Path
 
 import polars as pl
 
-from src.dim_symbol import DEFAULT_VALID_UNTIL_TS_US
-from src.io.base_repository import BaseDeltaRepository
-from src.services.dim_symbol_service import DimSymbolService
+from pointline.dim_symbol import DEFAULT_VALID_UNTIL_TS_US
+from pointline.io.base_repository import BaseDeltaRepository
+from pointline.services.dim_symbol_service import DimSymbolService
 
 
 def _base_updates(valid_from_ts: int, tick_size: float = 0.5) -> pl.DataFrame:

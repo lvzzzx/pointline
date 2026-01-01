@@ -1,6 +1,6 @@
 # Storage-IO Architecture (Delta Lake + Polars)
 
-This document defines a storage-agnostic architecture for table logic and a Delta‑RS IO layer. It keeps `src/dim_symbol.py` pure and establishes a repeatable pattern for adding new tables.
+This document defines a storage-agnostic architecture for table logic and a Delta‑RS IO layer. It keeps `pointline/dim_symbol.py` pure and establishes a repeatable pattern for adding new tables.
 
 ## Goals
 - Keep domain logic testable without storage dependencies.
@@ -10,21 +10,21 @@ This document defines a storage-agnostic architecture for table logic and a Delt
 ## Layered Design
 
 ### 1) Domain (Pure Table Logic)
-**Location:** `src/<table>.py`
+**Location:** `pointline/<table>.py`
 - Owns schema, validation, and transformations.
 - Operates on `polars.DataFrame` only.
 - No file paths or Delta imports.
 
-Example: `src/dim_symbol.py` provides SCD2 rules and schema validation.
+Example: `pointline/dim_symbol.py` provides SCD2 rules and schema validation.
 
 ### 2) Service (Orchestration)
-**Location:** `src/services/<table>_service.py`
+**Location:** `pointline/services/<table>_service.py`
 - Calls domain functions in the correct order.
 - Chooses read/write strategy (overwrite vs merge).
 - Contains no storage details beyond the repo interface.
 
 ### 3) IO Adapter (Storage)
-**Location:** `src/io/delta_<table>_repo.py`
+**Location:** `pointline/io/delta_<table>_repo.py`
 - Reads/writes using Delta‑RS.
 - Owns table path and physical layout.
 - Exposes a small interface to services.
@@ -32,7 +32,7 @@ Example: `src/dim_symbol.py` provides SCD2 rules and schema validation.
 ## Interfaces
 
 ### Repository Protocol (Storage‑Agnostic)
-**Location:** `src/io/protocols.py`
+**Location:** `pointline/io/protocols.py`
 - Define what a table repository must implement.
 - Reused by all tables.
 
@@ -50,7 +50,7 @@ class TableRepository(Protocol):
 
 1. `DimSymbolService.update(updates)`
 2. `repo.read_all()`
-3. `scd2_upsert(current, updates)` in `src/dim_symbol.py`
+3. `scd2_upsert(current, updates)` in `pointline/dim_symbol.py`
 4. `repo.write_full(updated)` (deterministic rebuild) or `repo.merge(...)`
 
 ## Delta‑RS IO Behavior
@@ -60,15 +60,15 @@ class TableRepository(Protocol):
 
 ## Adding a New Table
 For a new table (e.g., `trades`):
-1. Create `src/trades.py` with schema + validation.
-2. Create `src/services/trades_service.py` with read → transform → write.
-3. Create `src/io/delta_trades_repo.py` with Delta‑RS read/write.
-4. Register table paths in `src/config.py`.
+1. Create `pointline/trades.py` with schema + validation.
+2. Create `pointline/services/trades_service.py` with read → transform → write.
+3. Create `pointline/io/delta_trades_repo.py` with Delta‑RS read/write.
+4. Register table paths in `pointline/config.py`.
 
 This keeps the pattern consistent and the domain layer reusable.
 
 ## Configuration
-**Location:** `src/config.py`
+**Location:** `pointline/config.py`
 - Central place for table paths and storage settings.
 - Example: `TABLE_PATHS = {"dim_symbol": "/lake/silver/dim_symbol"}`
 

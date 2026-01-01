@@ -3,9 +3,9 @@ import polars as pl
 from pathlib import Path
 from deltalake import DeltaTable, WriterProperties
 
-from src.io.protocols import IngestionManifestRepository, BronzeFileMetadata, IngestionResult
-from src.io.base_repository import BaseDeltaRepository
-from src.config import STORAGE_OPTIONS
+from pointline.io.protocols import IngestionManifestRepository, BronzeFileMetadata, IngestionResult
+from pointline.io.base_repository import BaseDeltaRepository
+from pointline.config import STORAGE_OPTIONS
 
 class DeltaManifestRepository(BaseDeltaRepository):
     """

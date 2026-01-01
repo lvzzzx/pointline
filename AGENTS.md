@@ -1,7 +1,7 @@
 # Repository Guidelines
 
 ## Project Structure & Module Organization
-- `src/` holds the Python package (ETL utilities and symbol management). Example: `src/dim_symbol.py`.
+- `pointline/` holds the Python package (ETL utilities and symbol management). Example: `pointline/dim_symbol.py`.
 - `tests/` contains pytest tests, e.g. `tests/test_dim_symbol.py`.
 - `docs/` stores architecture and guides, including `docs/architecture/design.md`.
 - `conductor/` captures project workflow and product guidance (`conductor/workflow.md`, `conductor/product-guidelines.md`, `conductor/tech-stack.md`).

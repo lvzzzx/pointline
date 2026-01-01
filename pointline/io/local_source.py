@@ -3,7 +3,7 @@ from pathlib import Path
 from typing import Iterator
 from datetime import datetime, date
 
-from src.io.protocols import BronzeSource, BronzeFileMetadata
+from pointline.io.protocols import BronzeSource, BronzeFileMetadata
 
 class LocalBronzeSource:
     """

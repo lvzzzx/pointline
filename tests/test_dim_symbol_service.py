@@ -1,12 +1,12 @@
 import pytest
 import polars as pl
 from unittest.mock import MagicMock
-from src.io.protocols import TableRepository
+from pointline.io.protocols import TableRepository
 
 def test_dim_symbol_service_orchestration():
     # This will fail initially because DimSymbolService doesn't exist
-    from src.services.dim_symbol_service import DimSymbolService
-    from src.dim_symbol import scd2_bootstrap
+    from pointline.services.dim_symbol_service import DimSymbolService
+    from pointline.dim_symbol import scd2_bootstrap
     
     mock_repo = MagicMock(spec=TableRepository)
     
@@ -56,7 +56,7 @@ def test_dim_symbol_service_orchestration():
     assert written_df.filter(pl.col("is_current"))["tick_size"][0] == 1.0
 
 def test_dim_symbol_service_validation_failure():
-    from src.services.dim_symbol_service import DimSymbolService
+    from pointline.services.dim_symbol_service import DimSymbolService
     mock_repo = MagicMock(spec=TableRepository)
     service = DimSymbolService(mock_repo)
     

@@ -1,14 +1,14 @@
 import pytest
 import polars as pl
 from pathlib import Path
-from src.io.protocols import TableRepository
+from pointline.io.protocols import TableRepository
 
 def test_base_delta_repository_implements_protocol():
-    from src.io.base_repository import BaseDeltaRepository
+    from pointline.io.base_repository import BaseDeltaRepository
     assert isinstance(BaseDeltaRepository("/tmp/test"), TableRepository)
 
 def test_base_delta_repository_read_write(tmp_path):
-    from src.io.base_repository import BaseDeltaRepository
+    from pointline.io.base_repository import BaseDeltaRepository
     
     table_path = tmp_path / "test_delta_table"
     repo = BaseDeltaRepository(table_path)
@@ -27,7 +27,7 @@ def test_base_delta_repository_read_write(tmp_path):
     assert read_df.equals(df)
 
 def test_base_delta_repository_append(tmp_path):
-    from src.io.base_repository import BaseDeltaRepository
+    from pointline.io.base_repository import BaseDeltaRepository
     
     table_path = tmp_path / "test_append_table"
     repo = BaseDeltaRepository(table_path)
@@ -43,7 +43,7 @@ def test_base_delta_repository_append(tmp_path):
     assert read_df["a"].to_list() == [1, 2]
 
 def test_base_delta_repository_merge_interface(tmp_path):
-    from src.io.base_repository import BaseDeltaRepository
+    from pointline.io.base_repository import BaseDeltaRepository
     
     table_path = tmp_path / "test_merge_table"
     repo = BaseDeltaRepository(table_path)

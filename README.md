@@ -1,4 +1,4 @@
-# Data Architecture (HFT Research)
+# Pointline (HFT Research)
 
 A high-performance, point-in-time (PIT) accurate offline data lake for Tardis market data.
 
