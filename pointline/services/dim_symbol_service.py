@@ -75,3 +75,61 @@ class DimSymbolService(BaseService):
                 
                 logger.warning(f"Conflict detected (attempt {attempt}/{self.max_retries}). Retrying...")
                 time.sleep(0.1 * attempt)  # Simple backoff
+
+    def rebuild(self, history_data: pl.DataFrame) -> None:
+        """
+        Replaces the entire history for the provided symbols with the new history_data.
+        
+        This is useful for 'sync' operations where the source provides a full
+        audit trail (e.g. Tardis 'changes' array) and we want to correct/backfill
+        the timeline rather than just appending a new current version.
+        """
+        from pointline.dim_symbol import rebuild_from_history, NATURAL_KEY_COLS
+        
+        # 1. Transform raw history rows into proper SCD2 chains
+        new_symbol_history = rebuild_from_history(history_data)
+        
+        attempt = 0
+        while attempt <= self.max_retries:
+            try:
+                # 2. Read existing state
+                try:
+                    full_table = self.repo.read_all()
+                except Exception:
+                    full_table = pl.DataFrame()
+
+                # 3. Filter out the old history for the symbols we are rebuilding
+                # We identify symbols by their natural key (exchange_id, exchange_symbol)
+                if not full_table.is_empty():
+                    # Get the keys being replaced
+                    changed_keys = new_symbol_history.select(list(NATURAL_KEY_COLS)).unique()
+                    
+                    # Anti-join to keep only symbols NOT being updated
+                    preserved_data = full_table.join(
+                        changed_keys, on=list(NATURAL_KEY_COLS), how="anti"
+                    )
+                else:
+                    preserved_data = pl.DataFrame()
+
+                # 4. Combine preserved data with new history
+                if preserved_data.is_empty():
+                    final_table = new_symbol_history
+                else:
+                    # align schemas just in case
+                    final_table = pl.concat([preserved_data, new_symbol_history], how="vertical")
+                
+                # 5. Write atomically
+                self.write(final_table)
+                
+                logger.info(
+                    f"DimSymbol rebuild complete. Replaced history for {new_symbol_history.select(list(NATURAL_KEY_COLS)).n_unique()} symbols. "
+                    f"Total rows: {final_table.height}."
+                )
+                return
+
+            except CommitFailedError as e:
+                attempt += 1
+                if attempt > self.max_retries:
+                    logger.error(f"Failed to rebuild DimSymbol after {self.max_retries} retries: {e}")
+                    raise
+                time.sleep(0.1 * attempt)

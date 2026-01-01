@@ -15,6 +15,38 @@ STORAGE_OPTIONS = {
     "compression": "zstd",
 }
 
+# Exchange Registry
+
+EXCHANGE_MAP = {
+
+    "binance": 1,
+
+    "binance-futures": 2,
+
+    "coinbase": 3,
+
+}
+
+
+
+# Asset Type Registry
+
+TYPE_MAP = {
+
+    "spot": 0,
+
+    "perpetual": 1,
+
+    "future": 2,
+
+    "option": 3,
+
+}
+
+
+
+
+
 def get_table_path(table_name: str) -> Path:
     """
     Resolves the absolute path for a given table name.

@@ -219,6 +219,115 @@ def scd2_bootstrap(
     return normalize_dim_symbol_schema(bootstrap)
 
 
+def rebuild_from_history(
+    history: pl.DataFrame,
+    *,
+    valid_from_col: str = "valid_from_ts",
+) -> pl.DataFrame:
+    """Rebuild a full SCD2 history from a set of historical states.
+
+    Expects 'history' to contain multiple rows per symbol, each representing
+    a state that became valid at 'valid_from_ts'.
+
+    This function:
+    1. Sorts by natural key and valid_from_ts.
+    2. Infers 'valid_until_ts' from the next row's 'valid_from_ts'.
+    3. Sets 'is_current' to True only for the last row of each symbol.
+    4. Generates symbol_ids.
+    """
+    if valid_from_col != "valid_from_ts":
+        history = history.rename({valid_from_col: "valid_from_ts"})
+
+    required = set(NATURAL_KEY_COLS + TRACKED_COLS + ("valid_from_ts",))
+    missing = [c for c in required if c not in history.columns]
+    if missing:
+        raise ValueError(f"History missing required columns: {missing}")
+
+    # Sort to ensure correct windowing
+    df = history.sort(list(NATURAL_KEY_COLS) + ["valid_from_ts"])
+
+    # Dedup to prevent windowing errors on bad input
+    if df.select(list(NATURAL_KEY_COLS) + ["valid_from_ts"]).is_duplicated().any():
+        raise ValueError("Duplicate valid_from_ts detected for a symbol in history input.")
+
+    # Calculate valid_until_ts using lead(valid_from_ts) over the natural key partition
+    # We partition by natural key to avoid bleeding dates across symbols
+    df = df.with_columns(
+        pl.col("valid_from_ts")
+        .shift(-1)
+        .over(list(NATURAL_KEY_COLS))
+        .fill_null(DEFAULT_VALID_UNTIL_TS_US)
+        .cast(pl.Int64)
+        .alias("valid_until_ts")
+    )
+
+    # Determine is_current: it's true if valid_until_ts is the default max
+    df = df.with_columns(
+        (pl.col("valid_until_ts") == DEFAULT_VALID_UNTIL_TS_US).alias("is_current")
+    )
+
+    df = assign_symbol_id_hash(df)
+    return normalize_dim_symbol_schema(df)
+
+
+def check_coverage(
+    dim_symbol: pl.DataFrame,
+    exchange_id: int,
+    exchange_symbol: str,
+    start_ts: int,
+    end_ts: int,
+) -> bool:
+    """Verify that dim_symbol provides contiguous coverage for a time range.
+
+    Returns True if:
+    1. The symbol exists in the table.
+    2. The union of valid intervals fully covers [start_ts, end_ts).
+    3. There are no gaps between intervals within the range.
+    """
+    # Filter for the specific symbol and relevant time range
+    # We include rows that overlap with [start_ts, end_ts)
+    # Overlap logic: row_start < range_end AND row_end > range_start
+    rows = dim_symbol.filter(
+        (pl.col("exchange_id") == exchange_id)
+        & (pl.col("exchange_symbol") == exchange_symbol)
+        & (pl.col("valid_from_ts") < end_ts)
+        & (pl.col("valid_until_ts") > start_ts)
+    ).sort("valid_from_ts")
+
+    if rows.is_empty():
+        return False
+
+    # Check boundaries
+    # The first row must start at or before start_ts
+    first_start = rows["valid_from_ts"][0]
+    if first_start > start_ts:
+        return False
+
+    # The last row must end at or after end_ts
+    last_end = rows["valid_until_ts"][-1]
+    if last_end < end_ts:
+        return False
+
+    # Check contiguity
+    # valid_until_ts of row[i] must equal valid_from_ts of row[i+1]
+    # We can check this by comparing shifted columns
+    # Note: This assumes strict equality (no gaps, no overlaps).
+    # If overlaps are allowed but cover the gap, a more complex merge is needed.
+    # For SCD2, we usually enforce strict contiguity (end == next_start).
+    
+    # We only care about gaps *within* the requested window [start_ts, end_ts].
+    # But checking the whole sorted set of overlapping rows is safer/simpler.
+    
+    prev_ends = rows["valid_until_ts"][:-1]
+    next_starts = rows["valid_from_ts"][1:]
+    
+    # Check if any gap exists
+    if (prev_ends != next_starts).any():
+        return False
+
+    return True
+
+
 def resolve_symbol_ids(
     data: pl.DataFrame,
     dim_symbol: pl.DataFrame,

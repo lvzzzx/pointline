@@ -10,8 +10,11 @@ market-data ingestion to metadata discovery.
 ## Command (Proposed)
 ```
 pointline dim-symbol sync \
-  --source <file|dir|api> \
-  --format <csv|parquet|json> \
+  --source <file|api> \
+  --exchange <exchange> \
+  --symbol <instrument-id> \
+  --filter <json> \
+  --api-key <token> \
   --table-path <path> \
   --effective-ts <unix_us|now> \
   --strict \
@@ -34,12 +37,27 @@ Minimum required columns:
 Optional:
 - `valid_from_ts` (filled from `--effective-ts` if missing)
 
+### API mode (`--source api`)
+When `--source=api`, metadata is fetched from the Tardis Instruments Metadata API.
+`--exchange` is required. Use `--symbol` to fetch a single instrument; otherwise the
+API list endpoint is used. The optional `--filter` value must be a JSON object
+serialized as a string; it is passed through as the `filter` query parameter.
+
+`--api-key` defaults to the `TARDIS_API_KEY` environment variable.
+
+Endpoints:
+- `GET https://api.tardis.dev/v1/instruments/:exchange/:symbol_id`
+- `GET https://api.tardis.dev/v1/instruments/:exchange?filter=<url-encoded json>`
+
+Authentication:
+- `Authorization: Bearer <API_KEY>`
+
 ## Canonical Field Mapping (Tardis Instruments Metadata API)
 The table below maps the Tardis instruments metadata payload to `dim_symbol` fields.
 
 | dim_symbol column | Tardis field | Notes |
 | --- | --- | --- |
-| `exchange_id` | `exchange` | Map via internal exchange dictionary (e.g., `binance -> 2`). |
+| `exchange_id` | `exchange` | Map via internal exchange dictionary in `pointline.config` (e.g., `binance -> 2`). |
 | `exchange_symbol` | `datasetId` | Prefer `datasetId` over `id` for stability. |
 | `base_asset` | `baseCurrency` | Required. |
 | `quote_asset` | `quoteCurrency` | Required. |
@@ -55,17 +73,25 @@ If `active=false`, close the current row by setting `valid_until_ts=now` and
 `is_current=false` instead of deleting.
 
 ## Changes Field (SCD2 Boundaries)
-Some exchanges return a `changes` array with historical metadata shifts. Use it to
-create SCD2 boundaries when present.
+Some exchanges return a `changes` array with historical metadata shifts.
+This allows reconstruction of the true history (backfilling).
 
 Example:
 ```
 "changes":[{"until":"2022-02-15T03:30:00.000Z","priceIncrement":0.01}]
 ```
 
-Interpretation:
-- Version A: `priceIncrement=0.01` valid from `availableSince` until the `until` timestamp.
-- Version B: the current payload values valid from that `until` timestamp onward.
+**Handling Strategy:**
+The `changes` array represents a timeline of values. To apply them correctly:
+1.  **Unroll** the `changes` array into a chronological list of distinct state intervals (valid_from, valid_until, values).
+2.  **Sequential Apply**: Do not batch-apply these as a single upsert against the current state, as they may overlap or conflict.
+    *   Either apply them sequentially in `valid_from` order.
+    *   Or (preferred for "sync") perform a **full history rebuild** for the symbol if the source provides the complete history via `changes`.
+
+API note: the `changes` field is not guaranteed to be present for all instruments,
+and its data quality can vary by exchange (only `contractMultiplier` changes are
+guaranteed accurate). Prefer `--rebuild` when using API responses that include
+`changes`, and fall back to incremental updates otherwise. 
 
 ## Behavior
 1. Load metadata from the source.

@@ -5,28 +5,9 @@ from __future__ import annotations
 
 import argparse
 import os
-from datetime import datetime
 from pathlib import Path
-from typing import Callable
 
-from tardis_dev import datasets
-
-
-def _build_get_filename(template: str) -> Callable[[str, str, datetime, str, str], str]:
-    def _get_filename(exchange: str, data_type: str, date: datetime, symbol: str, fmt: str) -> str:
-        date_str = date.strftime("%Y-%m-%d")
-        path = template.format(
-            exchange=exchange,
-            data_type=data_type,
-            date=date_str,
-            symbol=symbol,
-            format=fmt,
-        )
-        if not path.endswith(".gz"):
-            path = f"{path}.gz"
-        return path
-
-    return _get_filename
+from pointline.io.vendor.tardis import download_tardis_datasets
 
 
 def _parse_args() -> argparse.Namespace:
@@ -61,18 +42,13 @@ def _parse_args() -> argparse.Namespace:
 def main() -> None:
     args = _parse_args()
 
-    download_dir = Path(args.download_dir)
-    download_dir.mkdir(parents=True, exist_ok=True)
-
     data_types = [item.strip() for item in args.data_types.split(",") if item.strip()]
     symbols = [item.strip() for item in args.symbols.split(",") if item.strip()]
 
     if not data_types or not symbols:
         raise SystemExit("data-types and symbols must be non-empty")
 
-    get_filename = _build_get_filename(args.filename_template)
-
-    datasets.download(
+    download_tardis_datasets(
         exchange=args.exchange,
         data_types=data_types,
         symbols=symbols,
@@ -80,8 +56,8 @@ def main() -> None:
         to_date=args.to_date,
         format=args.format,
         api_key=args.api_key,
-        download_dir=str(download_dir),
-        get_filename=get_filename,
+        download_dir=args.download_dir,
+        filename_template=args.filename_template,
         concurrency=args.concurrency,
         http_proxy=args.http_proxy,
     )
