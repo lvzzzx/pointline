@@ -186,3 +186,81 @@ def test_normalize_schema_missing_columns_raises_error():
     bad_df = pl.DataFrame({"exchange_id": [1]})
     with pytest.raises(ValueError, match="missing required columns"):
         normalize_dim_symbol_schema(bad_df)
+
+
+def test_check_coverage_logic():
+    from pointline.dim_symbol import SCHEMA, assign_symbol_id_hash, check_coverage
+
+    # Range [100, 200)
+
+    # Case 0: Empty dim_symbol
+    dim_empty = pl.DataFrame(schema=SCHEMA)
+    assert check_coverage(dim_empty, 1, "BTC-PERPETUAL", 100, 200) is False
+
+    # Case 1: Symbol not found
+    dim_other = scd2_bootstrap(
+        _base_updates(100).with_columns(pl.lit("ETH").alias("exchange_symbol"))
+    )
+    assert check_coverage(dim_other, 1, "BTC-PERPETUAL", 100, 200) is False
+
+    # Case 2: Single row, exact match [100, DEFAULT)
+    dim_single = scd2_bootstrap(_base_updates(100))
+    assert check_coverage(dim_single, 1, "BTC-PERPETUAL", 100, 200) is True
+
+    # Case 3: Single row, covers part but not all (starts late)
+    assert check_coverage(dim_single, 1, "BTC-PERPETUAL", 50, 200) is False
+
+    # Case 4: Single row, covers part but not all (ends early)
+    dim_closed = pl.DataFrame(
+        [
+            {
+                **_base_updates(100).to_dicts()[0],
+                "valid_until_ts": 150,
+                "is_current": False,
+                "symbol_id": 1,
+            }
+        ],
+        schema=SCHEMA,
+    )
+    assert check_coverage(dim_closed, 1, "BTC-PERPETUAL", 100, 200) is False
+
+    # Case 5: Two rows, contiguous [100, 150) and [150, DEFAULT)
+    v1 = _base_updates(100).with_columns(
+        pl.lit(150).alias("valid_until_ts"),
+        pl.lit(False).alias("is_current"),
+        pl.lit(123).alias("symbol_id"),
+    )
+    v2 = _base_updates(150).with_columns(
+        pl.lit(DEFAULT_VALID_UNTIL_TS_US).alias("valid_until_ts"),
+        pl.lit(True).alias("is_current"),
+        pl.lit(456).alias("symbol_id"),
+    )
+    from pointline.dim_symbol import normalize_dim_symbol_schema
+
+    dim_multi = pl.concat(
+        [normalize_dim_symbol_schema(v1), normalize_dim_symbol_schema(v2)]
+    )
+    assert check_coverage(dim_multi, 1, "BTC-PERPETUAL", 100, 200) is True
+
+    # Case 6: Two rows, GAP [100, 140) and [150, DEFAULT)
+    v1_gap = _base_updates(100).with_columns(
+        pl.lit(140).alias("valid_until_ts"),
+        pl.lit(False).alias("is_current"),
+        pl.lit(123).alias("symbol_id"),
+    )
+    dim_gap = pl.concat(
+        [normalize_dim_symbol_schema(v1_gap), normalize_dim_symbol_schema(v2)]
+    )
+    assert check_coverage(dim_gap, 1, "BTC-PERPETUAL", 100, 200) is False
+
+    # Case 7: Two rows, OVERLAP [100, 160) and [150, DEFAULT)
+    v1_overlap = _base_updates(100).with_columns(
+        pl.lit(160).alias("valid_until_ts"),
+        pl.lit(False).alias("is_current"),
+        pl.lit(123).alias("symbol_id"),
+    )
+    dim_overlap = pl.concat(
+        [normalize_dim_symbol_schema(v1_overlap), normalize_dim_symbol_schema(v2)]
+    )
+    # Overlap is treated as non-contiguous gap/overlap
+    assert check_coverage(dim_overlap, 1, "BTC-PERPETUAL", 100, 200) is False
