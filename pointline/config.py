@@ -8,6 +8,7 @@ LAKE_ROOT = Path(os.getenv("LAKE_ROOT", "./data/lake"))
 TABLE_PATHS = {
     "dim_symbol": "silver/dim_symbol",
     "ingest_manifest": "silver/ingest_manifest",
+    "trades": "silver/trades",
 }
 
 # Storage Settings
