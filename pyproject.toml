@@ -21,6 +21,15 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["src"]
 
+[tool.hatch.envs.smoke]
+dependencies = [
+  "polars>=0.20",
+  "deltalake>=0.15",
+]
+
+[tool.hatch.envs.smoke.scripts]
+dim_symbol = "python scripts/smoke_dim_symbol.py"
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 

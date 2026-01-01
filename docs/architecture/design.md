@@ -451,7 +451,7 @@ Stages:
 1. **Ingest (Bronze)**
    - download + store raw files
    - compute checksums
-   - write manifest: row counts, min/max timestamps
+   - write manifest (ingestion ledger): row counts, min/max timestamps, file metadata
 2. **Parse & Normalize (Silver)**
    - read CSV.gz
    - cast types
@@ -476,6 +476,46 @@ Stages:
 
 All outputs are **idempotent**:
 - re-running ETL yields identical Parquet (same schema, ordering, checksums), given same inputs + metadata versions.
+
+### 10.1 Ingestion ledger (silver.ingest_manifest)
+Use a dedicated Delta table to track ingestion status per Bronze file. This makes re-runs
+idempotent, provides auditability, and enables fast skip logic.
+
+**Table:** `silver.ingest_manifest` (small, unpartitioned Delta table)
+
+**Primary key (logical):**
+`(exchange, data_type, symbol, date, bronze_file_name)`
+
+**Recommended columns:**
+| Column | Type | Description |
+|---|---|---|
+| exchange | string | e.g., `binance` |
+| data_type | string | e.g., `trades`, `quotes` |
+| symbol | string | upper-case, `BTCUSDT` |
+| date | date | UTC date from file path |
+| bronze_file_name | string | full relative path to the CSV.GZ |
+| file_size_bytes | i64 | size at ingest time |
+| last_modified_ts | i64 | mtime in µs (UTC) |
+| sha256 | string | optional hash for immutability checks |
+| row_count | i64 | number of rows ingested |
+| ts_local_min_us | i64 | min `ts_local_us` in file |
+| ts_local_max_us | i64 | max `ts_local_us` in file |
+| ts_exch_min_us | i64 | optional min exchange ts |
+| ts_exch_max_us | i64 | optional max exchange ts |
+| ingested_at | i64 | ingest time in µs |
+| status | string | `success`, `failed`, `partial` |
+| error_message | string | error text for failed ingests |
+
+**Ingestion decision (skip logic):**
+1. For each Bronze file, compute `file_size_bytes` and `last_modified_ts`.
+2. Lookup by `(exchange, data_type, symbol, date, bronze_file_name)`.
+3. If a row exists with `status=success` **and** matching `file_size_bytes` + `last_modified_ts`
+   (or `sha256` if used), **skip** ingestion.
+4. Otherwise, ingest and write/overwrite a manifest row with updated stats.
+
+**Lineage guarantees:**
+- Silver tables **must** include `bronze_file_name` and `file_line_number`.
+- `ingest_seq` is derived from `file_line_number` to ensure deterministic ordering.
 
 ---
 

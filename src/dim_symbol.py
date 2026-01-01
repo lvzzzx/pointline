@@ -56,7 +56,7 @@ TRACKED_COLS: tuple[str, ...] = (
 )
 
 SCHEMA: dict[str, pl.DataType] = {
-    "symbol_id": pl.UInt32,
+    "symbol_id": pl.Int64,
     "exchange_id": pl.UInt16,
     "exchange_symbol": pl.Utf8,
     "base_asset": pl.Utf8,
@@ -96,7 +96,7 @@ def assign_symbol_id_hash(df: pl.DataFrame) -> pl.DataFrame:
                 int.from_bytes(hashlib.blake2b(x.encode("utf-8"), digest_size=4).digest(), "little")
                 for x in s
             ],
-            dtype=pl.UInt32,
+            dtype=pl.Int64,
         )
 
     return df.with_columns(payloads.map_batches(_hash_payloads).alias("symbol_id"))
@@ -140,6 +140,8 @@ def scd2_upsert(
         )
         updates_prepped = assign_symbol_id_hash(updates_prepped)
         return normalize_dim_symbol_schema(updates_prepped)
+
+    dim_symbol = normalize_dim_symbol_schema(dim_symbol)
 
     if valid_from_col != "valid_from_ts":
         updates = updates.rename({valid_from_col: "valid_from_ts"})

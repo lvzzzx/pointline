@@ -106,6 +106,7 @@ def test_assign_symbol_id_hash_determinism():
     
     # Asserting the specific value to ensure we don't break existing IDs
     assert symbol_id == 3019004731
+    assert dim["symbol_id"].dtype == pl.Int64
     
     # Test with multiple rows
     df_multi = pl.concat([

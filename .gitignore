@@ -65,3 +65,9 @@ dmypy.json
 
 # Ruff
 .ruff_cache/
+
+# Data Lake - Keep separate from code repository
+# Data should be stored in a separate location (S3, GCS, local mount, etc.)
+data/
+*.parquet
+*.delta
