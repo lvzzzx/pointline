@@ -108,8 +108,18 @@ def _history_rows(
     exchange_id: int,
     effective_ts: int | None,
 ) -> list[dict[str, Any]]:
+    """Unroll the changes array into a chronological list of state intervals.
+
+    Tardis provides the CURRENT state in the top-level fields and a 'changes'
+    array of fields that were different UNTIL a certain time.
+
+    To reconstruct history:
+    1. We start with the current state.
+    2. We work backwards through changes (newest to oldest).
+    3. Each change tells us what the state was BEFORE its 'until' timestamp.
+    """
     state = _instrument_state(record, effective_ts=effective_ts)
-    base_row = {
+    current_payload = {
         "exchange_id": exchange_id,
         "exchange_symbol": state.exchange_symbol,
         "base_asset": state.base_asset,
@@ -124,19 +134,44 @@ def _history_rows(
 
     changes = record.get("changes") or []
     if not changes:
-        return [{**base_row, "valid_from_ts": state.valid_from_ts}]
+        return [{**current_payload, "valid_from_ts": state.valid_from_ts}]
 
-    sorted_changes = sorted(changes, key=lambda item: _parse_iso_to_us(item["until"]))
-    rows: list[dict[str, Any]] = []
-    start_ts = state.valid_from_ts
-    for change in sorted_changes:
+    # Sort changes by 'until' descending (newest first)
+    sorted_changes = sorted(
+        changes, key=lambda item: _parse_iso_to_us(item["until"]), reverse=True
+    )
+
+    # We build the intervals from newest to oldest
+    intervals: list[dict[str, Any]] = []
+    
+    # The 'current' state is valid from the latest 'until' timestamp onward
+    latest_until = _parse_iso_to_us(sorted_changes[0]["until"])
+    intervals.append({**current_payload, "valid_from_ts": latest_until})
+
+    # Work backwards
+    running_state = dict(current_payload)
+    next_start_ts = latest_until
+
+    for i, change in enumerate(sorted_changes):
+        # This change describes the state valid UNTIL this change's 'until'
         until_ts = _parse_iso_to_us(change["until"])
-        row_state = _apply_change_fields(base_row, change)
-        rows.append({**row_state, "valid_from_ts": start_ts})
-        start_ts = until_ts
+        
+        # Apply the change to our running state to see what it was BEFORE this 'until'
+        running_state = _apply_change_fields(running_state, change)
+        
+        # Determine the start of this interval: 
+        # It's either the 'until' of the NEXT oldest change, or the availableSince (state.valid_from_ts)
+        if i + 1 < len(sorted_changes):
+            start_ts = _parse_iso_to_us(sorted_changes[i + 1]["until"])
+        else:
+            start_ts = state.valid_from_ts
+            
+        # Add the interval [start_ts, next_start_ts)
+        intervals.append({**running_state, "valid_from_ts": start_ts})
+        next_start_ts = start_ts
 
-    rows.append({**base_row, "valid_from_ts": start_ts})
-    return rows
+    # Reverse to return chronological order [oldest -> newest]
+    return sorted(intervals, key=lambda x: x["valid_from_ts"])
 
 
 def build_updates_from_instruments(
