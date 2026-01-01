@@ -18,12 +18,17 @@ class TableRepository(Protocol):
         """Writes/overwrites the full table with the provided DataFrame."""
         ...
 
-    def append(self, df: pl.DataFrame) -> None:
-        """Appends data to the table. Most efficient for immutable event data."""
-        ...
-        
     def merge(self, df: pl.DataFrame, keys: list[str]) -> None:
         """Merges incremental updates into the table based on primary keys."""
+        ...
+
+
+@runtime_checkable
+class AppendableTableRepository(TableRepository, Protocol):
+    """Optional interface for repositories that support append operations."""
+
+    def append(self, df: pl.DataFrame) -> None:
+        """Appends data to the table. Most efficient for immutable event data."""
         ...
 
 @dataclass

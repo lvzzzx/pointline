@@ -28,5 +28,17 @@ pip install -e .
 pytest
 ```
 
+## CLI
+```bash
+# Show pending bronze files
+pointline ingest discover --pending-only
+
+# Show manifest status counts
+pointline manifest show
+
+# Apply dim_symbol updates from a CSV or Parquet file
+pointline dim-symbol upsert --file ./symbols.csv
+```
+
 ## Contributing
 Please review our [Product Guidelines](./conductor/product-guidelines.md) and [Workflow](./conductor/workflow.md) before contributing.
