@@ -1,4 +1,6 @@
-from typing import Protocol, runtime_checkable
+from typing import Protocol, runtime_checkable, Iterator, List, Optional
+from dataclasses import dataclass
+from datetime import date
 import polars as pl
 
 @runtime_checkable
@@ -22,4 +24,51 @@ class TableRepository(Protocol):
         
     def merge(self, df: pl.DataFrame, keys: list[str]) -> None:
         """Merges incremental updates into the table based on primary keys."""
+        ...
+
+@dataclass
+class BronzeFileMetadata:
+    """Metadata extracted from the source file system before reading contents."""
+    exchange: str
+    data_type: str
+    symbol: str
+    date: date
+    bronze_file_path: str  # The full relative path or key
+    file_size_bytes: int
+    last_modified_ts: int
+
+@runtime_checkable
+class BronzeSource(Protocol):
+    """Abstraction for a file system scanner."""
+    
+    def list_files(self, glob_pattern: str) -> Iterator[BronzeFileMetadata]:
+        """Scans storage for files matching the pattern."""
+        ...
+
+@dataclass
+class IngestionResult:
+    """Outcomes from the ingestion process."""
+    row_count: int
+    ts_local_min_us: int
+    ts_local_max_us: int
+    error_message: Optional[str] = None
+
+@runtime_checkable
+class IngestionManifestRepository(Protocol):
+    """Abstraction for the state ledger (silver.ingest_manifest)."""
+    
+    def resolve_file_id(self, meta: BronzeFileMetadata) -> int:
+        """Gets existing ID or mints a new one for a file."""
+        ...
+
+    def filter_pending(self, candidates: List[BronzeFileMetadata]) -> List[BronzeFileMetadata]:
+        """Returns only files that need processing (efficient batch anti-join)."""
+        ...
+        
+    def update_status(self, 
+                      file_id: int, 
+                      status: str, 
+                      meta: BronzeFileMetadata, 
+                      result: Optional[IngestionResult] = None) -> None:
+        """Records success/failure."""
         ...

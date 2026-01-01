@@ -6,7 +6,8 @@ LAKE_ROOT = Path(os.getenv("LAKE_ROOT", "./data/lake"))
 
 # Table Registry (Table Name -> Relative Path from LAKE_ROOT)
 TABLE_PATHS = {
-    # Example: "dim_symbol": "silver/dim_symbol"
+    "dim_symbol": "silver/dim_symbol",
+    "ingest_manifest": "silver/ingest_manifest",
 }
 
 # Storage Settings
