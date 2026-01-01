@@ -39,7 +39,7 @@ Why:
 
 Where:
 - `ingest_seq` is a deterministic sequence within the source file (e.g., line number).
-- **Lineage tracking**: In Silver metadata, store `bronze_file_name` and `file_line_number` to ensure `ingest_seq` is robust and debuggable.
+- **Lineage tracking**: In Silver tables, store `file_id` (u32) and `file_line_number` to ensure `ingest_seq` is robust and debuggable. Join with `silver.ingest_manifest` to resolve the original `bronze_file_name`.
 
 ---
 
@@ -186,7 +186,7 @@ Tardis incremental L2 updates are **absolute sizes** at a price level (not delta
 **Optional convenience columns:**
 - `msg_id` (group rows belonging to the same source message)
 - `event_group_id` (if vendor provides transaction IDs spanning multiple updates)
-- `source_file` / `source_offset` (lineage)
+- `file_id` / `file_line_number` (lineage)
 
 ---
 
@@ -485,10 +485,12 @@ idempotent, provides auditability, and enables fast skip logic.
 
 **Primary key (logical):**
 `(exchange, data_type, symbol, date, bronze_file_name)`
+*Note: `file_id` is the surrogate key for joins from Silver tables.*
 
 **Recommended columns:**
 | Column | Type | Description |
 |---|---|---|
+| file_id | u32 | Surrogate Key (Primary Key) |
 | exchange | string | e.g., `binance` |
 | data_type | string | e.g., `trades`, `quotes` |
 | symbol | string | upper-case, `BTCUSDT` |
@@ -503,7 +505,7 @@ idempotent, provides auditability, and enables fast skip logic.
 | ts_exch_min_us | i64 | optional min exchange ts |
 | ts_exch_max_us | i64 | optional max exchange ts |
 | ingested_at | i64 | ingest time in µs |
-| status | string | `success`, `failed`, `partial` |
+| status | string | `success`, `failed` |
 | error_message | string | error text for failed ingests |
 
 **Ingestion decision (skip logic):**
@@ -514,8 +516,9 @@ idempotent, provides auditability, and enables fast skip logic.
 4. Otherwise, ingest and write/overwrite a manifest row with updated stats.
 
 **Lineage guarantees:**
-- Silver tables **must** include `bronze_file_name` and `file_line_number`.
+- Silver tables **must** include `file_id` and `file_line_number`.
 - `ingest_seq` is derived from `file_line_number` to ensure deterministic ordering.
+- Full lineage (source file path) is retrieved by joining Silver tables with `silver.ingest_manifest` on `file_id`.
 
 ---
 

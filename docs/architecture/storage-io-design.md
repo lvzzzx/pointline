@@ -72,6 +72,55 @@ This keeps the pattern consistent and the domain layer reusable.
 - Central place for table paths and storage settings.
 - Example: `TABLE_PATHS = {"dim_symbol": "/lake/silver/dim_symbol"}`
 
+## Ingestion & Manifest Interfaces
+For the ingestion pipeline (Bronze → Silver), we separate **scanning** files from **tracking** their state.
+
+### 1. BronzeSource (Scanner)
+Scans physical storage (Local, S3, etc.) to find candidate files. Does not know about ingestion state.
+
+```python
+@dataclass
+class BronzeFileMetadata:
+    exchange: str
+    data_type: str
+    symbol: str
+    date: date
+    bronze_file_path: str
+    file_size_bytes: int
+    last_modified_ts: int
+
+class BronzeSource(Protocol):
+    def list_files(self, glob_pattern: str) -> Iterator[BronzeFileMetadata]:
+        """Scans storage for files matching the pattern."""
+        ...
+```
+
+### 2. IngestionManifestRepository (State Ledger)
+Manages the `silver.ingest_manifest` table. Handles skip logic and `file_id` assignment.
+
+```python
+class IngestionManifestRepository(Protocol):
+    def resolve_file_id(self, meta: BronzeFileMetadata) -> int:
+        """Gets existing ID or mints a new one for a file."""
+        ...
+
+    def filter_pending(self, candidates: list[BronzeFileMetadata]) -> list[BronzeFileMetadata]:
+        """Returns only files that need processing (efficient batch anti-join)."""
+        ...
+        
+    def update_status(self, file_id: int, status: str, meta: BronzeFileMetadata, result=None) -> None:
+        """Records success/failure."""
+        ...
+```
+
+### Workflow
+1. **Discover**: `source.list_files(...)` → `all_files`
+2. **Filter**: `manifest.filter_pending(all_files)` → `todo_files`
+3. **Loop**:
+   - `file_id = manifest.resolve_file_id(file)`
+   - `transform_and_write(file, file_id)`
+   - `manifest.update_status(...)`
+
 ## Non‑Goals
 - No storage logic in domain modules.
 - No cross‑table orchestration (each service handles one table).
