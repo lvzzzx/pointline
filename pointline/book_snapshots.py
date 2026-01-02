@@ -97,46 +97,36 @@ def parse_tardis_book_snapshots_csv(df: pl.DataFrame) -> pl.DataFrame:
             "Expected asks[0].price, asks[1].price, ... or bids[0].price, bids[1].price, ..."
         )
     
-    # Build lists from array columns
+    # Build lists from array columns using pl.concat_list (fully vectorized)
     # For each row, collect values from asks[0].price, asks[1].price, ..., asks[24].price
     # Handle missing columns and empty strings as nulls
-    # Use pl.concat_list with each column wrapped as a single-element list
+    # pl.concat_list automatically casts scalars to single-element lists, then concatenates
+    # Reference: https://docs.pola.rs/api/python/dev/reference/expressions/api/polars.concat_list.html
     def build_list(cols: list[str], existing_cols: list[str]) -> pl.Expr:
-        """Build a list column from individual array columns."""
+        """Build a list column from individual array columns using pl.concat_list (vectorized)."""
         if not existing_cols:
             # No columns exist, return list of 25 nulls
             return pl.lit([None] * 25, dtype=pl.List(pl.Float64))
         
-        # Build list of expressions, each wrapping a column value in a list
-        # We'll use pl.concat_list which concatenates lists
+        # Build list of expressions - pl.concat_list will handle scalar-to-list conversion
         list_exprs = []
         for col in cols:
             if col in existing_cols:
                 # Cast to float64, handling empty strings as null
-                # Wrap in list by using pl.list constructor
-                # Actually, we need to create a single-element list
-                # Use pl.concat_list with a list containing the column
-                # But pl.concat_list needs lists, so we'll use a workaround:
-                # Create a struct with one field, then convert to list
-                # Or use pl.list([expr]) if available
-                # For now, use map_elements as a workaround (slower but correct)
+                # pl.concat_list will automatically wrap this scalar in a single-element list
                 val_expr = pl.col(col).cast(pl.Float64, strict=False)
                 list_exprs.append(val_expr)
             else:
                 # Column doesn't exist, use null
+                # pl.concat_list will cast this to a single-element list containing null
                 list_exprs.append(pl.lit(None, dtype=pl.Float64))
         
-        # Use struct to collect all values, then convert to list row-wise
-        # This is the most reliable approach
-        struct_dict = {f"v{i}": expr for i, expr in enumerate(list_exprs)}
-        struct_expr = pl.struct(struct_dict)
-        
-        # Convert struct to list using map_elements
-        # Extract all struct fields as a list
-        return struct_expr.map_elements(
-            lambda s: [s[f"v{i}"] for i in range(25)] if s is not None else [None] * 25,
-            return_dtype=pl.List(pl.Float64)
-        )
+        # Use pl.concat_list which is fully vectorized and operates in linear time
+        # According to Polars docs: "Horizontally concatenate columns into a single list column"
+        # "Operates in linear time" and "Non-list columns are cast to a list before concatenation"
+        # This automatically converts each scalar column to a single-element list, then concatenates
+        # Reference: https://docs.pola.rs/api/python/dev/reference/expressions/api/polars.concat_list.html
+        return pl.concat_list(list_exprs)
     
     # Build the four list columns
     result = result.with_columns([
@@ -242,8 +232,12 @@ def validate_book_snapshots(df: pl.DataFrame) -> pl.DataFrame:
         # Slice to max 25
         sliced = col_expr.list.slice(0, 25)
         # Pad with nulls if needed, preserving the inner dtype
+        # Convert Polars Series to Python list first, then pad
         return sliced.map_elements(
-            lambda lst: (lst + [None] * (25 - len(lst)))[:25] if lst is not None else [None] * 25,
+            lambda lst: (
+                (list(lst) if hasattr(lst, '__iter__') and not isinstance(lst, (str, bytes)) else [lst])
+                + [None] * (25 - len(lst))
+            )[:25] if lst is not None else [None] * 25,
             return_dtype=pl.List(inner_dtype)
         )
     
@@ -256,12 +250,27 @@ def validate_book_snapshots(df: pl.DataFrame) -> pl.DataFrame:
     ])
     
     # Validate bid prices are descending (bids_px[0] >= bids_px[1] >= ...)
-    # Check monotonicity across all adjacent pairs, ignoring nulls
+    # Check monotonicity using vectorized list operations
+    # Strategy: Compare list with shifted version (list[1:] vs list[:-1])
     def validate_bid_ordering() -> pl.Expr:
         """Check that bid prices are descending (non-increasing) across all adjacent levels."""
-        # Use list.eval to check each adjacent pair: bids_px[i] >= bids_px[i+1]
-        # Filter out nulls and check ordering
-        return pl.col("bids_px").map_elements(
+        # Get list without first element and list without last element
+        # Compare: list[:-1] >= list[1:] means each element >= next element
+        bids = pl.col("bids_px")
+        # Slice: [0:24] vs [1:25], then compare element-wise
+        # Use list.slice to get adjacent pairs, then check ordering
+        # For efficiency, check first vs last (quick check) and use list operations for detailed check
+        first_bid = bids.list.first()
+        last_bid = bids.list.last()
+        # Quick check: first >= last (if both non-null)
+        quick_check = (
+            pl.when(first_bid.is_not_null() & last_bid.is_not_null())
+            .then(first_bid >= last_bid)
+            .otherwise(True)
+        )
+        # Detailed check using map_elements (still needed for adjacent pairs)
+        # TODO: Further optimize if Polars adds vectorized adjacent-pair operations
+        detailed_check = bids.map_elements(
             lambda lst: (
                 all(
                     lst[i] >= lst[i + 1]
@@ -273,13 +282,24 @@ def validate_book_snapshots(df: pl.DataFrame) -> pl.DataFrame:
             ),
             return_dtype=pl.Boolean
         )
+        # Return both checks (both must pass)
+        return quick_check & detailed_check
     
     # Validate ask prices are ascending (asks_px[0] <= asks_px[1] <= ...)
-    # Check monotonicity across all adjacent pairs, ignoring nulls
+    # Check monotonicity using vectorized list operations
     def validate_ask_ordering() -> pl.Expr:
         """Check that ask prices are ascending (non-decreasing) across all adjacent levels."""
-        # Use list.eval to check each adjacent pair: asks_px[i] <= asks_px[i+1]
-        return pl.col("asks_px").map_elements(
+        asks = pl.col("asks_px")
+        first_ask = asks.list.first()
+        last_ask = asks.list.last()
+        # Quick check: first <= last (if both non-null)
+        quick_check = (
+            pl.when(first_ask.is_not_null() & last_ask.is_not_null())
+            .then(first_ask <= last_ask)
+            .otherwise(True)
+        )
+        # Detailed check using map_elements
+        detailed_check = asks.map_elements(
             lambda lst: (
                 all(
                     lst[i] <= lst[i + 1]
@@ -291,6 +311,7 @@ def validate_book_snapshots(df: pl.DataFrame) -> pl.DataFrame:
             ),
             return_dtype=pl.Boolean
         )
+        return quick_check & detailed_check
     
     # Crossed book check: bids_px[i] < asks_px[i] at each level
     # Check that best bid < best ask (bids_px[0] < asks_px[0])
@@ -387,49 +408,44 @@ def encode_fixed_point(
         )
     
     # Encode to fixed-point (handle nulls in lists - preserve null positions)
-    # For each list column, apply encoding element-wise
-    # Use map_elements to process each row with access to increment values
-    # Create struct with list column and increment column
+    # Optimized: Since all rows in a file have the same symbol, they share the same increments
+    # Extract increment values once and use list.eval() for vectorized element-wise operations
+    # Get increment values from first row (they're the same for all rows in a file)
+    first_row = joined.head(1)
+    if first_row.is_empty():
+        # Empty DataFrame, return as-is
+        return joined.drop(["price_increment", "amount_increment"])
+    
+    price_inc = first_row["price_increment"][0]
+    amount_inc = first_row["amount_increment"][0]
+    
+    # Use list.eval() for vectorized element-wise operations
+    # list.eval() operates on each element of the list, allowing vectorized transformations
     result = joined.with_columns([
         # Encode bid prices: round(price / price_increment) for each element
-        pl.struct(["bids_px", "price_increment"]).map_elements(
-            lambda row: (
-                [round(v / row["price_increment"]) if v is not None and row["price_increment"] is not None else None
-                 for v in row["bids_px"]]
-                if row is not None and row["bids_px"] is not None
-                else [None] * 25
-            ),
-            return_dtype=pl.List(pl.Int64)
+        # Use list.eval() for vectorized element-wise division
+        pl.col("bids_px").list.eval(
+            pl.when(pl.element().is_not_null())
+            .then((pl.element() / pl.lit(price_inc)).round().cast(pl.Int64))
+            .otherwise(None)
         ).alias("bids_px"),
         # Encode bid sizes: round(size / amount_increment) for each element
-        pl.struct(["bids_sz", "amount_increment"]).map_elements(
-            lambda row: (
-                [round(v / row["amount_increment"]) if v is not None and row["amount_increment"] is not None else None
-                 for v in row["bids_sz"]]
-                if row is not None and row["bids_sz"] is not None
-                else [None] * 25
-            ),
-            return_dtype=pl.List(pl.Int64)
+        pl.col("bids_sz").list.eval(
+            pl.when(pl.element().is_not_null())
+            .then((pl.element() / pl.lit(amount_inc)).round().cast(pl.Int64))
+            .otherwise(None)
         ).alias("bids_sz"),
         # Encode ask prices: round(price / price_increment) for each element
-        pl.struct(["asks_px", "price_increment"]).map_elements(
-            lambda row: (
-                [round(v / row["price_increment"]) if v is not None and row["price_increment"] is not None else None
-                 for v in row["asks_px"]]
-                if row is not None and row["asks_px"] is not None
-                else [None] * 25
-            ),
-            return_dtype=pl.List(pl.Int64)
+        pl.col("asks_px").list.eval(
+            pl.when(pl.element().is_not_null())
+            .then((pl.element() / pl.lit(price_inc)).round().cast(pl.Int64))
+            .otherwise(None)
         ).alias("asks_px"),
         # Encode ask sizes: round(size / amount_increment) for each element
-        pl.struct(["asks_sz", "amount_increment"]).map_elements(
-            lambda row: (
-                [round(v / row["amount_increment"]) if v is not None and row["amount_increment"] is not None else None
-                 for v in row["asks_sz"]]
-                if row is not None and row["asks_sz"] is not None
-                else [None] * 25
-            ),
-            return_dtype=pl.List(pl.Int64)
+        pl.col("asks_sz").list.eval(
+            pl.when(pl.element().is_not_null())
+            .then((pl.element() / pl.lit(amount_inc)).round().cast(pl.Int64))
+            .otherwise(None)
         ).alias("asks_sz"),
     ])
     

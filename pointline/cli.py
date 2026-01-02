@@ -81,7 +81,8 @@ def _create_ingestion_service(data_type: str, manifest_repo):
             partition_by=["exchange", "date"]
         )
         return QuotesIngestionService(repo, dim_symbol_repo, manifest_repo)
-    elif data_type == "book_snapshots":
+    elif data_type == "book_snapshots" or data_type == "book_snapshot_25":
+        # Support both "book_snapshots" (canonical) and "book_snapshot_25" (Tardis naming)
         repo = BaseDeltaRepository(
             get_table_path("book_snapshots"),
             partition_by=["exchange", "date"]
