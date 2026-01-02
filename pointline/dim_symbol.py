@@ -340,9 +340,13 @@ def resolve_symbol_ids(
     It expects dim_symbol to be in the canonical schema.
     """
     # Ensure join columns match dim_symbol schema
+    # Note: Read actual schema from dim_symbol to handle type mismatches
+    actual_schema = {col: dim_symbol[col].dtype for col in NATURAL_KEY_COLS if col in dim_symbol.columns}
     for col in NATURAL_KEY_COLS:
         if col in data.columns:
-            data = data.with_columns(pl.col(col).cast(SCHEMA[col]))
+            # Use actual schema from dim_symbol if available, otherwise use SCHEMA
+            target_dtype = actual_schema.get(col, SCHEMA[col])
+            data = data.with_columns(pl.col(col).cast(target_dtype))
 
     return data.sort(ts_col).join_asof(
         dim_symbol.sort("valid_from_ts"),

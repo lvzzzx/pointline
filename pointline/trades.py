@@ -20,8 +20,8 @@ import polars as pl
 # Schema definition matching design.md Section 5.3
 TRADES_SCHEMA: dict[str, pl.DataType] = {
     "date": pl.Date,
-    "exchange_id": pl.UInt16,
-    "symbol_id": pl.UInt32,
+    "exchange_id": pl.Int16,  # Match dim_symbol's exchange_id type
+    "symbol_id": pl.Int64,  # Match dim_symbol's symbol_id type
     "ts_local_us": pl.Int64,
     "ts_exch_us": pl.Int64,
     "ingest_seq": pl.UInt32,
@@ -338,7 +338,11 @@ def resolve_symbol_ids(
     # Add exchange_id and exchange_symbol if not present
     result = data.clone()
     if "exchange_id" not in result.columns:
-        result = result.with_columns(pl.lit(exchange_id, dtype=pl.UInt16).alias("exchange_id"))
+        # Cast to match dim_symbol's exchange_id type (Int16, not UInt16)
+        result = result.with_columns(pl.lit(exchange_id, dtype=pl.Int16).alias("exchange_id"))
+    else:
+        # Ensure existing exchange_id matches dim_symbol type
+        result = result.with_columns(pl.col("exchange_id").cast(pl.Int16))
     if "exchange_symbol" not in result.columns:
         result = result.with_columns(pl.lit(exchange_symbol).alias("exchange_symbol"))
     

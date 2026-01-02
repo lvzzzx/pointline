@@ -91,6 +91,8 @@ class TradesIngestionService(BaseService):
         self,
         meta: BronzeFileMetadata,
         file_id: int,
+        *,
+        bronze_root: Path | None = None,
     ) -> IngestionResult:
         """
         Ingest a single trades CSV file from Bronze to Silver.
@@ -98,11 +100,14 @@ class TradesIngestionService(BaseService):
         Args:
             meta: Metadata about the bronze file
             file_id: File ID from manifest repository
+            bronze_root: Root path for bronze files (default: LAKE_ROOT/tardis)
             
         Returns:
             IngestionResult with row count and timestamp ranges
         """
-        bronze_path = LAKE_ROOT / meta.bronze_file_path
+        if bronze_root is None:
+            bronze_root = LAKE_ROOT / "tardis"
+        bronze_path = bronze_root / meta.bronze_file_path
         
         if not bronze_path.exists():
             error_msg = f"Bronze file not found: {bronze_path}"
@@ -292,13 +297,14 @@ class TradesIngestionService(BaseService):
 
     def _add_metadata(self, df: pl.DataFrame, exchange_id: int) -> pl.DataFrame:
         """Add exchange_id and date columns."""
+        # Use Int16 to match dim_symbol schema (dim_symbol uses Int16, not UInt16)
         result = df.with_columns([
-            pl.lit(exchange_id, dtype=pl.UInt16).alias("exchange_id"),
+            pl.lit(exchange_id, dtype=pl.Int16).alias("exchange_id"),
         ])
         
-        # Derive date from ts_local_us
+        # Derive date from ts_local_us (microseconds since epoch)
         result = result.with_columns([
-            (pl.col("ts_local_us") / 1_000_000).cast(pl.Datetime(time_unit="us", time_zone="UTC"))
+            pl.from_epoch(pl.col("ts_local_us"), time_unit="us")
             .cast(pl.Date)
             .alias("date"),
         ])
