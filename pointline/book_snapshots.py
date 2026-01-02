@@ -224,16 +224,27 @@ def validate_book_snapshots(df: pl.DataFrame) -> pl.DataFrame:
     
     # Ensure list lengths are 25 (pad with nulls if needed, truncate if longer)
     # Slice to max 25 elements, then pad with nulls if needed
+    # Preserve the existing dtype (Int64 after encoding, Float64 before encoding)
     def normalize_list_length(col_name: str) -> pl.Expr:
         """Ensure list has exactly 25 elements, padding with nulls or truncating."""
         col_expr = pl.col(col_name)
+        # Get the inner dtype from the schema or infer from column
+        # After encode_fixed_point, lists should be Int64; preserve that
+        # Check schema first (post-encoding state should be Int64)
+        expected_dtype = BOOK_SNAPSHOTS_SCHEMA.get(col_name, pl.List(pl.Int64))
+        if isinstance(expected_dtype, pl.List):
+            inner_dtype = expected_dtype.inner
+        else:
+            # Fallback: try to infer from actual data (for pre-encoding case)
+            # Default to Int64 since validation typically runs after encoding
+            inner_dtype = pl.Int64
+        
         # Slice to max 25
         sliced = col_expr.list.slice(0, 25)
-        # Pad with nulls if needed
-        # Use map_elements to pad
+        # Pad with nulls if needed, preserving the inner dtype
         return sliced.map_elements(
             lambda lst: (lst + [None] * (25 - len(lst)))[:25] if lst is not None else [None] * 25,
-            return_dtype=pl.List(pl.Float64)
+            return_dtype=pl.List(inner_dtype)
         )
     
     # Normalize all list columns to length 25
@@ -245,29 +256,40 @@ def validate_book_snapshots(df: pl.DataFrame) -> pl.DataFrame:
     ])
     
     # Validate bid prices are descending (bids_px[0] >= bids_px[1] >= ...)
-    # Check each adjacent pair
+    # Check monotonicity across all adjacent pairs, ignoring nulls
     def validate_bid_ordering() -> pl.Expr:
-        """Check that bid prices are descending (non-increasing)."""
-        # For each row, check that bids_px[i] >= bids_px[i+1] for all i where both are not null
-        # This is complex to do row-wise, so we'll use a simpler check:
-        # Check that the first non-null bid is >= the last non-null bid
-        first_bid = pl.col("bids_px").list.first()
-        last_bid = pl.col("bids_px").list.last()
-        return (
-            pl.when(first_bid.is_not_null() & last_bid.is_not_null())
-            .then(first_bid >= last_bid)
-            .otherwise(True)
+        """Check that bid prices are descending (non-increasing) across all adjacent levels."""
+        # Use list.eval to check each adjacent pair: bids_px[i] >= bids_px[i+1]
+        # Filter out nulls and check ordering
+        return pl.col("bids_px").map_elements(
+            lambda lst: (
+                all(
+                    lst[i] >= lst[i + 1]
+                    for i in range(len(lst) - 1)
+                    if lst[i] is not None and lst[i + 1] is not None
+                )
+                if lst is not None
+                else True
+            ),
+            return_dtype=pl.Boolean
         )
     
     # Validate ask prices are ascending (asks_px[0] <= asks_px[1] <= ...)
+    # Check monotonicity across all adjacent pairs, ignoring nulls
     def validate_ask_ordering() -> pl.Expr:
-        """Check that ask prices are ascending (non-decreasing)."""
-        first_ask = pl.col("asks_px").list.first()
-        last_ask = pl.col("asks_px").list.last()
-        return (
-            pl.when(first_ask.is_not_null() & last_ask.is_not_null())
-            .then(first_ask <= last_ask)
-            .otherwise(True)
+        """Check that ask prices are ascending (non-decreasing) across all adjacent levels."""
+        # Use list.eval to check each adjacent pair: asks_px[i] <= asks_px[i+1]
+        return pl.col("asks_px").map_elements(
+            lambda lst: (
+                all(
+                    lst[i] <= lst[i + 1]
+                    for i in range(len(lst) - 1)
+                    if lst[i] is not None and lst[i + 1] is not None
+                )
+                if lst is not None
+                else True
+            ),
+            return_dtype=pl.Boolean
         )
     
     # Crossed book check: bids_px[i] < asks_px[i] at each level
