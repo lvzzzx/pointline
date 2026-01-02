@@ -225,19 +225,23 @@ Snapshots are full top-N book states (e.g., 25 levels).
 **Verdict:** Stick to `list<i64>`. DuckDB/Polars handle lists natively and efficiently. Wide columns explode schema metadata.
 
 **Table:** `silver.book_snapshots_top25`
+**Partitioned by:** `["exchange", "date"]` (same strategy as trades/quotes tables)
 
 | Column | Type | Notes |
 |---|---:|---|
-| date | date | |
-| exchange_id | i16 | |
-| symbol_id | i32 | |
-| ts_local_us | i64 | |
-| ts_exch_us | i64 | |
-| ingest_seq | i32 | |
-| bids_px | list<i64> | length N |
-| bids_sz | list<i64> | length N |
-| asks_px | list<i64> | length N |
-| asks_sz | list<i64> | length N |
+| date | date | partitioned by (derived from `ts_local_us` in UTC) |
+| exchange | string | partitioned by (not stored in Parquet files, reconstructed from directory) |
+| exchange_id | i16 | for joins and compression |
+| symbol_id | i64 | match dim_symbol type |
+| ts_local_us | i64 | primary replay timeline |
+| ts_exch_us | i64 | exchange time if available |
+| ingest_seq | i32 | stable ordering within file |
+| bids_px | list<i64> | length 25 (nulls for missing levels) |
+| bids_sz | list<i64> | length 25 (nulls for missing levels) |
+| asks_px | list<i64> | length 25 (nulls for missing levels) |
+| asks_sz | list<i64> | length 25 (nulls for missing levels) |
+| file_id | i32 | lineage tracking (join with `silver.ingest_manifest`) |
+| file_line_number | i32 | lineage tracking (deterministic ordering within file) |
 
 **Gold option: wide columns (Legacy Support)**
 `gold.book_snapshots_top25_wide` with columns:
