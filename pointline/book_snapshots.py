@@ -361,31 +361,46 @@ def encode_fixed_point(
         )
     
     # Encode to fixed-point (handle nulls in lists - preserve null positions).
-    # Use per-row increments via list.eval() to support mixed-symbol batches.
+    # Assumes batches are single-symbol; enforce that to avoid mixed-symbol mis-encoding.
+    unique_symbols = joined.select("symbol_id").unique().height
+    if unique_symbols > 1:
+        raise ValueError(
+            "encode_fixed_point: multiple symbol_id values found in batch; "
+            "split by symbol_id or use a per-symbol encoding path"
+        )
+
+    # Extract increment values once (valid because batch is single-symbol).
+    first_row = joined.head(1)
+    if first_row.is_empty():
+        return joined.drop(["price_increment", "amount_increment"])
+
+    price_inc = first_row["price_increment"][0]
+    amount_inc = first_row["amount_increment"][0]
+
     result = joined.with_columns([
         # Encode bid prices: round(price / price_increment) for each element
         # Use list.eval() for vectorized element-wise division
         pl.col("bids_px").list.eval(
             pl.when(pl.element().is_not_null())
-            .then((pl.element() / pl.col("price_increment")).round().cast(pl.Int64))
+            .then((pl.element() / pl.lit(price_inc)).round().cast(pl.Int64))
             .otherwise(None)
         ).alias("bids_px"),
         # Encode bid sizes: round(size / amount_increment) for each element
         pl.col("bids_sz").list.eval(
             pl.when(pl.element().is_not_null())
-            .then((pl.element() / pl.col("amount_increment")).round().cast(pl.Int64))
+            .then((pl.element() / pl.lit(amount_inc)).round().cast(pl.Int64))
             .otherwise(None)
         ).alias("bids_sz"),
         # Encode ask prices: round(price / price_increment) for each element
         pl.col("asks_px").list.eval(
             pl.when(pl.element().is_not_null())
-            .then((pl.element() / pl.col("price_increment")).round().cast(pl.Int64))
+            .then((pl.element() / pl.lit(price_inc)).round().cast(pl.Int64))
             .otherwise(None)
         ).alias("asks_px"),
         # Encode ask sizes: round(size / amount_increment) for each element
         pl.col("asks_sz").list.eval(
             pl.when(pl.element().is_not_null())
-            .then((pl.element() / pl.col("amount_increment")).round().cast(pl.Int64))
+            .then((pl.element() / pl.lit(amount_inc)).round().cast(pl.Int64))
             .otherwise(None)
         ).alias("asks_sz"),
     ])
