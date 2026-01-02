@@ -218,28 +218,19 @@ def validate_book_snapshots(df: pl.DataFrame) -> pl.DataFrame:
     def normalize_list_length(col_name: str) -> pl.Expr:
         """Ensure list has exactly 25 elements, padding with nulls or truncating."""
         col_expr = pl.col(col_name)
-        # Get the inner dtype from the schema or infer from column
-        # After encode_fixed_point, lists should be Int64; preserve that
-        # Check schema first (post-encoding state should be Int64)
-        expected_dtype = BOOK_SNAPSHOTS_SCHEMA.get(col_name, pl.List(pl.Int64))
-        if isinstance(expected_dtype, pl.List):
-            inner_dtype = expected_dtype.inner
+        # Prefer actual column dtype; fall back to schema or Int64.
+        col_dtype = df.schema.get(col_name)
+        if isinstance(col_dtype, pl.List):
+            inner_dtype = col_dtype.inner
         else:
-            # Fallback: try to infer from actual data (for pre-encoding case)
-            # Default to Int64 since validation typically runs after encoding
-            inner_dtype = pl.Int64
-        
-        # Slice to max 25
+            expected_dtype = BOOK_SNAPSHOTS_SCHEMA.get(col_name, pl.List(pl.Int64))
+            inner_dtype = expected_dtype.inner if isinstance(expected_dtype, pl.List) else pl.Int64
+
+        # Slice to max 25, then pad with nulls (vectorized).
         sliced = col_expr.list.slice(0, 25)
-        # Pad with nulls if needed, preserving the inner dtype
-        # Convert Polars Series to Python list first, then pad
-        return sliced.map_elements(
-            lambda lst: (
-                (list(lst) if hasattr(lst, '__iter__') and not isinstance(lst, (str, bytes)) else [lst])
-                + [None] * (25 - len(lst))
-            )[:25] if lst is not None else [None] * 25,
-            return_dtype=pl.List(inner_dtype)
-        )
+        null_pad = pl.lit(None, dtype=inner_dtype).repeat_by(pl.lit(25))
+        padded = pl.concat_list([sliced, null_pad]).list.slice(0, 25)
+        return pl.when(col_expr.is_null()).then(null_pad).otherwise(padded)
     
     # Normalize all list columns to length 25
     result = df.with_columns([
@@ -250,68 +241,30 @@ def validate_book_snapshots(df: pl.DataFrame) -> pl.DataFrame:
     ])
     
     # Validate bid prices are descending (bids_px[0] >= bids_px[1] >= ...)
-    # Check monotonicity using vectorized list operations
-    # Strategy: Compare list with shifted version (list[1:] vs list[:-1])
+    # Vectorized monotonicity check using list.diff on non-null values.
     def validate_bid_ordering() -> pl.Expr:
         """Check that bid prices are descending (non-increasing) across all adjacent levels."""
-        # Get list without first element and list without last element
-        # Compare: list[:-1] >= list[1:] means each element >= next element
-        bids = pl.col("bids_px")
-        # Slice: [0:24] vs [1:25], then compare element-wise
-        # Use list.slice to get adjacent pairs, then check ordering
-        # For efficiency, check first vs last (quick check) and use list operations for detailed check
-        first_bid = bids.list.first()
-        last_bid = bids.list.last()
-        # Quick check: first >= last (if both non-null)
-        quick_check = (
-            pl.when(first_bid.is_not_null() & last_bid.is_not_null())
-            .then(first_bid >= last_bid)
-            .otherwise(True)
+        bids = pl.col("bids_px").list.drop_nulls()
+        diffs = bids.list.diff()
+        max_diff = diffs.list.max()
+        return (
+            pl.when(max_diff.is_null())
+            .then(True)
+            .otherwise(max_diff <= 0)
         )
-        # Detailed check using map_elements (still needed for adjacent pairs)
-        # TODO: Further optimize if Polars adds vectorized adjacent-pair operations
-        detailed_check = bids.map_elements(
-            lambda lst: (
-                all(
-                    lst[i] >= lst[i + 1]
-                    for i in range(len(lst) - 1)
-                    if lst[i] is not None and lst[i + 1] is not None
-                )
-                if lst is not None
-                else True
-            ),
-            return_dtype=pl.Boolean
-        )
-        # Return both checks (both must pass)
-        return quick_check & detailed_check
     
     # Validate ask prices are ascending (asks_px[0] <= asks_px[1] <= ...)
-    # Check monotonicity using vectorized list operations
+    # Vectorized monotonicity check using list.diff on non-null values.
     def validate_ask_ordering() -> pl.Expr:
         """Check that ask prices are ascending (non-decreasing) across all adjacent levels."""
-        asks = pl.col("asks_px")
-        first_ask = asks.list.first()
-        last_ask = asks.list.last()
-        # Quick check: first <= last (if both non-null)
-        quick_check = (
-            pl.when(first_ask.is_not_null() & last_ask.is_not_null())
-            .then(first_ask <= last_ask)
-            .otherwise(True)
+        asks = pl.col("asks_px").list.drop_nulls()
+        diffs = asks.list.diff()
+        min_diff = diffs.list.min()
+        return (
+            pl.when(min_diff.is_null())
+            .then(True)
+            .otherwise(min_diff >= 0)
         )
-        # Detailed check using map_elements
-        detailed_check = asks.map_elements(
-            lambda lst: (
-                all(
-                    lst[i] <= lst[i + 1]
-                    for i in range(len(lst) - 1)
-                    if lst[i] is not None and lst[i + 1] is not None
-                )
-                if lst is not None
-                else True
-            ),
-            return_dtype=pl.Boolean
-        )
-        return quick_check & detailed_check
     
     # Crossed book check: bids_px[i] < asks_px[i] at each level
     # Check that best bid < best ask (bids_px[0] < asks_px[0])
@@ -407,44 +360,32 @@ def encode_fixed_point(
             f"encode_fixed_point: {missing_symbols.height} symbol_ids not found in dim_symbol"
         )
     
-    # Encode to fixed-point (handle nulls in lists - preserve null positions)
-    # Optimized: Since all rows in a file have the same symbol, they share the same increments
-    # Extract increment values once and use list.eval() for vectorized element-wise operations
-    # Get increment values from first row (they're the same for all rows in a file)
-    first_row = joined.head(1)
-    if first_row.is_empty():
-        # Empty DataFrame, return as-is
-        return joined.drop(["price_increment", "amount_increment"])
-    
-    price_inc = first_row["price_increment"][0]
-    amount_inc = first_row["amount_increment"][0]
-    
-    # Use list.eval() for vectorized element-wise operations
-    # list.eval() operates on each element of the list, allowing vectorized transformations
+    # Encode to fixed-point (handle nulls in lists - preserve null positions).
+    # Use per-row increments via list.eval() to support mixed-symbol batches.
     result = joined.with_columns([
         # Encode bid prices: round(price / price_increment) for each element
         # Use list.eval() for vectorized element-wise division
         pl.col("bids_px").list.eval(
             pl.when(pl.element().is_not_null())
-            .then((pl.element() / pl.lit(price_inc)).round().cast(pl.Int64))
+            .then((pl.element() / pl.col("price_increment")).round().cast(pl.Int64))
             .otherwise(None)
         ).alias("bids_px"),
         # Encode bid sizes: round(size / amount_increment) for each element
         pl.col("bids_sz").list.eval(
             pl.when(pl.element().is_not_null())
-            .then((pl.element() / pl.lit(amount_inc)).round().cast(pl.Int64))
+            .then((pl.element() / pl.col("amount_increment")).round().cast(pl.Int64))
             .otherwise(None)
         ).alias("bids_sz"),
         # Encode ask prices: round(price / price_increment) for each element
         pl.col("asks_px").list.eval(
             pl.when(pl.element().is_not_null())
-            .then((pl.element() / pl.lit(price_inc)).round().cast(pl.Int64))
+            .then((pl.element() / pl.col("price_increment")).round().cast(pl.Int64))
             .otherwise(None)
         ).alias("asks_px"),
         # Encode ask sizes: round(size / amount_increment) for each element
         pl.col("asks_sz").list.eval(
             pl.when(pl.element().is_not_null())
-            .then((pl.element() / pl.lit(amount_inc)).round().cast(pl.Int64))
+            .then((pl.element() / pl.col("amount_increment")).round().cast(pl.Int64))
             .otherwise(None)
         ).alias("asks_sz"),
     ])
