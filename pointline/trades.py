@@ -139,7 +139,10 @@ def parse_tardis_trades_csv(df: pl.DataFrame) -> pl.DataFrame:
     
     if side_col:
         result = result.with_columns(
-            pl.col(side_col).map_elements(_map_side_to_code, return_dtype=pl.UInt8).alias("side")
+            pl.col(side_col)
+            .map_elements(_map_side_to_code, return_dtype=pl.UInt8)
+            .fill_null(SIDE_UNKNOWN)
+            .alias("side")
         )
     else:
         result = result.with_columns(pl.lit(SIDE_UNKNOWN, dtype=pl.UInt8).alias("side"))

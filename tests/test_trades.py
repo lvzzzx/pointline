@@ -26,17 +26,22 @@ from pointline.trades import (
 
 
 def _sample_tardis_trades_csv() -> pl.DataFrame:
-    """Create a sample Tardis trades CSV DataFrame."""
+    """Create a sample Tardis trades CSV DataFrame.
+    
+    Tardis provides timestamps as microseconds since epoch (integers).
+    """
+    # 2024-05-01T10:00:00.000000Z = 1714557600000000 microseconds
+    base_ts = 1714557600000000
     return pl.DataFrame({
         "local_timestamp": [
-            "2024-05-01T10:00:00.000000Z",
-            "2024-05-01T10:00:01.000000Z",
-            "2024-05-01T10:00:02.000000Z",
+            base_ts,
+            base_ts + 1_000_000,  # +1 second
+            base_ts + 2_000_000,  # +2 seconds
         ],
         "timestamp": [
-            "2024-05-01T10:00:00.100000Z",
-            "2024-05-01T10:00:01.100000Z",
-            "2024-05-01T10:00:02.100000Z",
+            base_ts + 100_000,  # +0.1 second
+            base_ts + 1_100_000,  # +1.1 seconds
+            base_ts + 2_100_000,  # +2.1 seconds
         ],
         "trade_id": ["t1", "t2", "t3"],
         "side": ["buy", "sell", "buy"],
@@ -88,8 +93,9 @@ def test_parse_tardis_trades_csv_basic():
 
 def test_parse_tardis_trades_csv_alternative_columns():
     """Test parsing with alternative column name variations."""
+    base_ts = 1714557600000000  # 2024-05-01T10:00:00.000000Z
     raw_df = pl.DataFrame({
-        "localTimestamp": ["2024-05-01T10:00:00.000000Z"],
+        "localTimestamp": [base_ts],
         "tradeId": ["t1"],
         "takerSide": ["sell"],
         "tradePrice": [50000.0],
@@ -106,8 +112,9 @@ def test_parse_tardis_trades_csv_alternative_columns():
 
 def test_parse_tardis_trades_csv_missing_optional():
     """Test parsing when optional columns are missing."""
+    base_ts = 1714557600000000  # 2024-05-01T10:00:00.000000Z
     raw_df = pl.DataFrame({
-        "local_timestamp": ["2024-05-01T10:00:00.000000Z"],
+        "local_timestamp": [base_ts],
         "side": ["buy"],
         "price": [50000.0],
         "amount": [0.1],
@@ -122,8 +129,9 @@ def test_parse_tardis_trades_csv_missing_optional():
 
 def test_parse_tardis_trades_csv_side_encoding():
     """Test side string to code mapping."""
+    base_ts = 1714557600000000  # 2024-05-01T10:00:00.000000Z
     raw_df = pl.DataFrame({
-        "local_timestamp": ["2024-05-01T10:00:00.000000Z"] * 4,
+        "local_timestamp": [base_ts] * 4,
         "side": ["buy", "sell", "unknown", None],
         "price": [50000.0] * 4,
         "amount": [0.1] * 4,
@@ -366,9 +374,10 @@ def test_trades_service_ingest_file_quarantine():
     
     # Create a temporary CSV file
     import tempfile
+    base_ts = 1714557600000000  # 2024-05-01T10:00:00.000000Z in microseconds
     with tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False) as f:
         f.write("local_timestamp,trade_id,side,price,amount\n")
-        f.write("2024-05-01T10:00:00.000000Z,t1,buy,50000.0,0.1\n")
+        f.write(f"{base_ts},t1,buy,50000.0,0.1\n")
         temp_path = Path(f.name)
     
     try:
@@ -417,9 +426,11 @@ def test_trades_service_ingest_file_success():
     
     # Create a temporary CSV file
     import tempfile
+    base_ts = 1714557600000000  # 2024-05-01T10:00:00.000000Z in microseconds
+    exch_ts = base_ts + 100_000  # +0.1 second
     with tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False) as f:
         f.write("local_timestamp,timestamp,trade_id,side,price,amount\n")
-        f.write("2024-05-01T10:00:00.000000Z,2024-05-01T10:00:00.100000Z,t1,buy,50000.0,0.1\n")
+        f.write(f"{base_ts},{exch_ts},t1,buy,50000.0,0.1\n")
         temp_path = Path(f.name)
     
     try:
