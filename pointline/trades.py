@@ -185,10 +185,18 @@ def normalize_trades_schema(df: pl.DataFrame) -> pl.DataFrame:
     """Cast to the canonical trades schema where possible.
     
     Ensures all required columns exist and have correct types.
+    Optional columns (trade_id, flags) are filled with None if missing.
     """
-    missing = [col for col in TRADES_SCHEMA if col not in df.columns]
-    if missing:
-        raise ValueError(f"trades missing required columns: {missing}")
+    # Optional columns that can be missing
+    optional_columns = {"trade_id", "flags"}
+    
+    # Check for missing required (non-optional) columns
+    missing_required = [
+        col for col in TRADES_SCHEMA
+        if col not in df.columns and col not in optional_columns
+    ]
+    if missing_required:
+        raise ValueError(f"trades missing required columns: {missing_required}")
     
     # Cast columns to schema types
     casts = []
@@ -196,8 +204,8 @@ def normalize_trades_schema(df: pl.DataFrame) -> pl.DataFrame:
         if col in df.columns:
             casts.append(pl.col(col).cast(dtype))
         else:
-            # Fill missing nullable columns with None
-            if col in ("trade_id", "flags"):
+            # Fill missing optional columns with None
+            if col in optional_columns:
                 casts.append(pl.lit(None, dtype=dtype).alias(col))
             else:
                 raise ValueError(f"Required non-nullable column {col} is missing")
