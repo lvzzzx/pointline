@@ -278,10 +278,16 @@ class TradesIngestionService(BaseService):
         return True, ""
 
     def _add_lineage(self, df: pl.DataFrame, file_id: int) -> pl.DataFrame:
-        """Add lineage tracking columns: file_id and file_line_number."""
+        """Add lineage tracking columns: file_id, file_line_number, and ingest_seq.
+        
+        ingest_seq is derived from file_line_number for deterministic ordering
+        within the source file.
+        """
+        file_line_number = pl.int_range(1, df.height + 1, dtype=pl.UInt32)
         return df.with_columns([
             pl.lit(file_id, dtype=pl.UInt32).alias("file_id"),
-            (pl.int_range(1, df.height + 1, dtype=pl.UInt32)).alias("file_line_number"),
+            file_line_number.alias("file_line_number"),
+            file_line_number.alias("ingest_seq"),  # Use line number as ingest sequence
         ])
 
     def _add_metadata(self, df: pl.DataFrame, exchange_id: int) -> pl.DataFrame:
