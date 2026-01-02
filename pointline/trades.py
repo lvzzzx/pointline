@@ -13,7 +13,6 @@ Example:
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
 from typing import Sequence
 
 import polars as pl
@@ -41,43 +40,6 @@ SIDE_SELL = 1
 SIDE_UNKNOWN = 2
 
 
-def _parse_iso_to_us(value: str | None) -> int | None:
-    """Parse ISO timestamp string to microseconds (int64)."""
-    if value is None:
-        return None
-    try:
-        dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
-        if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
-        return int(dt.timestamp() * 1_000_000)
-    except (ValueError, AttributeError):
-        return None
-
-
-def _parse_timestamp_to_us(value: str | int | float | None) -> int | None:
-    """Parse timestamp to microseconds (int64).
-    
-    Handles:
-    - ISO format strings
-    - Unix timestamps (seconds or milliseconds)
-    - None values
-    """
-    if value is None:
-        return None
-    
-    # If it's already a number, assume it's a Unix timestamp
-    if isinstance(value, (int, float)):
-        # If it's less than 1e12, assume seconds; otherwise milliseconds
-        if value < 1e12:
-            return int(value * 1_000_000)
-        elif value < 1e15:
-            return int(value * 1_000)
-        else:
-            # Already microseconds
-            return int(value)
-    
-    # Try ISO format
-    return _parse_iso_to_us(str(value))
 
 
 def _map_side_to_code(side: str | int | None) -> int:
@@ -102,6 +64,8 @@ def _map_side_to_code(side: str | int | None) -> int:
 def parse_tardis_trades_csv(df: pl.DataFrame) -> pl.DataFrame:
     """Parse raw Tardis trades CSV format into normalized columns.
     
+    Tardis provides timestamps as microseconds since epoch (integers).
+    
     Handles common Tardis column name variations:
     - Timestamps: local_timestamp, timestamp, localTimestamp, etc.
     - Trade ID: trade_id, tradeId, id
@@ -110,8 +74,8 @@ def parse_tardis_trades_csv(df: pl.DataFrame) -> pl.DataFrame:
     - Quantity: amount, quantity, size, qty
     
     Returns DataFrame with columns:
-    - ts_local_us (i64): local timestamp in microseconds
-    - ts_exch_us (i64): exchange timestamp in microseconds (nullable)
+    - ts_local_us (i64): local timestamp in microseconds since epoch
+    - ts_exch_us (i64): exchange timestamp in microseconds since epoch (nullable)
     - trade_id (str): trade identifier (nullable)
     - side (u8): 0=buy, 1=sell, 2=unknown
     - price (f64): trade price
@@ -135,17 +99,19 @@ def parse_tardis_trades_csv(df: pl.DataFrame) -> pl.DataFrame:
             ts_exch_col = col
     
     # Parse local timestamp (required)
+    # Tardis provides timestamps as microseconds since epoch (integers)
     if ts_local_col:
         result = result.with_columns(
-            pl.col(ts_local_col).map_elements(_parse_timestamp_to_us, return_dtype=pl.Int64).alias("ts_local_us")
+            pl.col(ts_local_col).cast(pl.Int64).alias("ts_local_us")
         )
     else:
         raise ValueError("Could not find local_timestamp column in CSV")
     
     # Parse exchange timestamp (optional)
+    # Tardis provides timestamps as microseconds since epoch (integers)
     if ts_exch_col:
         result = result.with_columns(
-            pl.col(ts_exch_col).map_elements(_parse_timestamp_to_us, return_dtype=pl.Int64).alias("ts_exch_us")
+            pl.col(ts_exch_col).cast(pl.Int64).alias("ts_exch_us")
         )
     else:
         result = result.with_columns(pl.lit(None, dtype=pl.Int64).alias("ts_exch_us"))
