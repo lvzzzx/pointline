@@ -18,6 +18,7 @@ from pointline.io.protocols import BronzeFileMetadata
 from pointline.io.base_repository import BaseDeltaRepository
 from pointline.io.vendor.tardis import build_updates_from_instruments, TardisClient, download_tardis_datasets
 from pointline.services.dim_symbol_service import DimSymbolService
+from pointline.services.trades_service import TradesIngestionService
 
 
 def _sorted_files(files: Iterable[BronzeFileMetadata]) -> list[BronzeFileMetadata]:
@@ -47,6 +48,10 @@ def _cmd_ingest_discover(args: argparse.Namespace) -> int:
     source = LocalBronzeSource(bronze_root)
     files = list(source.list_files(args.glob))
 
+    # Filter by data type if specified
+    if args.data_type:
+        files = [f for f in files if f.data_type == args.data_type]
+
     if args.pending_only:
         manifest_repo = DeltaManifestRepository(Path(args.manifest_path))
         files = manifest_repo.filter_pending(files)
@@ -56,6 +61,92 @@ def _cmd_ingest_discover(args: argparse.Namespace) -> int:
     print(f"{label}: {len(files)}")
     _print_files(files)
     return 0
+
+
+def _cmd_ingest_run(args: argparse.Namespace) -> int:
+    """Run trades ingestion for pending bronze files."""
+    bronze_root = Path(args.bronze_root)
+    source = LocalBronzeSource(bronze_root)
+    manifest_repo = DeltaManifestRepository(Path(args.manifest_path))
+    
+    # Discover files
+    files = list(source.list_files(args.glob))
+    
+    # Filter by data type if specified
+    if args.data_type:
+        files = [f for f in files if f.data_type == args.data_type]
+    
+    # Filter pending files
+    if not args.force:
+        files = manifest_repo.filter_pending(files)
+    
+    if not files:
+        print("No files to ingest.")
+        return 0
+    
+    # Filter quarantined if retry requested
+    if args.retry_quarantined:
+        manifest_df = manifest_repo.read_all()
+        quarantined = manifest_df.filter(pl.col("status") == "quarantined")
+        if not quarantined.is_empty():
+            quarantined_paths = set(quarantined["bronze_file_name"].to_list())
+            files = [f for f in files if f.bronze_file_path in quarantined_paths]
+        else:
+            print("No quarantined files to retry.")
+            return 0
+    
+    files = _sorted_files(files)
+    print(f"Ingesting {len(files)} file(s)...")
+    
+    # Initialize services
+    trades_repo = BaseDeltaRepository(get_table_path("trades"))
+    dim_symbol_repo = BaseDeltaRepository(get_table_path("dim_symbol"))
+    service = TradesIngestionService(trades_repo, dim_symbol_repo, manifest_repo)
+    
+    # Process each file
+    success_count = 0
+    failed_count = 0
+    quarantined_count = 0
+    
+    for file_meta in files:
+        if args.data_type and file_meta.data_type != args.data_type:
+            continue
+        
+        # Only process trades for now
+        if file_meta.data_type != "trades":
+            print(f"Skipping {file_meta.bronze_file_path} (data_type={file_meta.data_type}, only trades supported)")
+            continue
+        
+        # Resolve file_id
+        file_id = manifest_repo.resolve_file_id(file_meta)
+        
+        # Ingest file
+        result = service.ingest_file(file_meta, file_id, bronze_root=bronze_root)
+        
+        # Update manifest
+        if result.error_message:
+            if "missing_symbol" in result.error_message or "invalid_validity_window" in result.error_message:
+                status = "quarantined"
+                quarantined_count += 1
+            else:
+                status = "failed"
+                failed_count += 1
+        else:
+            status = "success"
+            success_count += 1
+        
+        manifest_repo.update_status(file_id, status, file_meta, result)
+        
+        # Print result
+        if status == "success":
+            print(f"✓ {file_meta.bronze_file_path}: {result.row_count} rows")
+        elif status == "quarantined":
+            print(f"⚠ {file_meta.bronze_file_path}: QUARANTINED - {result.error_message}")
+        else:
+            print(f"✗ {file_meta.bronze_file_path}: FAILED - {result.error_message}")
+    
+    print(f"\nSummary: {success_count} succeeded, {failed_count} failed, {quarantined_count} quarantined")
+    return 0 if failed_count == 0 else 1
 
 
 def _cmd_manifest_show(args: argparse.Namespace) -> int:
@@ -323,11 +414,47 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Path to the ingest manifest table",
     )
     ingest_discover.add_argument(
+        "--data-type",
+        help="Filter by data type (e.g., trades, quotes)",
+    )
+    ingest_discover.add_argument(
         "--pending-only",
         action="store_true",
         help="Only show files not yet marked success in the manifest",
     )
     ingest_discover.set_defaults(func=_cmd_ingest_discover)
+
+    ingest_run = ingest_sub.add_parser("run", help="Run ingestion for pending files")
+    ingest_run.add_argument(
+        "--bronze-root",
+        default=str(LAKE_ROOT / "tardis"),
+        help="Bronze root path (default: LAKE_ROOT/tardis)",
+    )
+    ingest_run.add_argument(
+        "--glob",
+        default="**/*.csv.gz",
+        help="Glob pattern for bronze files",
+    )
+    ingest_run.add_argument(
+        "--manifest-path",
+        default=str(get_table_path("ingest_manifest")),
+        help="Path to the ingest manifest table",
+    )
+    ingest_run.add_argument(
+        "--data-type",
+        help="Filter by data type (e.g., trades). Only trades is currently supported.",
+    )
+    ingest_run.add_argument(
+        "--force",
+        action="store_true",
+        help="Re-ingest files even if already marked as success",
+    )
+    ingest_run.add_argument(
+        "--retry-quarantined",
+        action="store_true",
+        help="Retry ingestion for quarantined files",
+    )
+    ingest_run.set_defaults(func=_cmd_ingest_run)
 
     manifest = subparsers.add_parser("manifest", help="Ingestion manifest utilities")
     manifest_sub = manifest.add_subparsers(dest="manifest_command")
