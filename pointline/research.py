@@ -8,7 +8,7 @@ from typing import Iterable, Sequence
 
 import polars as pl
 
-from pointline.config import EXCHANGE_MAP, TABLE_PATHS, get_table_path
+from pointline.config import EXCHANGE_MAP, TABLE_PATHS, get_exchange_id, get_table_path, normalize_exchange
 
 
 def list_tables() -> list[str]:
@@ -126,7 +126,7 @@ def load_book_snapshots_top25(
 ) -> pl.DataFrame | pl.LazyFrame:
     """Load top-25 book snapshots with common filters applied."""
     lf = scan_table(
-        "book_snapshots",
+        "book_snapshots_top25",
         exchange=exchange,
         exchange_id=exchange_id,
         symbol_id=symbol_id,
@@ -135,14 +135,6 @@ def load_book_snapshots_top25(
         columns=columns,
     )
     return lf if lazy else lf.collect()
-
-
-def resolve_exchange_id(exchange: str) -> int:
-    """Resolve an exchange string to its numeric exchange_id."""
-    normalized = exchange.strip().lower()
-    if normalized not in EXCHANGE_MAP:
-        raise KeyError(f"Unknown exchange '{exchange}'. Available: {sorted(EXCHANGE_MAP)}")
-    return EXCHANGE_MAP[normalized]
 
 
 def _apply_filters(
@@ -155,7 +147,7 @@ def _apply_filters(
     end_date: date | str | None,
 ) -> pl.LazyFrame:
     if exchange:
-        lf = lf.filter(pl.col("exchange") == exchange.strip().lower())
+        lf = lf.filter(pl.col("exchange") == normalize_exchange(exchange))
 
     if exchange_id is not None:
         if isinstance(exchange_id, Iterable) and not isinstance(exchange_id, (str, bytes)):

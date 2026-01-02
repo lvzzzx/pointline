@@ -10,7 +10,7 @@ TABLE_PATHS = {
     "ingest_manifest": "silver/ingest_manifest",
     "trades": "silver/trades",
     "quotes": "silver/quotes",
-    "book_snapshots": "silver/book_snapshots_top25",
+    "book_snapshots_top25": "silver/book_snapshots_top25",
 }
 
 # Storage Settings

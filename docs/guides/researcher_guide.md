@@ -142,14 +142,15 @@ LIMIT 100;
 **Instructions for LLMs:**
 When writing code for this data lake, follow these rules:
 
-1.  **Schema Awareness:** Assume standard Silver schemas (see `docs/architecture/design.md`).
-2.  **Column Names:**
+1.  **Python Access:** Prefer using `pointline.research` helpers (`scan_table`, `load_trades`, etc.) instead of raw `pl.read_delta`.
+2.  **Schema Awareness:** Assume standard Silver schemas (see `docs/architecture/design.md`).
+3.  **Column Names:**
     -   Timestamp: `ts_local_us` (int64)
     -   Price: `price_int` (int64)
     -   Quantity: `qty_int` (int64)
     -   IDs: `exchange_id` (u16), `symbol_id` (u32)
-3.  **Joins:** Always use `join_asof` on `ts_local_us` for merging asynchronous streams.
-4.  **Partitioning:** Always filter by `date` partition first to avoid scanning the entire lake.
+4.  **Joins:** Always use `join_asof` on `ts_local_us` for merging asynchronous streams.
+5.  **Partitioning:** Always filter by `date` partition first to avoid scanning the entire lake.
 
 **Safe Query Template (DuckDB):**
 ```sql
