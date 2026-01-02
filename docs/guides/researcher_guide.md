@@ -8,68 +8,92 @@ This data lake is designed for **Point-in-Time (PIT) accuracy** and **query spee
 -   **PIT Correctness:** All data is indexed by `ts_local_us` (arrival time). Backtests replaying this timeline will see data exactly as it was known to the trading system, avoiding lookahead bias.
 -   **Storage:** Data is stored in Delta Lake (Parquet) with Z-Ordering, optimized for fast retrieval by `(exchange, date, symbol)`.
 
-## 2. Access Patterns
+## 2. Quick Start
 
 ### 2.1 DuckDB (Ad-hoc SQL)
-DuckDB is the recommended tool for interactive exploration.
-
 ```sql
--- Query trades for a specific symbol on a specific day
-SELECT 
-    ts_local_us, 
-    side, 
-    price_int, 
-    qty_int 
+SELECT
+    ts_local_us,
+    side,
+    price_int,
+    qty_int
 FROM delta_scan('/lake/silver/trades')
-WHERE date = '2025-12-28' 
-  AND exchange_id = 1 
-  AND symbol_id = 3019004731 -- Use resolved symbol_id
+WHERE date = '2025-12-28'
+  AND exchange_id = 1
+  AND symbol_id = 3019004731
 ORDER BY ts_local_us;
 ```
 
 ### 2.2 Polars (Python Pipelines)
-Polars is ideal for building high-performance feature pipelines.
-
 ```python
 import polars as pl
 
-# Lazy load trades
 trades_lf = pl.read_delta("/lake/silver/trades", version=None)
-
-# Filter and aggregate
 daily_vol = (
     trades_lf
     .filter(pl.col("date") == "2025-12-28")
     .group_by("symbol_id")
     .agg([
         pl.count().alias("trade_count"),
-        pl.col("qty_int").sum().alias("total_volume")
+        pl.col("qty_int").sum().alias("total_volume"),
     ])
     .collect()
 )
 ```
 
-## 3. Core Concepts
+## 3. Data Lake Layout
 
-### 3.1 Time: `ts_local_us` vs `ts_exch_us`
+### 3.1 Directory structure
+- **Bronze:** raw vendor files + ingestion manifest
+- **Silver:** canonical tables (research foundation)
+- **Gold:** derived tables for convenience (optional)
+
+**Partitioning:** Silver tables are partitioned by `exchange` and `date`, with `date` derived from `ts_local_us` in UTC.
+Example:
+`/lake/silver/trades/exchange=binance/date=2025-12-28/part-*.parquet`
+
+### 3.2 Table catalog (Silver)
+| Table | Path | Partitions | Key columns |
+|---|---|---|---|
+| trades | `/lake/silver/trades` | `exchange`, `date` | `ts_local_us`, `symbol_id`, `price_int`, `qty_int` |
+| quotes | `/lake/silver/quotes` | `exchange`, `date` | `ts_local_us`, `symbol_id`, `bid_px_int`, `ask_px_int` |
+| book_snapshots_top25 | `/lake/silver/book_snapshots_top25` | `exchange`, `date` | `ts_local_us`, `symbol_id`, `bids_px`, `asks_px` |
+| l2_updates | `/lake/silver/l2_updates` | `exchange`, `date` | `ts_local_us`, `symbol_id`, `side`, `price_int`, `size_int` |
+| dim_symbol | `/lake/silver/dim_symbol` | none | `symbol_id`, `exchange_id`, `exchange_symbol`, validity range |
+| ingest_manifest | `/lake/silver/ingest_manifest` | none | `exchange`, `data_type`, `date`, `status` |
+
+### 3.3 Table catalog (Gold)
+- `gold.book_snapshots_top25_wide` (legacy wide format)
+- `gold.tob_quotes` (top-of-book)
+- Other derived tables are reproducible from Silver.
+
+## 4. Access Patterns
+
+DuckDB is the recommended tool for interactive exploration. Polars is ideal for building pipelines.
+
+**Partition-first rule:** always filter by `date` (and `exchange_id` if possible) to avoid full scans.
+
+## 5. Core Concepts
+
+### 5.1 Time: `ts_local_us` vs `ts_exch_us`
 -   **`ts_local_us` (Local Time):** The timestamp when the data arrived at the recording server. **ALWAYS use this for backtesting replay.**
 -   **`ts_exch_us` (Exchange Time):** The matching engine timestamp. Use this only for latency analysis (e.g., `ts_local - ts_exch`).
 
-### 3.2 Symbol Resolution (SCD Type 2)
+### 5.2 Symbol Resolution (SCD Type 2)
 Symbols change (e.g., renames). We use a stable `symbol_id`.
 -   **Table:** `silver.dim_symbol`
 -   **Logic:** A symbol is valid for a specific time range `[valid_from_ts, valid_until_ts)`.
 -   **Resolution:** To find the correct `symbol_id` for "BTC-PERPETUAL" at time `T`, query `dim_symbol` where `exchange_symbol = 'BTC-PERPETUAL'` AND `valid_from_ts <= T < valid_until_ts`.
 
-### 3.3 Fixed-Point Math
+### 5.3 Fixed-Point Math
 To save space and ensure precision, prices and quantities are stored as integers (`i64`).
 -   **Storage:** `price_int`, `qty_int`
 -   **Metadata:** `price_increment`, `amount_increment` (from `dim_symbol`)
 -   **Conversion:** `real_price = price_int * price_increment`
 
-## 4. Common Workflows
+## 6. Common Workflows
 
-### 4.1 Join Trades with Quotes (As-Of Join)
+### 6.1 Join Trades with Quotes (As-Of Join)
 To get the effective spread at the time of a trade:
 
 ```python
@@ -86,12 +110,34 @@ pit_data = trades.join_asof(
 )
 ```
 
-### 4.2 Reconstruct Order Book
+### 6.2 Reconstruct Order Book
 To get the book state at time `T`:
 1.  Find the snapshot with max `ts_local_us <= T`.
 2.  Apply all `l2_updates` where `snapshot_ts < ts_local_us <= T`.
 
-## 5. Agent Interface
+## 7. Researcher Interface (Conventions)
+
+### 7.1 Exchange and Symbol Identity
+- **exchange (string):** vendor name from Tardis, used for partitioning.
+- **exchange_id (i16):** stable numeric mapping (`EXCHANGE_MAP` in `pointline/config.py`) used for joins.
+- **symbol_id (i32):** stable identifier from `silver.dim_symbol` (SCD Type 2).
+
+### 7.2 Safe query template (DuckDB)
+```sql
+SELECT *
+FROM delta_scan('/lake/silver/<table_name>')
+WHERE date >= '<start_date>' AND date <= '<end_date>'
+  AND exchange_id = <id>
+  AND symbol_id = <id>
+LIMIT 100;
+```
+
+### 7.3 Polars best practices
+- Use `pl.read_delta` or `pl.scan_delta` with filters on `date`.
+- Keep joins on `exchange_id` + `symbol_id`.
+- Convert fixed-point to real values only at the end of a pipeline.
+
+## 8. Agent Interface
 
 **Instructions for LLMs:**
 When writing code for this data lake, follow these rules:
