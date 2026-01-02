@@ -62,6 +62,8 @@ Example:
 | dim_symbol | `/lake/silver/dim_symbol` | none | `symbol_id`, `exchange_id`, `exchange_symbol`, validity range |
 | ingest_manifest | `/lake/silver/ingest_manifest` | none | `exchange`, `data_type`, `date`, `status` |
 
+**For complete schema definitions, see [Schema Reference](../schemas.md).**
+
 ### 3.3 Table catalog (Gold)
 - `gold.book_snapshots_top25_wide` (legacy wide format)
 - `gold.tob_quotes` (top-of-book)
@@ -90,6 +92,8 @@ To save space and ensure precision, prices and quantities are stored as integers
 -   **Storage:** `price_int`, `qty_int`
 -   **Metadata:** `price_increment`, `amount_increment` (from `dim_symbol`)
 -   **Conversion:** `real_price = price_int * price_increment`
+
+**For detailed encoding explanation, see [Schema Reference - Fixed-Point Encoding](../schemas.md#fixed-point-encoding).**
 
 ## 6. Common Workflows
 
@@ -143,7 +147,7 @@ LIMIT 100;
 When writing code for this data lake, follow these rules:
 
 1.  **Python Access:** Prefer using `pointline.research` helpers (`scan_table`, `load_trades`, etc.) instead of raw `pl.read_delta`.
-2.  **Schema Awareness:** Assume standard Silver schemas (see `docs/architecture/design.md`).
+2.  **Schema Awareness:** See [Schema Reference](../schemas.md) for complete table schemas.
 3.  **Column Names:**
     -   Timestamp: `ts_local_us` (int64)
     -   Price: `price_int` (int64)

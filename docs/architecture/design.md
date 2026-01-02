@@ -112,27 +112,7 @@ Symbols change over time (renames, delistings, tick size changes). Maintain a **
   - *Strategy:* Use a deterministic hash of `(exchange_id, exchange_symbol, valid_from_ts)` or a managed autoincrementing sequence during registry updates.
 - **Natural Key:** `(exchange_id, exchange_symbol)`.
 
-| Column | Type | Description |
-|---|---|---|
-| **symbol_id** | i32 | Surrogate Key (Primary Key) |
-| **exchange_id** | i16 | Dictionary ID (e.g., 1=deribit, 2=binance) |
-| **exchange_symbol** | string | Raw vendor ticker (e.g., `BTC-PERPETUAL`) |
-| **base_asset** | string | e.g., `BTC` |
-| **quote_asset** | string | e.g., `USD` or `USDT` |
-| **asset_type** | u8 | 0=spot, 1=perp, 2=future, 3=option |
-| **tick_size** | f64 | Minimum price step allowed by the exchange |
-| **lot_size** | f64 | Minimum tradable quantity allowed by the exchange |
-| **price_increment** | f64 | The value of "1" in `price_int` (Storage Encoding) |
-| **amount_increment** | f64 | The value of "1" in `qty_int` (Storage Encoding) |
-
-**Note on Duplication:**
-- In **Tick-based encoding** (recommended for compression), `price_increment == tick_size`.
-- In **Fixed Multiplier encoding** (recommended for cross-symbol math consistency), `price_increment` is a constant like `1e-8`, regardless of the current `tick_size`.
-- We store both to allow the backtester to know the *exchange rules* (`tick_size`) while the database driver uses `price_increment` for decoding.
-| **contract_size** | f64 | Value of 1 contract in base/quote units |
-| **valid_from_ts** | i64 | Inclusive µs timestamp |
-| **valid_until_ts** | i64 | Exclusive µs timestamp (default: `2^63 - 1`) |
-| **is_current** | bool | Helper for latest version queries |
+**Schema:** See [Schema Reference](../schemas.md#11-silverdim_symbol) for complete column definitions.
 
 **Update Logic:**
 1. If a symbol's metadata (e.g., `tick_size`) changes:
@@ -165,9 +145,13 @@ Store both:
 - `price_int`, `qty_int` (required)
 - optionally `price_f64`, `qty_f64` for convenience (derived)
 
+**Detailed encoding explanation:** See [Schema Reference - Fixed-Point Encoding](../schemas.md#fixed-point-encoding).
+
 ---
 
 ## 5) Silver schemas per Tardis dataset
+
+**Schema Reference:** For complete column definitions, see [Schema Reference - Silver Tables](../schemas.md#silver-tables).
 
 ### 5.1 `l2_updates` (from `incremental_book_L2`)
 Tardis incremental L2 updates are **absolute sizes** at a price level (not deltas).
@@ -175,25 +159,12 @@ Tardis incremental L2 updates are **absolute sizes** at a price level (not delta
 - `is_snapshot` marks snapshot rows.
 - If a new snapshot appears after incremental updates, **reset book state** before applying it.
 
-**Table:** `silver.l2_updates`
-
-| Column | Type | Notes |
-|---|---:|---|
-| date | date | derived from `ts_local_us` in UTC |
-| exchange_id | i16 | dictionary-encoded |
-| symbol_id | i32 | dictionary-encoded |
-| ts_local_us | i64 | primary replay timeline |
-| ts_exch_us | i64 | exchange time if available |
-| ingest_seq | i32 | stable ordering within file |
-| is_snapshot | bool | snapshot row marker |
-| side | u8 | 0=bid, 1=ask |
-| price_int | i64 | fixed-point ticks |
-| size_int | i64 | fixed-point units |
+**Table:** `silver.l2_updates`  
+**Schema:** See [Schema Reference - l2_updates](../schemas.md#21-silverl2_updates)
 
 **Optional convenience columns:**
 - `msg_id` (group rows belonging to the same source message)
 - `event_group_id` (if vendor provides transaction IDs spanning multiple updates)
-- `file_id` / `file_line_number` (lineage)
 
 ---
 
@@ -219,152 +190,69 @@ Snapshots are full top-N book states (e.g., 25 levels).
 **List encoding**
 - Convert `asks[0..24].price/amount` and `bids[0..24].price/amount` into lists of length 25.
 - Use nulls for missing levels (retain list length for positional consistency).
-- Convert prices/sizes into fixed-point `i64` using the symbol’s `price_increment` / `amount_increment`.
+- Convert prices/sizes into fixed-point `i64` using the symbol's `price_increment` / `amount_increment`.
 
 **Recommended storage: list columns (Silver)**
 **Verdict:** Stick to `list<i64>`. DuckDB/Polars handle lists natively and efficiently. Wide columns explode schema metadata.
 
-**Table:** `silver.book_snapshots_top25`
-**Partitioned by:** `["exchange", "date"]` (same strategy as trades/quotes tables)
-
-| Column | Type | Notes |
-|---|---:|---|
-| date | date | partitioned by (derived from `ts_local_us` in UTC) |
-| exchange | string | partitioned by (not stored in Parquet files, reconstructed from directory) |
-| exchange_id | i16 | for joins and compression |
-| symbol_id | i64 | match dim_symbol type |
-| ts_local_us | i64 | primary replay timeline |
-| ts_exch_us | i64 | exchange time if available |
-| ingest_seq | i32 | stable ordering within file |
-| bids_px | list<i64> | length 25 (nulls for missing levels) |
-| bids_sz | list<i64> | length 25 (nulls for missing levels) |
-| asks_px | list<i64> | length 25 (nulls for missing levels) |
-| asks_sz | list<i64> | length 25 (nulls for missing levels) |
-| file_id | i32 | lineage tracking (join with `silver.ingest_manifest`) |
-| file_line_number | i32 | lineage tracking (deterministic ordering within file) |
+**Table:** `silver.book_snapshots_top25`  
+**Partitioned by:** `["exchange", "date"]` (same strategy as trades/quotes tables)  
+**Schema:** See [Schema Reference - book_snapshots_top25](../schemas.md#22-silverbook_snapshots_top25)
 
 **Gold option: wide columns (Legacy Support)**
 `gold.book_snapshots_top25_wide` with columns:
 - `bid_px_01..bid_px_25`, `bid_sz_01..bid_sz_25`, ...
-Use this strictly for Gold if legacy tools (Pandas without explode) require it.
+Use this strictly for Gold if legacy tools (Pandas without explode) require it. See [Schema Reference - Gold Tables](../schemas.md#gold-tables) for details.
 
 ---
 
 ### 5.3 `trades`
-**Table:** `silver.trades`
-
-| Column | Type | Notes |
-|---|---:|---|
-| date | date | |
-| exchange_id | i16 | |
-| symbol_id | i32 | |
-| ts_local_us | i64 | |
-| ts_exch_us | i64 | |
-| ingest_seq | i32 | |
-| trade_id | string | optional depending on venue |
-| side | u8 | 0=buy,1=sell,2=unknown |
-| price_int | i64 | |
-| qty_int | i64 | |
-| flags | i32 | optional packed conditions |
+**Table:** `silver.trades`  
+**Schema:** See [Schema Reference - trades](../schemas.md#23-silvertrades)
 
 ---
 
 ### 5.4 `tob_quotes` (from `quotes` or derived from L2)
-**Table:** `silver.quotes` (or `gold.tob_quotes` if you treat it as a fast path)
-
-| Column | Type |
-|---|---:|
-| date | date |
-| exchange_id | i16 |
-| symbol_id | i32 |
-| ts_local_us | i64 |
-| ts_exch_us | i64 |
-| ingest_seq | i32 |
-| bid_px_int | i64 |
-| bid_sz_int | i64 |
-| ask_px_int | i64 |
-| ask_sz_int | i64 |
+**Table:** `silver.quotes` (or `gold.tob_quotes` if you treat it as a fast path)  
+**Schema:** See [Schema Reference - quotes](../schemas.md#24-silverquotes)
 
 ---
 
 ### 5.5 `book_ticker`
 Use if you subscribe to exchange-native `bookTicker`/similar.
 
-**Table:** `silver.book_ticker`
+**Table:** `silver.book_ticker`  
+**Schema:** See [Schema Reference - book_ticker](../schemas.md#25-silverbook_ticker)
 
-Same schema as top-of-book quotes:
-- plus any venue-specific fields (update ids, etc.)
+Same schema as top-of-book quotes, plus any venue-specific fields (update ids, etc.).
 
 ---
 
 ### 5.6 `derivative_ticker`
 Includes mark/index, funding, OI, etc.
 
-**Table:** `silver.derivative_ticker`
-
-| Column | Type | Notes |
-|---|---:|---|
-| date | date | |
-| exchange_id | i16 | |
-| symbol_id | i32 | |
-| ts_local_us | i64 | |
-| ts_exch_us | i64 | |
-| ingest_seq | i32 | |
-| mark_px_int | i64 | optional fixed-point |
-| index_px_int | i64 | optional fixed-point |
-| last_px_int | i64 | optional fixed-point |
-| funding_rate | f64 | funding often fine as float |
-| funding_ts_us | i64 | next/last funding time |
-| open_interest | f64/i64 | depends on venue |
-| volume_24h | f64/i64 | depends on venue |
+**Table:** `silver.derivative_ticker`  
+**Schema:** See [Schema Reference - derivative_ticker](../schemas.md#26-silverderivative_ticker)
 
 ---
 
 ### 5.7 `liquidations`
-**Table:** `silver.liquidations`
-
-| Column | Type |
-|---|---:|
-| date | date |
-| exchange_id | i16 |
-| symbol_id | i32 |
-| ts_local_us | i64 |
-| ts_exch_us | i64 |
-| ingest_seq | i32 |
-| liq_id | string |
-| side | u8 |
-| price_int | i64 |
-| qty_int | i64 |
+**Table:** `silver.liquidations`  
+**Schema:** See [Schema Reference - liquidations](../schemas.md#27-silverliquidations)
 
 ---
 
 ### 5.8 `options_chain`
 Options chain is typically cross-sectional and heavy. Store updates per contract.
 
-**Table:** `silver.options_chain`
-
-| Column | Type | Notes |
-|---|---:|---|
-| date | date | |
-| exchange_id | i16 | |
-| underlying_symbol_id | i32 | underlying |
-| option_symbol_id | i32 | contract |
-| ts_local_us | i64 | |
-| ts_exch_us | i64 | |
-| ingest_seq | i32 | |
-| option_type | u8 | call/put |
-| strike_int | i64 | fixed-point |
-| expiry_ts_us | i64 | |
-| bid_px_int | i64 | |
-| ask_px_int | i64 | |
-| iv | f32/f64 | |
-| delta/gamma/vega/theta | f32/f64 | |
-| open_interest | f64/i64 | |
+**Table:** `silver.options_chain`  
+**Schema:** See [Schema Reference - options_chain](../schemas.md#28-silveroptions_chain)
 
 **Gold recommendation:** `gold.options_surface_grid`
 - Choose a time grid (e.g., 1s or 100ms).
 - For each grid timestamp, take last-known as-of values per option contract.
-- This makes “entire surface at time t” queries cheap and deterministic.
+- This makes "entire surface at time t" queries cheap and deterministic.
+- See [Schema Reference - Gold Tables](../schemas.md#options_surface_grid) for details.
 
 ---
 
@@ -373,21 +261,8 @@ Derived from `silver.trades`. Standard time bars for signal generation.
 - **Interval:** 1 minute (or 1s/1h)
 - **Time labeling:** `ts_open` (inclusive) or `ts_close` (exclusive) - define convention clearly.
 
-**Table:** `gold.bars_1m`
-
-| Column | Type |
-|---|---:|
-| date | date |
-| exchange_id | i16 |
-| symbol_id | i32 |
-| ts_bucket_start_us | i64 |
-| open_px_int | i64 |
-| high_px_int | i64 |
-| low_px_int | i64 |
-| close_px_int | i64 |
-| volume_qty_int | i64 |
-| volume_notional | f64 |
-| trade_count | i32 |
+**Table:** `gold.bars_1m`  
+**Schema:** See [Schema Reference - Gold Tables - bars_1m](../schemas.md#31-goldbars_1m)
 
 ---
 
@@ -519,26 +394,7 @@ idempotent, provides auditability, and enables fast skip logic.
 `(exchange, data_type, symbol, date, bronze_file_name)`
 *Note: `file_id` is the surrogate key for joins from Silver tables.*
 
-**Recommended columns:**
-| Column | Type | Description |
-|---|---|---|
-| file_id | i32 | Surrogate Key (Primary Key) |
-| exchange | string | e.g., `binance` |
-| data_type | string | e.g., `trades`, `quotes` |
-| symbol | string | upper-case, `BTCUSDT` |
-| date | date | UTC date from file path |
-| bronze_file_name | string | full relative path to the CSV.GZ |
-| file_size_bytes | i64 | size at ingest time |
-| last_modified_ts | i64 | mtime in µs (UTC) |
-| sha256 | string | optional hash for immutability checks |
-| row_count | i64 | number of rows ingested |
-| ts_local_min_us | i64 | min `ts_local_us` in file |
-| ts_local_max_us | i64 | max `ts_local_us` in file |
-| ts_exch_min_us | i64 | optional min exchange ts |
-| ts_exch_max_us | i64 | optional max exchange ts |
-| ingested_at | i64 | ingest time in µs |
-| status | string | `success`, `failed` |
-| error_message | string | error text for failed ingests |
+**Schema:** See [Schema Reference - ingest_manifest](../schemas.md#12-silveringest_manifest) for complete column definitions.
 
 **Ingestion decision (skip logic):**
 1. For each Bronze file, compute `file_size_bytes` and `last_modified_ts`.
@@ -595,4 +451,4 @@ pl.read_delta("/lake/silver/trades", version=None) \
 ### ID dictionaries
 - `exchange_id`: i16
 - `symbol_id`: i32
-- See **Section 4.1** for `dim_symbol` (SCD Type 2) structure.
+- See [Schema Reference - dim_symbol](../schemas.md#11-silverdim_symbol) for `dim_symbol` (SCD Type 2) structure.
