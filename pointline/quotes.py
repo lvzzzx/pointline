@@ -104,9 +104,10 @@ def parse_tardis_quotes_csv(df: pl.DataFrame) -> pl.DataFrame:
 
 
 def normalize_quotes_schema(df: pl.DataFrame) -> pl.DataFrame:
-    """Cast to the canonical quotes schema where possible.
+    """Cast to the canonical quotes schema and select only schema columns.
     
     Ensures all required columns exist and have correct types.
+    Drops any extra columns (e.g., original float columns, dim_symbol metadata).
     """
     # Check for missing required columns
     missing_required = [
@@ -124,7 +125,8 @@ def normalize_quotes_schema(df: pl.DataFrame) -> pl.DataFrame:
         else:
             raise ValueError(f"Required column {col} is missing")
     
-    return df.with_columns(casts)
+    # Cast and select only schema columns (drops extra columns)
+    return df.with_columns(casts).select(list(QUOTES_SCHEMA.keys()))
 
 
 def validate_quotes(df: pl.DataFrame) -> pl.DataFrame:

@@ -50,6 +50,11 @@ class BaseDeltaRepository:
         arrow_table = df.to_arrow()
         
         # Use write_deltalake which supports partition_by
+        # IMPORTANT: When partition_by is specified, Delta Lake automatically:
+        # 1. Uses partition columns to create directory structure (e.g., exchange=binance/date=2024-05-10/)
+        # 2. Does NOT store partition columns in Parquet files (saves storage space)
+        # 3. Reconstructs partition columns when reading via read_delta()
+        # This is the correct Hive-style partitioning behavior - partition columns are metadata, not data
         write_deltalake(
             self.table_path,
             arrow_table,
@@ -78,6 +83,11 @@ class BaseDeltaRepository:
         arrow_table = df.to_arrow()
         
         # Use write_deltalake which supports partition_by
+        # IMPORTANT: When partition_by is specified, Delta Lake automatically:
+        # 1. Uses partition columns to create directory structure (e.g., exchange=binance/date=2024-05-10/)
+        # 2. Does NOT store partition columns in Parquet files (saves storage space)
+        # 3. Reconstructs partition columns when reading via read_delta()
+        # This is the correct Hive-style partitioning behavior - partition columns are metadata, not data
         write_deltalake(
             self.table_path,
             arrow_table,

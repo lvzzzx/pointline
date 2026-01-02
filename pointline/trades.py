@@ -195,10 +195,11 @@ def parse_tardis_trades_csv(df: pl.DataFrame) -> pl.DataFrame:
 
 
 def normalize_trades_schema(df: pl.DataFrame) -> pl.DataFrame:
-    """Cast to the canonical trades schema where possible.
+    """Cast to the canonical trades schema and select only schema columns.
     
     Ensures all required columns exist and have correct types.
     Optional columns (trade_id, flags) are filled with None if missing.
+    Drops any extra columns (e.g., original float columns, dim_symbol metadata).
     """
     # Optional columns that can be missing
     optional_columns = {"trade_id", "flags"}
@@ -223,7 +224,8 @@ def normalize_trades_schema(df: pl.DataFrame) -> pl.DataFrame:
             else:
                 raise ValueError(f"Required non-nullable column {col} is missing")
     
-    return df.with_columns(casts)
+    # Cast and select only schema columns (drops extra columns)
+    return df.with_columns(casts).select(list(TRADES_SCHEMA.keys()))
 
 
 def validate_trades(df: pl.DataFrame) -> pl.DataFrame:
