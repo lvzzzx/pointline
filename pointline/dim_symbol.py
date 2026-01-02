@@ -340,10 +340,12 @@ def resolve_symbol_ids(
     It expects dim_symbol to be in the canonical schema.
     """
     # Ensure join columns match dim_symbol schema
-    # Schema is single source of truth - no dynamic schema reading
+    # Schema is single source of truth - cast both data and dim_symbol to SCHEMA
     for col in NATURAL_KEY_COLS:
         if col in data.columns:
             data = data.with_columns(pl.col(col).cast(SCHEMA[col]))
+        if col in dim_symbol.columns:
+            dim_symbol = dim_symbol.with_columns(pl.col(col).cast(SCHEMA[col]))
 
     return data.sort(ts_col).join_asof(
         dim_symbol.sort("valid_from_ts"),
