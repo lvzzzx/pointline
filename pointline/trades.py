@@ -18,20 +18,29 @@ from typing import Sequence
 import polars as pl
 
 # Schema definition matching design.md Section 5.3
+# 
+# Delta Lake Integer Type Limitations:
+# - Delta Lake (via Parquet) does not support unsigned integer types UInt16 and UInt32
+# - These are automatically converted to signed types (Int16 and Int32) when written
+# - Use Int16 instead of UInt16 for exchange_id
+# - Use Int32 instead of UInt32 for symbol_id, ingest_seq, file_id, flags
+# - UInt8 is supported and maps to TINYINT (use for side, asset_type)
+#
+# This schema is the single source of truth - all code should use these types directly.
 TRADES_SCHEMA: dict[str, pl.DataType] = {
     "date": pl.Date,
-    "exchange_id": pl.Int16,  # Match dim_symbol's exchange_id type
+    "exchange_id": pl.Int16,  # Delta Lake stores as Int16 (not UInt16)
     "symbol_id": pl.Int64,  # Match dim_symbol's symbol_id type
     "ts_local_us": pl.Int64,
     "ts_exch_us": pl.Int64,
-    "ingest_seq": pl.UInt32,
+    "ingest_seq": pl.Int32,  # Delta Lake stores as Int32 (not UInt32)
     "trade_id": pl.Utf8,
-    "side": pl.UInt8,
+    "side": pl.UInt8,  # UInt8 is supported (maps to TINYINT)
     "price_int": pl.Int64,
     "qty_int": pl.Int64,
-    "flags": pl.UInt32,
-    "file_id": pl.UInt32,
-    "file_line_number": pl.UInt32,
+    "flags": pl.Int32,  # Delta Lake stores as Int32 (not UInt32)
+    "file_id": pl.Int32,  # Delta Lake stores as Int32 (not UInt32)
+    "file_line_number": pl.Int32,  # Delta Lake stores as Int32 (not UInt32)
 }
 
 # Side encoding constants

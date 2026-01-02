@@ -39,7 +39,7 @@ Why:
 
 Where:
 - `ingest_seq` is a deterministic sequence within the source file (e.g., line number).
-- **Lineage tracking**: In Silver tables, store `file_id` (u32) and `file_line_number` to ensure `ingest_seq` is robust and debuggable. Join with `silver.ingest_manifest` to resolve the original `bronze_file_name`.
+- **Lineage tracking**: In Silver tables, store `file_id` (i32) and `file_line_number` to ensure `ingest_seq` is robust and debuggable. Join with `silver.ingest_manifest` to resolve the original `bronze_file_name`.
 
 ---
 
@@ -84,6 +84,13 @@ Gold tables are reproducible from Silver (and versioned).
 **Row group sizing:** target ~128–512MB row groups  
 **File sizing:** 256MB–1GB files (controlled by Delta writer)
 
+**Integer Type Limitations:**
+Delta Lake (via Parquet) does not support unsigned integer types `UInt16` and `UInt32`.
+These are automatically converted to signed types (`Int16` and `Int32`) when written.
+- Use `Int16` instead of `UInt16` for `exchange_id`
+- Use `Int32` instead of `UInt32` for `symbol_id`, `ingest_seq`, `file_id`, `flags`
+- `UInt8` is supported and maps to TINYINT (use for `side`, `asset_type`)
+
 **Data Organization inside partitions**:
 - **Z-Order / Cluster by:** `(symbol_id, ingest_seq)`
 - or **Sort by:** `(symbol_id, ts_local_us, ingest_seq)`
@@ -101,14 +108,14 @@ Symbols change over time (renames, delistings, tick size changes). Maintain a **
 
 **Implementation:** Delta Table (`silver.dim_symbol`)
 - **Storage:** Single versioned table (not partitioned, as it's small).
-- **Surrogate Key (`symbol_id`):** `u32` integer. 
+- **Surrogate Key (`symbol_id`):** `i32` integer. 
   - *Strategy:* Use a deterministic hash of `(exchange_id, exchange_symbol, valid_from_ts)` or a managed autoincrementing sequence during registry updates.
 - **Natural Key:** `(exchange_id, exchange_symbol)`.
 
 | Column | Type | Description |
 |---|---|---|
-| **symbol_id** | u32 | Surrogate Key (Primary Key) |
-| **exchange_id** | u16 | Dictionary ID (e.g., 1=deribit, 2=binance) |
+| **symbol_id** | i32 | Surrogate Key (Primary Key) |
+| **exchange_id** | i16 | Dictionary ID (e.g., 1=deribit, 2=binance) |
 | **exchange_symbol** | string | Raw vendor ticker (e.g., `BTC-PERPETUAL`) |
 | **base_asset** | string | e.g., `BTC` |
 | **quote_asset** | string | e.g., `USD` or `USDT` |
@@ -173,11 +180,11 @@ Tardis incremental L2 updates are **absolute sizes** at a price level (not delta
 | Column | Type | Notes |
 |---|---:|---|
 | date | date | derived from `ts_local_us` in UTC |
-| exchange_id | u16 | dictionary-encoded |
-| symbol_id | u32 | dictionary-encoded |
+| exchange_id | i16 | dictionary-encoded |
+| symbol_id | i32 | dictionary-encoded |
 | ts_local_us | i64 | primary replay timeline |
 | ts_exch_us | i64 | exchange time if available |
-| ingest_seq | u32 | stable ordering within file |
+| ingest_seq | i32 | stable ordering within file |
 | is_snapshot | bool | snapshot row marker |
 | side | u8 | 0=bid, 1=ask |
 | price_int | i64 | fixed-point ticks |
@@ -201,11 +208,11 @@ Snapshots are full top-N book states (e.g., 25 levels).
 | Column | Type | Notes |
 |---|---:|---|
 | date | date | |
-| exchange_id | u16 | |
-| symbol_id | u32 | |
+| exchange_id | i16 | |
+| symbol_id | i32 | |
 | ts_local_us | i64 | |
 | ts_exch_us | i64 | |
-| ingest_seq | u32 | |
+| ingest_seq | i32 | |
 | bids_px | list<i64> | length N |
 | bids_sz | list<i64> | length N |
 | asks_px | list<i64> | length N |
@@ -224,16 +231,16 @@ Use this strictly for Gold if legacy tools (Pandas without explode) require it.
 | Column | Type | Notes |
 |---|---:|---|
 | date | date | |
-| exchange_id | u16 | |
-| symbol_id | u32 | |
+| exchange_id | i16 | |
+| symbol_id | i32 | |
 | ts_local_us | i64 | |
 | ts_exch_us | i64 | |
-| ingest_seq | u32 | |
+| ingest_seq | i32 | |
 | trade_id | string | optional depending on venue |
 | side | u8 | 0=buy,1=sell,2=unknown |
 | price_int | i64 | |
 | qty_int | i64 | |
-| flags | u32 | optional packed conditions |
+| flags | i32 | optional packed conditions |
 
 ---
 
@@ -243,11 +250,11 @@ Use this strictly for Gold if legacy tools (Pandas without explode) require it.
 | Column | Type |
 |---|---:|
 | date | date |
-| exchange_id | u16 |
-| symbol_id | u32 |
+| exchange_id | i16 |
+| symbol_id | i32 |
 | ts_local_us | i64 |
 | ts_exch_us | i64 |
-| ingest_seq | u32 |
+| ingest_seq | i32 |
 | bid_px_int | i64 |
 | bid_sz_int | i64 |
 | ask_px_int | i64 |
@@ -273,11 +280,11 @@ Includes mark/index, funding, OI, etc.
 | Column | Type | Notes |
 |---|---:|---|
 | date | date | |
-| exchange_id | u16 | |
-| symbol_id | u32 | |
+| exchange_id | i16 | |
+| symbol_id | i32 | |
 | ts_local_us | i64 | |
 | ts_exch_us | i64 | |
-| ingest_seq | u32 | |
+| ingest_seq | i32 | |
 | mark_px_int | i64 | optional fixed-point |
 | index_px_int | i64 | optional fixed-point |
 | last_px_int | i64 | optional fixed-point |
@@ -294,11 +301,11 @@ Includes mark/index, funding, OI, etc.
 | Column | Type |
 |---|---:|
 | date | date |
-| exchange_id | u16 |
-| symbol_id | u32 |
+| exchange_id | i16 |
+| symbol_id | i32 |
 | ts_local_us | i64 |
 | ts_exch_us | i64 |
-| ingest_seq | u32 |
+| ingest_seq | i32 |
 | liq_id | string |
 | side | u8 |
 | price_int | i64 |
@@ -314,12 +321,12 @@ Options chain is typically cross-sectional and heavy. Store updates per contract
 | Column | Type | Notes |
 |---|---:|---|
 | date | date | |
-| exchange_id | u16 | |
-| underlying_symbol_id | u32 | underlying |
-| option_symbol_id | u32 | contract |
+| exchange_id | i16 | |
+| underlying_symbol_id | i32 | underlying |
+| option_symbol_id | i32 | contract |
 | ts_local_us | i64 | |
 | ts_exch_us | i64 | |
-| ingest_seq | u32 | |
+| ingest_seq | i32 | |
 | option_type | u8 | call/put |
 | strike_int | i64 | fixed-point |
 | expiry_ts_us | i64 | |
@@ -346,8 +353,8 @@ Derived from `silver.trades`. Standard time bars for signal generation.
 | Column | Type |
 |---|---:|
 | date | date |
-| exchange_id | u16 |
-| symbol_id | u32 |
+| exchange_id | i16 |
+| symbol_id | i32 |
 | ts_bucket_start_us | i64 |
 | open_px_int | i64 |
 | high_px_int | i64 |
@@ -355,7 +362,7 @@ Derived from `silver.trades`. Standard time bars for signal generation.
 | close_px_int | i64 |
 | volume_qty_int | i64 |
 | volume_notional | f64 |
-| trade_count | u32 |
+| trade_count | i32 |
 
 ---
 
@@ -490,7 +497,7 @@ idempotent, provides auditability, and enables fast skip logic.
 **Recommended columns:**
 | Column | Type | Description |
 |---|---|---|
-| file_id | u32 | Surrogate Key (Primary Key) |
+| file_id | i32 | Surrogate Key (Primary Key) |
 | exchange | string | e.g., `binance` |
 | data_type | string | e.g., `trades`, `quotes` |
 | symbol | string | upper-case, `BTCUSDT` |
@@ -561,6 +568,6 @@ pl.read_delta("/lake/silver/trades", version=None) \
 - Convert to ns only if you truly need it (crypto feeds are often µs anyway)
 
 ### ID dictionaries
-- `exchange_id`: u16
-- `symbol_id`: u32
+- `exchange_id`: i16
+- `symbol_id`: i32
 - See **Section 4.1** for `dim_symbol` (SCD Type 2) structure.

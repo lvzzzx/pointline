@@ -166,8 +166,8 @@ def test_normalize_trades_schema():
     normalized = normalize_trades_schema(df)
     
     assert normalized["date"].dtype == pl.Date
-    assert normalized["exchange_id"].dtype == pl.UInt16
-    assert normalized["symbol_id"].dtype == pl.UInt32
+    assert normalized["exchange_id"].dtype == pl.Int16  # Delta Lake stores as Int16 (not UInt16)
+    assert normalized["symbol_id"].dtype == pl.Int64  # Delta Lake stores as Int64
     assert normalized["ts_local_us"].dtype == pl.Int64
 
 

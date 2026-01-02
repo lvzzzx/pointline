@@ -288,9 +288,10 @@ class TradesIngestionService(BaseService):
         ingest_seq is derived from file_line_number for deterministic ordering
         within the source file.
         """
-        file_line_number = pl.int_range(1, df.height + 1, dtype=pl.UInt32)
+        # Use Int32 to match Delta Lake storage (Delta Lake doesn't support UInt32)
+        file_line_number = pl.int_range(1, df.height + 1, dtype=pl.Int32)
         return df.with_columns([
-            pl.lit(file_id, dtype=pl.UInt32).alias("file_id"),
+            pl.lit(file_id, dtype=pl.Int32).alias("file_id"),
             file_line_number.alias("file_line_number"),
             file_line_number.alias("ingest_seq"),  # Use line number as ingest sequence
         ])

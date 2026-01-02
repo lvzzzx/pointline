@@ -20,8 +20,10 @@ class DeltaManifestRepository(BaseDeltaRepository):
         """Creates the manifest table with correct schema if it doesn't exist."""
         if not Path(self.table_path).exists():
             # Define schema according to design.md
+            # Delta Lake doesn't support UInt32, stores as Int32
+            # Schema definition is single source of truth
             schema = {
-                "file_id": pl.UInt32,
+                "file_id": pl.Int32,
                 "exchange": pl.Utf8,
                 "data_type": pl.Utf8,
                 "symbol": pl.Utf8,
@@ -79,6 +81,7 @@ class DeltaManifestRepository(BaseDeltaRepository):
 
         # 3. Reserve (Write Pending)
         # We write a minimal record to reserve the ID
+        # Schema definition is single source of truth - use explicit schema with Int32
         pending_record = pl.DataFrame({
             "file_id": [next_id],
             "exchange": [meta.exchange],
@@ -98,24 +101,24 @@ class DeltaManifestRepository(BaseDeltaRepository):
             "status": ["pending"],
             "error_message": [None],
         }, schema={
-            "file_id": pl.UInt32,
-            "exchange": pl.Utf8,
-            "data_type": pl.Utf8,
-            "symbol": pl.Utf8,
-            "date": pl.Date,
-            "bronze_file_name": pl.Utf8,
-            "file_size_bytes": pl.Int64,
-            "last_modified_ts": pl.Int64,
-            "sha256": pl.Utf8,
-            "row_count": pl.Int64,
-            "ts_local_min_us": pl.Int64,
-            "ts_local_max_us": pl.Int64,
-            "ts_exch_min_us": pl.Int64,
-            "ts_exch_max_us": pl.Int64,
-            "ingested_at": pl.Int64,
-            "status": pl.Utf8,
-            "error_message": pl.Utf8,
-        })
+            "file_id": pl.Int32,  # Delta Lake doesn't support UInt32, stores as Int32
+                "exchange": pl.Utf8,
+                "data_type": pl.Utf8,
+                "symbol": pl.Utf8,
+                "date": pl.Date,
+                "bronze_file_name": pl.Utf8,
+                "file_size_bytes": pl.Int64,
+                "last_modified_ts": pl.Int64,
+                "sha256": pl.Utf8,  # Nullable string
+                "row_count": pl.Int64,
+                "ts_local_min_us": pl.Int64,
+                "ts_local_max_us": pl.Int64,
+                "ts_exch_min_us": pl.Int64,
+                "ts_exch_max_us": pl.Int64,
+                "ingested_at": pl.Int64,
+                "status": pl.Utf8,
+                "error_message": pl.Utf8,  # Nullable string
+            })
 
         self.append(pending_record)
         return next_id
@@ -205,7 +208,7 @@ class DeltaManifestRepository(BaseDeltaRepository):
             "status": [status],
             "error_message": [err_msg],
         }, schema={
-            "file_id": pl.UInt32,
+            "file_id": pl.Int32,  # Delta Lake doesn't support UInt32, stores as Int32
             "exchange": pl.Utf8,
             "data_type": pl.Utf8,
             "symbol": pl.Utf8,
@@ -224,5 +227,6 @@ class DeltaManifestRepository(BaseDeltaRepository):
             "error_message": pl.Utf8,
         })
         
+        # Schema definition is single source of truth - no dynamic schema reading
         # We use merge to update the existing 'pending' (or previous failed) record
         self.merge(update_df, keys=["file_id"])
