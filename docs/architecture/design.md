@@ -200,6 +200,27 @@ Tardis incremental L2 updates are **absolute sizes** at a price level (not delta
 ### 5.2 `book_snapshots_top25` (from Tardis snapshots)
 Snapshots are full top-N book states (e.g., 25 levels).
 
+**Source schema (Tardis `book_snapshot_25`)**
+- `exchange` (string), `symbol` (string, uppercase)
+- `timestamp` (exchange timestamp in µs; falls back to `local_timestamp` if exchange does not provide)
+- `local_timestamp` (arrival timestamp in µs, UTC)
+- `asks[0..24].price`, `asks[0..24].amount` (ascending by price)
+- `bids[0..24].price`, `bids[0..24].amount` (descending by price)
+- Missing levels may be empty if fewer than 25 price levels exist.
+
+**Normalization + mapping**
+- `exchange` is normalized (lowercase, trimmed) and used for partitioning.
+- `exchange_id` is derived via `EXCHANGE_MAP` and stored for joins.
+- `symbol` is mapped to `symbol_id` via `dim_symbol`.
+- `ts_exch_us` maps from `timestamp`; `ts_local_us` maps from `local_timestamp`.
+- `date` is derived from `ts_local_us` in UTC.
+- `ingest_seq` provides deterministic ordering within the source file.
+
+**List encoding**
+- Convert `asks[0..24].price/amount` and `bids[0..24].price/amount` into lists of length 25.
+- Use nulls for missing levels (retain list length for positional consistency).
+- Convert prices/sizes into fixed-point `i64` using the symbol’s `price_increment` / `amount_increment`.
+
 **Recommended storage: list columns (Silver)**
 **Verdict:** Stick to `list<i64>`. DuckDB/Polars handle lists natively and efficiently. Wide columns explode schema metadata.
 
