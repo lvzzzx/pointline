@@ -149,6 +149,7 @@ def test_normalize_trades_schema():
     """Test schema normalization."""
     df = pl.DataFrame({
         "date": [date(2024, 5, 1)],
+        "exchange": ["binance"],
         "exchange_id": [1],
         "symbol_id": [100],
         "ts_local_us": [1714550400000000],
@@ -189,6 +190,7 @@ def test_validate_trades_basic():
         "qty_int": [10000, 20000, 5000],
         "ts_local_us": [1714550400000000, 1714550401000000, 1714550402000000],
         "side": [0, 1, 2],
+        "exchange": ["binance", "binance", "binance"],
         "exchange_id": [1, 1, 1],
         "symbol_id": [100, 100, 100],
     })
@@ -207,6 +209,7 @@ def test_validate_trades_invalid_side():
         "qty_int": [10000] * 3,
         "ts_local_us": [1714550400000000] * 3,
         "side": [0, 1, 99],  # Last one invalid
+        "exchange": ["binance"] * 3,
         "exchange_id": [1] * 3,
         "symbol_id": [100] * 3,
     })
@@ -284,6 +287,7 @@ def test_trades_service_validate():
         "qty_int": [10000, 5000],
         "ts_local_us": [1714550400000000, 1714550401000000],
         "side": [0, 1],
+        "exchange": ["binance", "binance"],
         "exchange_id": [1, 1],
         "symbol_id": [100, 100],
     })
@@ -303,6 +307,7 @@ def test_trades_service_compute_state():
     
     df = pl.DataFrame({
         "date": [date(2024, 5, 1)],
+        "exchange": ["binance"],
         "exchange_id": [1],
         "symbol_id": [100],
         "ts_local_us": [1714550400000000],
@@ -334,6 +339,7 @@ def test_trades_service_write():
     
     df = pl.DataFrame({
         "date": [date(2024, 5, 1)],
+        "exchange": ["binance"],
         "exchange_id": [1],
         "symbol_id": [100],
         "ts_local_us": [1714550400000000],
@@ -462,5 +468,6 @@ def test_required_trades_columns():
     cols = required_trades_columns()
     assert len(cols) == len(TRADES_SCHEMA)
     assert "date" in cols
+    assert "exchange" in cols
     assert "exchange_id" in cols
     assert "symbol_id" in cols

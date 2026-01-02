@@ -51,6 +51,46 @@ EXCHANGE_MAP = {
 }
 
 
+def normalize_exchange(exchange: str) -> str:
+    """
+    Normalize exchange name for consistent lookup.
+    
+    Normalizes by lowercasing and trimming whitespace.
+    This is the canonical normalization used before EXCHANGE_MAP lookup.
+    
+    Args:
+        exchange: Raw exchange name (may have mixed case, whitespace)
+        
+    Returns:
+        Normalized exchange string (lowercase, trimmed)
+    """
+    return exchange.lower().strip()
+
+
+def get_exchange_id(exchange: str) -> int:
+    """
+    Get exchange_id for a given exchange name.
+    
+    This is the canonical source of truth for exchange → exchange_id mapping.
+    Normalizes the exchange name before lookup.
+    
+    Args:
+        exchange: Exchange name (will be normalized before lookup)
+        
+    Returns:
+        Exchange ID (Int16 compatible)
+        
+    Raises:
+        ValueError: If exchange is not found in EXCHANGE_MAP after normalization
+    """
+    normalized = normalize_exchange(exchange)
+    if normalized not in EXCHANGE_MAP:
+        raise ValueError(
+            f"Exchange '{exchange}' (normalized: '{normalized}') not found in EXCHANGE_MAP. "
+            f"Available exchanges: {sorted(EXCHANGE_MAP.keys())}"
+        )
+    return EXCHANGE_MAP[normalized]
+
 
 # Asset Type Registry
 # Maps Tardis instrument type strings to internal asset_type (u8)

@@ -9,7 +9,7 @@ from pathlib import Path
 
 import polars as pl
 
-from pointline.config import EXCHANGE_MAP, LAKE_ROOT
+from pointline.config import EXCHANGE_MAP, LAKE_ROOT, normalize_exchange, get_exchange_id
 from pointline.dim_symbol import check_coverage
 from pointline.io.protocols import (
     BronzeFileMetadata,
@@ -168,8 +168,9 @@ class TradesIngestionService(BaseService):
             # 7. Add lineage columns
             lineage_df = self._add_lineage(encoded_df, file_id)
             
-            # 8. Add exchange_id and date
-            final_df = self._add_metadata(lineage_df, exchange_id)
+            # 8. Add exchange, exchange_id and date
+            normalized_exchange = normalize_exchange(meta.exchange)
+            final_df = self._add_metadata(lineage_df, normalized_exchange, exchange_id)
             
             # 9. Normalize schema
             normalized_df = normalize_trades_schema(final_df)
@@ -224,12 +225,8 @@ class TradesIngestionService(BaseService):
             return pl.read_csv(path)
 
     def _resolve_exchange_id(self, exchange: str) -> int:
-        """Resolve exchange name to exchange_id."""
-        if exchange not in EXCHANGE_MAP:
-            raise ValueError(
-                f"Exchange '{exchange}' not in EXCHANGE_MAP; update pointline.config"
-            )
-        return EXCHANGE_MAP[exchange]
+        """Resolve exchange name to exchange_id using canonical mapping."""
+        return get_exchange_id(exchange)
 
     def _check_quarantine(
         self,
@@ -296,14 +293,16 @@ class TradesIngestionService(BaseService):
             file_line_number.alias("ingest_seq"),  # Use line number as ingest sequence
         ])
 
-    def _add_metadata(self, df: pl.DataFrame, exchange_id: int) -> pl.DataFrame:
-        """Add exchange_id and date columns."""
-        # Use Int16 to match dim_symbol schema (dim_symbol uses Int16, not UInt16)
+    def _add_metadata(self, df: pl.DataFrame, exchange: str, exchange_id: int) -> pl.DataFrame:
+        """Add exchange, exchange_id and date columns."""
+        # Add exchange (string) for partitioning and human readability
+        # Add exchange_id (Int16) for joins and compression
         result = df.with_columns([
+            pl.lit(exchange, dtype=pl.Utf8).alias("exchange"),
             pl.lit(exchange_id, dtype=pl.Int16).alias("exchange_id"),
         ])
         
-        # Derive date from ts_local_us (microseconds since epoch)
+        # Derive date from ts_local_us (microseconds since epoch) in UTC
         result = result.with_columns([
             pl.from_epoch(pl.col("ts_local_us"), time_unit="us")
             .cast(pl.Date)

@@ -139,6 +139,7 @@ def test_normalize_quotes_schema():
     """Test schema normalization."""
     df = pl.DataFrame({
         "date": [date(2024, 5, 1)],
+        "exchange": ["binance"],
         "exchange_id": [1],
         "symbol_id": [100],
         "ts_local_us": [1714550400000000],
@@ -183,6 +184,7 @@ def test_validate_quotes_basic():
         "ask_px_int": [5000050, 5000150, 5000200],
         "ask_sz_int": [15000, 25000, 30000],
         "ts_local_us": [1714550400000000, 1714550401000000, 1714550402000000],
+        "exchange": ["binance", "binance", "binance"],
         "exchange_id": [1, 1, 1],
         "symbol_id": [100, 100, 100],
     })
@@ -202,6 +204,7 @@ def test_validate_quotes_crossed_book():
         "ask_px_int": [5000050, 5000150, 5000100],  # Last ask < bid (crossed)
         "ask_sz_int": [15000, 25000, 35000],
         "ts_local_us": [1714550400000000, 1714550401000000, 1714550402000000],
+        "exchange": ["binance", "binance", "binance"],
         "exchange_id": [1, 1, 1],
         "symbol_id": [100, 100, 100],
     })
@@ -223,6 +226,7 @@ def test_validate_quotes_partial_quotes():
         "ask_px_int": [5000050, 5000150, None],
         "ask_sz_int": [15000, 25000, None],
         "ts_local_us": [1714550400000000, 1714550401000000, 1714550402000000],
+        "exchange": ["binance", "binance", "binance"],
         "exchange_id": [1, 1, 1],
         "symbol_id": [100, 100, 100],
     })
@@ -241,6 +245,7 @@ def test_validate_quotes_both_missing():
         "ask_px_int": [5000050, None, 5000250],
         "ask_sz_int": [15000, None, 35000],
         "ts_local_us": [1714550400000000, 1714550401000000, 1714550402000000],
+        "exchange": ["binance", "binance", "binance"],
         "exchange_id": [1, 1, 1],
         "symbol_id": [100, 100, 100],
     })
@@ -264,6 +269,9 @@ def test_validate_quotes_both_missing():
         .otherwise(pl.col("ask_sz_int"))
         .alias("ask_sz_int"),
     ])
+    # Ensure exchange column exists
+    if "exchange" not in df.columns:
+        df = df.with_columns(pl.lit("binance", dtype=pl.Utf8).alias("exchange"))
     
     validated = validate_quotes(df)
     
@@ -370,6 +378,7 @@ def test_quotes_service_validate():
         "ask_px_int": [5000050, 5000100],
         "ask_sz_int": [15000, 20000],
         "ts_local_us": [1714550400000000, 1714550401000000],
+        "exchange": ["binance", "binance"],
         "exchange_id": [1, 1],
         "symbol_id": [100, 100],
     })
@@ -389,6 +398,7 @@ def test_quotes_service_compute_state():
     
     df = pl.DataFrame({
         "date": [date(2024, 5, 1)],
+        "exchange": ["binance"],
         "exchange_id": [1],
         "symbol_id": [100],
         "ts_local_us": [1714550400000000],
@@ -419,6 +429,7 @@ def test_quotes_service_write():
     
     df = pl.DataFrame({
         "date": [date(2024, 5, 1)],
+        "exchange": ["binance"],
         "exchange_id": [1],
         "symbol_id": [100],
         "ts_local_us": [1714550400000000],
@@ -546,6 +557,7 @@ def test_required_quotes_columns():
     cols = required_quotes_columns()
     assert len(cols) == len(QUOTES_SCHEMA)
     assert "date" in cols
+    assert "exchange" in cols
     assert "exchange_id" in cols
     assert "symbol_id" in cols
     assert "bid_px_int" in cols

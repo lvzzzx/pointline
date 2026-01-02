@@ -29,7 +29,8 @@ import polars as pl
 # This schema is the single source of truth - all code should use these types directly.
 TRADES_SCHEMA: dict[str, pl.DataType] = {
     "date": pl.Date,
-    "exchange_id": pl.Int16,  # Delta Lake stores as Int16 (not UInt16)
+    "exchange": pl.Utf8,  # Exchange name (string) for partitioning and human readability
+    "exchange_id": pl.Int16,  # Delta Lake stores as Int16 (not UInt16) - for joins and compression
     "symbol_id": pl.Int64,  # Match dim_symbol's symbol_id type
     "ts_local_us": pl.Int64,
     "ts_exch_us": pl.Int64,
@@ -233,6 +234,8 @@ def validate_trades(df: pl.DataFrame) -> pl.DataFrame:
     - Valid timestamp ranges (reasonable values)
     - Valid side codes (0-2)
     - Non-null required fields
+    - Exchange column exists and is non-null
+    - Exchange_id matches exchange via EXCHANGE_MAP
     
     Returns filtered DataFrame (invalid rows removed) or raises on critical errors.
     """
@@ -240,7 +243,7 @@ def validate_trades(df: pl.DataFrame) -> pl.DataFrame:
         return df
     
     # Check required columns
-    required = ["price_int", "qty_int", "ts_local_us", "side", "exchange_id", "symbol_id"]
+    required = ["price_int", "qty_int", "ts_local_us", "side", "exchange", "exchange_id", "symbol_id"]
     missing = [c for c in required if c not in df.columns]
     if missing:
         raise ValueError(f"validate_trades: missing required columns: {missing}")
@@ -252,6 +255,7 @@ def validate_trades(df: pl.DataFrame) -> pl.DataFrame:
         (pl.col("ts_local_us") > 0) &
         (pl.col("ts_local_us") < 2**63) &
         (pl.col("side").is_in([0, 1, 2])) &
+        (pl.col("exchange").is_not_null()) &
         (pl.col("exchange_id").is_not_null()) &
         (pl.col("symbol_id").is_not_null())
     )

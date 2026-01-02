@@ -8,14 +8,17 @@ class BaseDeltaRepository:
     Base implementation for Delta Lake repositories using Polars and delta-rs.
     """
     
-    def __init__(self, table_path: str | Path):
+    def __init__(self, table_path: str | Path, partition_by: list[str] | None = None):
         """
         Initializes the repository with a specific table path.
         
         Args:
             table_path: The physical path to the Delta table.
+            partition_by: Optional list of column names to partition by (e.g., ["exchange", "date"]).
+                         If None, table will not be partitioned.
         """
         self.table_path = str(table_path)
+        self.partition_by = partition_by
         
     def read_all(self) -> pl.DataFrame:
         """
@@ -33,20 +36,26 @@ class BaseDeltaRepository:
         Args:
             df: The DataFrame to write.
         """
-        from deltalake import WriterProperties
+        from deltalake import WriterProperties, write_deltalake
         
-        # Map STORAGE_OPTIONS to delta_write_options
-        write_options = {}
+        # Map STORAGE_OPTIONS to writer_properties
+        writer_properties = None
         if "compression" in STORAGE_OPTIONS:
             # WriterProperties expects uppercase compression name or specific enum
-            write_options["writer_properties"] = WriterProperties(
+            writer_properties = WriterProperties(
                 compression=STORAGE_OPTIONS["compression"].upper()
             )
         
-        df.write_delta(
+        # Convert Polars DataFrame to PyArrow Table for delta-rs
+        arrow_table = df.to_arrow()
+        
+        # Use write_deltalake which supports partition_by
+        write_deltalake(
             self.table_path,
+            arrow_table,
             mode="overwrite",
-            delta_write_options=write_options
+            partition_by=self.partition_by,
+            writer_properties=writer_properties
         )
 
     def append(self, df: pl.DataFrame) -> None:
@@ -56,18 +65,25 @@ class BaseDeltaRepository:
         Args:
             df: The DataFrame to append.
         """
-        from deltalake import WriterProperties
+        from deltalake import WriterProperties, write_deltalake
         
-        write_options = {}
+        # Map STORAGE_OPTIONS to writer_properties
+        writer_properties = None
         if "compression" in STORAGE_OPTIONS:
-            write_options["writer_properties"] = WriterProperties(
+            writer_properties = WriterProperties(
                 compression=STORAGE_OPTIONS["compression"].upper()
             )
         
-        df.write_delta(
+        # Convert Polars DataFrame to PyArrow Table for delta-rs
+        arrow_table = df.to_arrow()
+        
+        # Use write_deltalake which supports partition_by
+        write_deltalake(
             self.table_path,
+            arrow_table,
             mode="append",
-            delta_write_options=write_options
+            partition_by=self.partition_by,
+            writer_properties=writer_properties
         )
         
     def merge(self, df: pl.DataFrame, keys: list[str]) -> None:

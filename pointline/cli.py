@@ -69,10 +69,16 @@ def _create_ingestion_service(data_type: str, manifest_repo):
     dim_symbol_repo = BaseDeltaRepository(get_table_path("dim_symbol"))
     
     if data_type == "trades":
-        repo = BaseDeltaRepository(get_table_path("trades"))
+        repo = BaseDeltaRepository(
+            get_table_path("trades"),
+            partition_by=["exchange", "date"]
+        )
         return TradesIngestionService(repo, dim_symbol_repo, manifest_repo)
     elif data_type == "quotes":
-        repo = BaseDeltaRepository(get_table_path("quotes"))
+        repo = BaseDeltaRepository(
+            get_table_path("quotes"),
+            partition_by=["exchange", "date"]
+        )
         return QuotesIngestionService(repo, dim_symbol_repo, manifest_repo)
     else:
         raise ValueError(f"Unsupported data type: {data_type}")

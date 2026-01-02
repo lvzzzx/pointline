@@ -29,7 +29,8 @@ import polars as pl
 # This schema is the single source of truth - all code should use these types directly.
 QUOTES_SCHEMA: dict[str, pl.DataType] = {
     "date": pl.Date,
-    "exchange_id": pl.Int16,  # Delta Lake stores as Int16 (not UInt16)
+    "exchange": pl.Utf8,  # Exchange name (string) for partitioning and human readability
+    "exchange_id": pl.Int16,  # Delta Lake stores as Int16 (not UInt16) - for joins and compression
     "symbol_id": pl.Int64,  # Match dim_symbol's symbol_id type
     "ts_local_us": pl.Int64,
     "ts_exch_us": pl.Int64,
@@ -143,7 +144,7 @@ def validate_quotes(df: pl.DataFrame) -> pl.DataFrame:
     # Check required columns
     required = [
         "bid_px_int", "bid_sz_int", "ask_px_int", "ask_sz_int",
-        "ts_local_us", "exchange_id", "symbol_id"
+        "ts_local_us", "exchange", "exchange_id", "symbol_id"
     ]
     missing = [c for c in required if c not in df.columns]
     if missing:
@@ -153,6 +154,7 @@ def validate_quotes(df: pl.DataFrame) -> pl.DataFrame:
     filters = [
         (pl.col("ts_local_us") > 0) &
         (pl.col("ts_local_us") < 2**63) &
+        (pl.col("exchange").is_not_null()) &
         (pl.col("exchange_id").is_not_null()) &
         (pl.col("symbol_id").is_not_null())
     ]
