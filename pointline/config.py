@@ -9,6 +9,7 @@ TABLE_PATHS = {
     "dim_symbol": "silver/dim_symbol",
     "ingest_manifest": "silver/ingest_manifest",
     "trades": "silver/trades",
+    "quotes": "silver/quotes",
 }
 
 # Storage Settings

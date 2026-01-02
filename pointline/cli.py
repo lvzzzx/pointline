@@ -19,6 +19,7 @@ from pointline.io.base_repository import BaseDeltaRepository
 from pointline.io.vendor.tardis import build_updates_from_instruments, TardisClient, download_tardis_datasets
 from pointline.services.dim_symbol_service import DimSymbolService
 from pointline.services.trades_service import TradesIngestionService
+from pointline.services.quotes_service import QuotesIngestionService
 
 
 def _sorted_files(files: Iterable[BronzeFileMetadata]) -> list[BronzeFileMetadata]:
@@ -63,8 +64,22 @@ def _cmd_ingest_discover(args: argparse.Namespace) -> int:
     return 0
 
 
+def _create_ingestion_service(data_type: str, manifest_repo):
+    """Create the appropriate ingestion service based on data type."""
+    dim_symbol_repo = BaseDeltaRepository(get_table_path("dim_symbol"))
+    
+    if data_type == "trades":
+        repo = BaseDeltaRepository(get_table_path("trades"))
+        return TradesIngestionService(repo, dim_symbol_repo, manifest_repo)
+    elif data_type == "quotes":
+        repo = BaseDeltaRepository(get_table_path("quotes"))
+        return QuotesIngestionService(repo, dim_symbol_repo, manifest_repo)
+    else:
+        raise ValueError(f"Unsupported data type: {data_type}")
+
+
 def _cmd_ingest_run(args: argparse.Namespace) -> int:
-    """Run trades ingestion for pending bronze files."""
+    """Run ingestion for pending bronze files."""
     bronze_root = Path(args.bronze_root)
     source = LocalBronzeSource(bronze_root)
     manifest_repo = DeltaManifestRepository(Path(args.manifest_path))
@@ -98,52 +113,59 @@ def _cmd_ingest_run(args: argparse.Namespace) -> int:
     files = _sorted_files(files)
     print(f"Ingesting {len(files)} file(s)...")
     
-    # Initialize services
-    trades_repo = BaseDeltaRepository(get_table_path("trades"))
-    dim_symbol_repo = BaseDeltaRepository(get_table_path("dim_symbol"))
-    service = TradesIngestionService(trades_repo, dim_symbol_repo, manifest_repo)
-    
     # Process each file
     success_count = 0
     failed_count = 0
     quarantined_count = 0
     
+    # Group files by data_type to reuse services
+    files_by_type = {}
     for file_meta in files:
-        if args.data_type and file_meta.data_type != args.data_type:
-            continue
-        
-        # Only process trades for now
-        if file_meta.data_type != "trades":
-            print(f"Skipping {file_meta.bronze_file_path} (data_type={file_meta.data_type}, only trades supported)")
-            continue
-        
-        # Resolve file_id
-        file_id = manifest_repo.resolve_file_id(file_meta)
-        
-        # Ingest file
-        result = service.ingest_file(file_meta, file_id, bronze_root=bronze_root)
-        
-        # Update manifest
-        if result.error_message:
-            if "missing_symbol" in result.error_message or "invalid_validity_window" in result.error_message:
-                status = "quarantined"
-                quarantined_count += 1
-            else:
-                status = "failed"
+        if file_meta.data_type not in files_by_type:
+            files_by_type[file_meta.data_type] = []
+        files_by_type[file_meta.data_type].append(file_meta)
+    
+    for data_type, type_files in files_by_type.items():
+        try:
+            service = _create_ingestion_service(data_type, manifest_repo)
+        except ValueError as e:
+            print(f"Error: {e}")
+            for file_meta in type_files:
+                print(f"✗ {file_meta.bronze_file_path}: Unsupported data type")
                 failed_count += 1
-        else:
-            status = "success"
-            success_count += 1
+            continue
         
-        manifest_repo.update_status(file_id, status, file_meta, result)
-        
-        # Print result
-        if status == "success":
-            print(f"✓ {file_meta.bronze_file_path}: {result.row_count} rows")
-        elif status == "quarantined":
-            print(f"⚠ {file_meta.bronze_file_path}: QUARANTINED - {result.error_message}")
-        else:
-            print(f"✗ {file_meta.bronze_file_path}: FAILED - {result.error_message}")
+        for file_meta in type_files:
+            if args.data_type and file_meta.data_type != args.data_type:
+                continue
+            
+            # Resolve file_id
+            file_id = manifest_repo.resolve_file_id(file_meta)
+            
+            # Ingest file
+            result = service.ingest_file(file_meta, file_id, bronze_root=bronze_root)
+            
+            # Update manifest
+            if result.error_message:
+                if "missing_symbol" in result.error_message or "invalid_validity_window" in result.error_message:
+                    status = "quarantined"
+                    quarantined_count += 1
+                else:
+                    status = "failed"
+                    failed_count += 1
+            else:
+                status = "success"
+                success_count += 1
+            
+            manifest_repo.update_status(file_id, status, file_meta, result)
+            
+            # Print result
+            if status == "success":
+                print(f"✓ {file_meta.bronze_file_path}: {result.row_count} rows")
+            elif status == "quarantined":
+                print(f"⚠ {file_meta.bronze_file_path}: QUARANTINED - {result.error_message}")
+            else:
+                print(f"✗ {file_meta.bronze_file_path}: FAILED - {result.error_message}")
     
     print(f"\nSummary: {success_count} succeeded, {failed_count} failed, {quarantined_count} quarantined")
     return 0 if failed_count == 0 else 1
@@ -442,7 +464,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     ingest_run.add_argument(
         "--data-type",
-        help="Filter by data type (e.g., trades). Only trades is currently supported.",
+        help="Filter by data type (e.g., trades, quotes).",
     )
     ingest_run.add_argument(
         "--force",
