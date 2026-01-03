@@ -2,7 +2,7 @@ import os
 from pathlib import Path
 
 # Base Paths
-LAKE_ROOT = Path(os.getenv("LAKE_ROOT", "./data/lake"))
+LAKE_ROOT = Path(os.getenv("LAKE_ROOT", str(Path.home() / "data" / "lake")))
 
 # Table Registry (Table Name -> Relative Path from LAKE_ROOT)
 TABLE_PATHS = {
