@@ -85,7 +85,7 @@ class BookSnapshotsIngestionService(BaseService):
         else:
             # Fallback to merge if append not available
             # For book snapshots, we could use a composite key, but append is preferred
-            raise NotImplementedError("Repository must support append() for book_snapshots")
+            raise NotImplementedError("Repository must support append() for book_snapshots_top25")
 
     def ingest_file(
         self,

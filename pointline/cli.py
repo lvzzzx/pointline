@@ -81,10 +81,9 @@ def _create_ingestion_service(data_type: str, manifest_repo):
             partition_by=["exchange", "date"]
         )
         return QuotesIngestionService(repo, dim_symbol_repo, manifest_repo)
-    elif data_type == "book_snapshots" or data_type == "book_snapshot_25":
-        # Support both "book_snapshots" (canonical) and "book_snapshot_25" (Tardis naming)
+    elif data_type == "book_snapshots_top25":
         repo = BaseDeltaRepository(
-            get_table_path("book_snapshots"),
+            get_table_path("book_snapshots_top25"),
             partition_by=["exchange", "date"]
         )
         return BookSnapshotsIngestionService(repo, dim_symbol_repo, manifest_repo)
@@ -384,7 +383,7 @@ def _build_parser() -> argparse.ArgumentParser:
     download.add_argument(
         "--data-types",
         required=True,
-        help="Comma-separated list of data types (e.g., trades,quotes,book_snapshots)",
+        help="Comma-separated list of data types (e.g., trades,quotes,book_snapshots_top25)",
     )
     download.add_argument(
         "--symbols",
@@ -451,7 +450,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     ingest_discover.add_argument(
         "--data-type",
-        help="Filter by data type (e.g., trades, quotes, book_snapshots)",
+        help="Filter by data type (e.g., trades, quotes, book_snapshots_top25)",
     )
     ingest_discover.add_argument(
         "--pending-only",
@@ -478,7 +477,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     ingest_run.add_argument(
         "--data-type",
-        help="Filter by data type (e.g., trades, quotes, book_snapshots).",
+        help="Filter by data type (e.g., trades, quotes, book_snapshots_top25).",
     )
     ingest_run.add_argument(
         "--force",
@@ -516,7 +515,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     manifest_show.add_argument(
         "--data-type",
-        help="Filter by data type (e.g., trades, quotes, book_snapshots)",
+        help="Filter by data type (e.g., trades, quotes, book_snapshots_top25)",
     )
     manifest_show.add_argument(
         "--symbol",
