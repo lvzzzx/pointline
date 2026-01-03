@@ -114,7 +114,7 @@ def load_quotes(
     return lf if lazy else lf.collect()
 
 
-def load_book_snapshots_top25(
+def load_book_snapshot_25(
     *,
     exchange: str | None = None,
     exchange_id: int | Iterable[int] | None = None,
@@ -126,7 +126,7 @@ def load_book_snapshots_top25(
 ) -> pl.DataFrame | pl.LazyFrame:
     """Load top-25 book snapshots with common filters applied."""
     lf = scan_table(
-        "book_snapshots_top25",
+        "book_snapshot_25",
         exchange=exchange,
         exchange_id=exchange_id,
         symbol_id=symbol_id,

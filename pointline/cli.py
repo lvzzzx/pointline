@@ -69,6 +69,8 @@ def _create_ingestion_service(data_type: str, manifest_repo):
     """Create the appropriate ingestion service based on data type."""
     dim_symbol_repo = BaseDeltaRepository(get_table_path("dim_symbol"))
     
+        # Map bronze layer data_type to canonical table name
+        # Uses Tardis naming (book_snapshot_25) for consistency
     if data_type == "trades":
         repo = BaseDeltaRepository(
             get_table_path("trades"),
@@ -81,9 +83,9 @@ def _create_ingestion_service(data_type: str, manifest_repo):
             partition_by=["exchange", "date"]
         )
         return QuotesIngestionService(repo, dim_symbol_repo, manifest_repo)
-    elif data_type == "book_snapshots_top25":
+    elif data_type == "book_snapshot_25":
         repo = BaseDeltaRepository(
-            get_table_path("book_snapshots_top25"),
+            get_table_path("book_snapshot_25"),
             partition_by=["exchange", "date"]
         )
         return BookSnapshotsIngestionService(repo, dim_symbol_repo, manifest_repo)
@@ -383,7 +385,7 @@ def _build_parser() -> argparse.ArgumentParser:
     download.add_argument(
         "--data-types",
         required=True,
-        help="Comma-separated list of data types (e.g., trades,quotes,book_snapshots_top25)",
+        help="Comma-separated list of data types (e.g., trades,quotes,book_snapshot_25)",
     )
     download.add_argument(
         "--symbols",
@@ -450,7 +452,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     ingest_discover.add_argument(
         "--data-type",
-        help="Filter by data type (e.g., trades, quotes, book_snapshots_top25)",
+        help="Filter by data type (e.g., trades, quotes, book_snapshot_25)",
     )
     ingest_discover.add_argument(
         "--pending-only",
@@ -477,7 +479,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     ingest_run.add_argument(
         "--data-type",
-        help="Filter by data type (e.g., trades, quotes, book_snapshots_top25).",
+        help="Filter by data type (e.g., trades, quotes, book_snapshot_25).",
     )
     ingest_run.add_argument(
         "--force",
@@ -515,7 +517,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     manifest_show.add_argument(
         "--data-type",
-        help="Filter by data type (e.g., trades, quotes, book_snapshots_top25)",
+        help="Filter by data type (e.g., trades, quotes, book_snapshot_25)",
     )
     manifest_show.add_argument(
         "--symbol",

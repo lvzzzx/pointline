@@ -391,7 +391,7 @@ def test_book_snapshots_ingestion_service_ingest_file(
     # Create metadata
     meta = BronzeFileMetadata(
         exchange="binance",
-        data_type="book_snapshots_top25",
+        data_type="book_snapshot_25",
         symbol="BTCUSDT",
         date=date(2024, 5, 1),
         bronze_file_path=str(bronze_path.relative_to(tmp_path / "bronze")),
@@ -438,7 +438,7 @@ def test_book_snapshots_ingestion_service_empty_file(
 
     meta = BronzeFileMetadata(
         exchange="binance",
-        data_type="book_snapshots_top25",
+        data_type="book_snapshot_25",
         symbol="BTCUSDT",
         date=date(2024, 5, 1),
         bronze_file_path=str(bronze_path.relative_to(tmp_path / "bronze")),
@@ -471,7 +471,7 @@ def test_book_snapshots_ingestion_service_quarantine(
 
     meta = BronzeFileMetadata(
         exchange="binance",
-        data_type="book_snapshots_top25",
+        data_type="book_snapshot_25",
         symbol="BTCUSDT",
         date=date(2024, 5, 1),
         bronze_file_path=str(bronze_path.relative_to(tmp_path / "bronze")),

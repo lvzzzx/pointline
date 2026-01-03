@@ -39,7 +39,7 @@ def test_list_tables():
     tables = list_tables()
     assert "trades" in tables
     assert "quotes" in tables
-    assert "book_snapshots_top25" in tables
+    assert "book_snapshot_25" in tables
 
 @patch("pointline.research.scan_table")
 def test_load_trades_lazy(mock_scan_table):

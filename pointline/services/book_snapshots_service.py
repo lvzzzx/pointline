@@ -51,7 +51,7 @@ class BookSnapshotsIngestionService(BaseService):
         Initialize the book snapshots ingestion service.
 
         Args:
-            repo: Repository for the book_snapshots_top25 Silver table
+            repo: Repository for the book_snapshot_25 Silver table
             dim_symbol_repo: Repository for dim_symbol table
             manifest_repo: Repository for ingestion manifest
         """
@@ -85,7 +85,7 @@ class BookSnapshotsIngestionService(BaseService):
         else:
             # Fallback to merge if append not available
             # For book snapshots, we could use a composite key, but append is preferred
-            raise NotImplementedError("Repository must support append() for book_snapshots_top25")
+            raise NotImplementedError("Repository must support append() for book_snapshot_25")
 
     def ingest_file(
         self,
@@ -218,11 +218,17 @@ class BookSnapshotsIngestionService(BaseService):
 
     def _read_bronze_csv(self, path: Path) -> pl.DataFrame:
         """Read a bronze CSV file, handling gzip compression."""
+        # Read CSV with float types for price/amount columns (they'll be converted to fixed-point later)
+        # Use infer_schema_length to avoid schema inference issues
+        read_options = {
+            "infer_schema_length": 10000,
+            "try_parse_dates": False,
+        }
         if path.suffix == ".gz" or str(path).endswith(".csv.gz"):
             with gzip.open(path, "rt", encoding="utf-8") as f:
-                return pl.read_csv(f)
+                return pl.read_csv(f, **read_options)
         else:
-            return pl.read_csv(path)
+            return pl.read_csv(path, **read_options)
 
     def _resolve_exchange_id(self, exchange: str) -> int:
         """Resolve exchange name to exchange_id using canonical mapping."""

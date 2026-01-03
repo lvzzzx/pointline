@@ -87,7 +87,7 @@ Example:
 |---|---|---|---|
 | trades | `/lake/silver/trades` | `exchange`, `date` | `ts_local_us`, `symbol_id`, `price_int`, `qty_int` |
 | quotes | `/lake/silver/quotes` | `exchange`, `date` | `ts_local_us`, `symbol_id`, `bid_px_int`, `ask_px_int` |
-| book_snapshots_top25 | `/lake/silver/book_snapshots_top25` | `exchange`, `date` | `ts_local_us`, `symbol_id`, `bids_px`, `asks_px` |
+| book_snapshot_25 | `/lake/silver/book_snapshot_25` | `exchange`, `date` | `ts_local_us`, `symbol_id`, `bids_px`, `asks_px` |
 | l2_updates | `/lake/silver/l2_updates` | `exchange`, `date` | `ts_local_us`, `symbol_id`, `side`, `price_int`, `size_int` |
 | dim_symbol | `/lake/silver/dim_symbol` | none | `symbol_id`, `exchange_id`, `exchange_symbol`, validity range |
 | ingest_manifest | `/lake/silver/ingest_manifest` | none | `exchange`, `data_type`, `date`, `status` |
@@ -95,7 +95,7 @@ Example:
 **For complete schema definitions, see [Schema Reference](../schemas.md).**
 
 ### 3.3 Table catalog (Gold)
-- `gold.book_snapshots_top25_wide` (legacy wide format)
+- `gold.book_snapshot_25_wide` (legacy wide format)
 - `gold.tob_quotes` (top-of-book)
 - Other derived tables are reproducible from Silver.
 

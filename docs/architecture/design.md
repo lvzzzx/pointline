@@ -69,7 +69,7 @@ Silver is the canonical research foundation.
 ### Gold (research-optimized derived tables)
 Precomputed “fast paths”:
 - top-of-book quotes (`tob_quotes`)
-- top-N snapshots in wide format (`book_snapshots_top25_wide`)
+- top-N snapshots in wide format (`book_snapshot_25_wide`)
 - merged “event tape” for replay (optional)
 - options surface snapshots on a time grid (optional)
 
@@ -168,7 +168,7 @@ Tardis incremental L2 updates are **absolute sizes** at a price level (not delta
 
 ---
 
-### 5.2 `book_snapshots_top25` (from Tardis snapshots)
+### 5.2 `book_snapshot_25` (from Tardis snapshots)
 Snapshots are full top-N book states (e.g., 25 levels).
 
 **Source schema (Tardis `book_snapshot_25`)**
@@ -195,12 +195,12 @@ Snapshots are full top-N book states (e.g., 25 levels).
 **Recommended storage: list columns (Silver)**
 **Verdict:** Stick to `list<i64>`. DuckDB/Polars handle lists natively and efficiently. Wide columns explode schema metadata.
 
-**Table:** `silver.book_snapshots_top25`  
+**Table:** `silver.book_snapshot_25`  
 **Partitioned by:** `["exchange", "date"]` (same strategy as trades/quotes tables)  
-**Schema:** See [Schema Reference - book_snapshots_top25](../schemas.md#22-silverbook_snapshots_top25)
+**Schema:** See [Schema Reference - book_snapshot_25](../schemas.md#22-silverbook_snapshot_25)
 
 **Gold option: wide columns (Legacy Support)**
-`gold.book_snapshots_top25_wide` with columns:
+`gold.book_snapshot_25_wide` with columns:
 - `bid_px_01..bid_px_25`, `bid_sz_01..bid_sz_25`, ...
 Use this strictly for Gold if legacy tools (Pandas without explode) require it. See [Schema Reference - Gold Tables](../schemas.md#gold-tables) for details.
 
@@ -442,7 +442,7 @@ pl.read_delta("/lake/silver/trades", version=None) \
 ### Dataset naming
 - Bronze mirrors Tardis dataset names.
 - Silver uses domain names:
-  - `l2_updates`, `book_snapshots_top25`, `trades`, `quotes`, `book_ticker`, `derivative_ticker`, `liquidations`, `options_chain`
+  - `l2_updates`, `book_snapshot_25`, `trades`, `quotes`, `book_ticker`, `derivative_ticker`, `liquidations`, `options_chain`
 
 ### Timestamp units
 - Store `*_us` (microseconds) as int64 consistently
