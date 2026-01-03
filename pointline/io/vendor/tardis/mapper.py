@@ -6,7 +6,7 @@ from typing import Any
 
 import polars as pl
 
-from pointline.config import EXCHANGE_MAP, TYPE_MAP
+from pointline.config import EXCHANGE_MAP, TYPE_MAP, get_exchange_name, normalize_exchange
 
 
 @dataclass(frozen=True)
@@ -121,6 +121,7 @@ def _history_rows(
     state = _instrument_state(record, effective_ts=effective_ts)
     current_payload = {
         "exchange_id": exchange_id,
+        "exchange": get_exchange_name(exchange_id),
         "exchange_symbol": state.exchange_symbol,
         "base_asset": state.base_asset,
         "quote_asset": state.quote_asset,
@@ -195,6 +196,7 @@ def build_updates_from_instruments(
             rows.append(
                 {
                     "exchange_id": exchange_id,
+                    "exchange": get_exchange_name(exchange_id),
                     "exchange_symbol": state.exchange_symbol,
                     "base_asset": state.base_asset,
                     "quote_asset": state.quote_asset,
@@ -212,6 +214,7 @@ def build_updates_from_instruments(
         return pl.DataFrame(
             schema={
                 "exchange_id": pl.Int64,
+                "exchange": pl.Utf8,
                 "exchange_symbol": pl.Utf8,
                 "base_asset": pl.Utf8,
                 "quote_asset": pl.Utf8,

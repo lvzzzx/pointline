@@ -10,6 +10,7 @@ Example:
     initial = pl.DataFrame(
         {
             "exchange_id": [1],
+            "exchange": ["binance"],  # Added for consistency
             "exchange_symbol": ["BTC-PERPETUAL"],
             "base_asset": ["BTC"],
             "quote_asset": ["USD"],
@@ -37,7 +38,7 @@ Example:
 from __future__ import annotations
 
 import hashlib
-from typing import Iterable, Sequence
+from typing import Sequence
 
 import polars as pl
 
@@ -58,6 +59,7 @@ TRACKED_COLS: tuple[str, ...] = (
 SCHEMA: dict[str, pl.DataType] = {
     "symbol_id": pl.Int64,
     "exchange_id": pl.Int16,  # Delta Lake doesn't support UInt16, stores as Int16
+    "exchange": pl.Utf8,  # Normalized exchange name (e.g., "binance-futures") for consistency with silver tables
     "exchange_symbol": pl.Utf8,
     "base_asset": pl.Utf8,
     "quote_asset": pl.Utf8,
@@ -103,7 +105,28 @@ def assign_symbol_id_hash(df: pl.DataFrame) -> pl.DataFrame:
 
 
 def normalize_dim_symbol_schema(df: pl.DataFrame) -> pl.DataFrame:
-    """Cast to the canonical dim_symbol schema where possible."""
+    """Cast to the canonical dim_symbol schema where possible.
+
+    If exchange column is missing, it will be derived from exchange_id
+    using EXCHANGE_MAP.
+    """
+    from pointline.config import EXCHANGE_MAP, get_exchange_name
+
+    # Derive exchange from exchange_id if missing
+    if "exchange" not in df.columns and "exchange_id" in df.columns:
+        # Create reverse mapping: exchange_id -> exchange name
+        id_to_exchange = {
+            v: get_exchange_name(v) for v in EXCHANGE_MAP.values()
+        }
+        exchange_map = pl.DataFrame({
+            "exchange_id": list(id_to_exchange.keys()),
+            "exchange": list(id_to_exchange.values()),
+        })
+        df = df.join(exchange_map, on="exchange_id", how="left")
+        # If some exchange_ids don't have a mapping, fill with None
+        # (shouldn't happen in practice)
+        df = df.with_columns(pl.col("exchange").fill_null("unknown"))
+
     missing = [col for col in SCHEMA if col not in df.columns]
     if missing:
         raise ValueError(f"dim_symbol missing required columns: {missing}")
@@ -146,10 +169,28 @@ def scd2_upsert(
     if valid_from_col != "valid_from_ts":
         updates = updates.rename({valid_from_col: "valid_from_ts"})
 
+    # exchange column is optional in updates - will be derived from
+    # exchange_id if missing
     required_cols = set(NATURAL_KEY_COLS + TRACKED_COLS + ("valid_from_ts",))
     missing = [col for col in required_cols if col not in updates.columns]
     if missing:
         raise ValueError(f"updates missing required columns: {missing}")
+
+    # Derive exchange from exchange_id if missing in updates
+    if "exchange" not in updates.columns and "exchange_id" in updates.columns:
+        from pointline.config import EXCHANGE_MAP, get_exchange_name
+
+        id_to_exchange = {
+            v: get_exchange_name(v) for v in EXCHANGE_MAP.values()
+        }
+        exchange_map = pl.DataFrame({
+            "exchange_id": list(id_to_exchange.keys()),
+            "exchange": list(id_to_exchange.values()),
+        })
+        updates = updates.join(exchange_map, on="exchange_id", how="left")
+        updates = updates.with_columns(
+            pl.col("exchange").fill_null("unknown")
+        )
 
     current = dim_symbol.filter(pl.col("is_current") == True)  # noqa: E712
     current_for_join = current.rename({"symbol_id": "symbol_id_cur"})

@@ -93,6 +93,30 @@ def get_exchange_id(exchange: str) -> int:
     return EXCHANGE_MAP[normalized]
 
 
+def get_exchange_name(exchange_id: int) -> str:
+    """
+    Get normalized exchange name for a given exchange_id.
+    
+    This is the reverse mapping of get_exchange_id().
+    
+    Args:
+        exchange_id: Exchange ID to look up
+        
+    Returns:
+        Normalized exchange name (e.g., "binance-futures")
+        
+    Raises:
+        ValueError: If exchange_id is not found in EXCHANGE_MAP
+    """
+    for name, eid in EXCHANGE_MAP.items():
+        if eid == exchange_id:
+            return normalize_exchange(name)
+    raise ValueError(
+        f"Exchange ID {exchange_id} not found in EXCHANGE_MAP. "
+        f"Available IDs: {sorted(EXCHANGE_MAP.values())}"
+    )
+
+
 # Asset Type Registry
 # Maps Tardis instrument type strings to internal asset_type (u8)
 # Supports aliases for common variations

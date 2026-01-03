@@ -26,7 +26,8 @@ Slowly Changing Dimension (SCD) Type 2 table tracking instrument metadata over t
 | Column | Type | Description |
 |---|---|---|
 | **symbol_id** | i32 | Surrogate Key (Primary Key) |
-| **exchange_id** | i16 | Dictionary ID (e.g., 1=deribit, 2=binance) |
+| **exchange_id** | i16 | Dictionary ID (e.g., 1=binance, 2=binance-futures) |
+| **exchange** | string | Normalized exchange name (e.g., `binance-futures`) for consistency with silver tables |
 | **exchange_symbol** | string | Raw vendor ticker (e.g., `BTC-PERPETUAL`) |
 | **base_asset** | string | e.g., `BTC` |
 | **quote_asset** | string | e.g., `USD` or `USDT` |
