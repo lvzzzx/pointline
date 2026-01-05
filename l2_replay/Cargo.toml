@@ -1,0 +1,11 @@
+[package]
+name = "l2_replay"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+
+[lib]
+name = "l2_replay"
+path = "src/lib.rs"
+
+[dependencies]
