@@ -83,9 +83,9 @@ class L2UpdatesIngestionService(BaseService):
 
         try:
             # 1. Read bronze CSV file
-            raw_df = self._read_bronze_csv(bronze_path)
+            df = self._read_bronze_csv(bronze_path)
 
-            if raw_df.is_empty():
+            if df.is_empty():
                 logger.warning(f"Empty CSV file: {bronze_path}")
                 return IngestionResult(
                     row_count=0,
@@ -95,7 +95,7 @@ class L2UpdatesIngestionService(BaseService):
                 )
 
             # 2. Parse CSV
-            parsed_df = parse_tardis_l2_updates_csv(raw_df)
+            df = parse_tardis_l2_updates_csv(df)
 
             # 3. Load dim_symbol for quarantine check
             dim_symbol = self.dim_symbol_repo.read_all()
@@ -103,7 +103,7 @@ class L2UpdatesIngestionService(BaseService):
             # 4. Quarantine check
             exchange_id = self._resolve_exchange_id(meta.exchange)
             is_valid, error_msg = self._check_quarantine(
-                meta, dim_symbol, exchange_id, parsed_df
+                meta, dim_symbol, exchange_id, df
             )
 
             if not is_valid:
@@ -116,8 +116,8 @@ class L2UpdatesIngestionService(BaseService):
                 )
 
             # 5. Resolve symbol IDs
-            resolved_df = resolve_symbol_ids(
-                parsed_df,
+            df = resolve_symbol_ids(
+                df,
                 dim_symbol,
                 exchange_id,
                 meta.symbol,
@@ -125,22 +125,22 @@ class L2UpdatesIngestionService(BaseService):
             )
 
             # 6. Encode fixed-point
-            encoded_df = encode_l2_updates_fixed_point(resolved_df, dim_symbol)
+            df = encode_l2_updates_fixed_point(df, dim_symbol)
 
             # 7. Add lineage columns
-            lineage_df = self._add_lineage(encoded_df, file_id)
+            df = self._add_lineage(df, file_id)
 
             # 8. Add exchange, exchange_id and date
             normalized_exchange = normalize_exchange(meta.exchange)
-            final_df = self._add_metadata(lineage_df, normalized_exchange, exchange_id)
+            df = self._add_metadata(df, normalized_exchange, exchange_id)
 
             # 9. Normalize schema
-            normalized_df = normalize_l2_updates_schema(final_df)
+            df = normalize_l2_updates_schema(df)
 
             # 10. Validate
-            validated_df = self.validate(normalized_df)
+            df = self.validate(df)
 
-            if validated_df.is_empty():
+            if df.is_empty():
                 logger.warning(f"No valid rows after validation: {bronze_path}")
                 return IngestionResult(
                     row_count=0,
@@ -150,19 +150,19 @@ class L2UpdatesIngestionService(BaseService):
                 )
 
             # 11. Append to Delta table
-            self.write(validated_df)
+            self.write(df)
 
             # 12. Compute result stats
-            ts_min = validated_df["ts_local_us"].min()
-            ts_max = validated_df["ts_local_us"].max()
+            ts_min = df["ts_local_us"].min()
+            ts_max = df["ts_local_us"].max()
 
             logger.info(
-                f"Ingested {validated_df.height} l2_updates from {meta.bronze_file_path} "
+                f"Ingested {df.height} l2_updates from {meta.bronze_file_path} "
                 f"(ts range: {ts_min} - {ts_max})"
             )
 
             return IngestionResult(
-                row_count=validated_df.height,
+                row_count=df.height,
                 ts_local_min_us=ts_min,
                 ts_local_max_us=ts_max,
                 error_message=None,

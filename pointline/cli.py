@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import gc
 import json
 import os
 import time
@@ -190,6 +191,9 @@ def _cmd_ingest_run(args: argparse.Namespace) -> int:
                 print(f"⚠ {file_meta.bronze_file_path}: QUARANTINED - {result.error_message}")
             else:
                 print(f"✗ {file_meta.bronze_file_path}: FAILED - {result.error_message}")
+            
+            # Force garbage collection to free memory between large files
+            gc.collect()
     
     print(f"\nSummary: {success_count} succeeded, {failed_count} failed, {quarantined_count} quarantined")
     return 0 if failed_count == 0 else 1
