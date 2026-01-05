@@ -162,7 +162,8 @@ To get the book state at time `T`:
 2.  Apply all `l2_updates` where `snapshot_ts < ts_local_us <= T`.
 
 ### 6.3 L2 Replay (Researcher Usage)
-Use the high-level L2 replay APIs; they hide batch management and input scans.
+Use the high-level L2 replay APIs; they hide batch management and input scans. The Rust
+engine reads Delta directly; Python is a thin wrapper.
 
 ```python
 import l2_replay

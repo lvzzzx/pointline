@@ -37,7 +37,8 @@ Responsibilities:
 ### 3.3 Python Bindings (`l2_py`)
 Responsibilities:
 - Provide a stable researcher API.
-- Accept Arrow/Polars batches to avoid extra copies.
+- Delegate all data access and replay to the Rust core.
+- Pass table paths + filters only (no Python-side scans).
 - Return snapshots in Arrow/Polars-friendly formats.
 
 ## 4. Core Data Structures
@@ -152,6 +153,7 @@ Guidance:
   forward to the target `ts_local_us`.
 - `replay_between(...)` should hide input scans and emit full-depth snapshots on a cadence.
 - Return snapshots as Arrow Tables (or Polars DataFrames) for zero-copy integration.
+- Python should be a thin wrapper; Rust handles Delta reads directly via `delta-rs`.
 
 Advanced / internal API (infra or power users only):
 
@@ -174,7 +176,7 @@ researcher documentation.
 ## 10. Integration Notes
 
 - Symbol resolution remains in Python (`silver.dim_symbol`), then pass `symbol_id` to the engine.
-- `pointline.research.scan_table` can provide Arrow/Polars batches for the bindings.
+- Python passes resolved table paths into Rust; the Rust core reads Delta directly.
 - Output should remain fixed-point for storage; convert to real values at presentation.
 
 ## 11. Implementation Plan (Tracked)
