@@ -5,7 +5,7 @@ use std::sync::Arc;
 use anyhow::{anyhow, Context, Result};
 use chrono::{NaiveDate, NaiveDateTime};
 use deltalake::arrow::array::{
-    BooleanArray, Int32Array, Int64Array, LargeListArray, ListArray, StructArray, UInt8Array,
+    Array, BooleanArray, Int32Array, Int64Array, LargeListArray, ListArray, StructArray, UInt8Array,
 };
 use deltalake::arrow::record_batch::RecordBatch;
 use deltalake::datafusion::prelude::*;
