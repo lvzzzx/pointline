@@ -58,6 +58,13 @@ struct OrderBook {
     bids: std::collections::BTreeMap<i64, i64>,
     asks: std::collections::BTreeMap<i64, i64>,
 }
+
+struct StreamPos {
+    ts_local_us: i64,
+    ingest_seq: i32,
+    file_line_number: i32,
+    file_id: i32,
+}
 ```
 
 `BTreeMap` provides deterministic iteration order for full-depth output. Bids should be emitted
@@ -65,9 +72,25 @@ descending (reverse iteration), asks ascending.
 
 ## 5. Replay Engine API (Rust)
 
+### 5.1 Config + Ordering
+
+```rust
+struct ReplayConfig {
+    checkpoint_every_us: Option<i64>,
+    checkpoint_every_updates: Option<u64>,
+    validate_monotonic: bool, // enforce ordered input in debug/prod
+}
+```
+
+**Ordering key:** `(ts_local_us, ingest_seq, file_line_number)` ascending.  
+`StreamPos` captures the exact replay position for checkpoints and reproducibility.
+
+### 5.2 Replay Function
+
 ```rust
 fn replay<I: Iterator<Item = L2Update>>(
     updates: I,
+    config: &ReplayConfig,
     on_snapshot: impl FnMut(&OrderBook, &StreamPos),
     on_checkpoint: impl FnMut(&OrderBook, &StreamPos),
 )
