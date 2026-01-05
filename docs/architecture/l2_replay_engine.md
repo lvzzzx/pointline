@@ -101,17 +101,45 @@ state on a cadence (time or update count). Each checkpoint records the exact str
 
 ## 8. Python API (Researcher)
 
-Suggested API surface:
+Researcher-facing APIs should be high-level and hide batch management.
+
+Suggested API surface (recommended):
 
 ```python
 import l2_replay
 
+snapshot = l2_replay.snapshot_at(
+    exchange_id=21,
+    symbol_id=1234,
+    ts_local_us=1700000000000000,
+)
+
+for snap in l2_replay.replay_between(
+    exchange_id=21,
+    symbol_id=1234,
+    start_ts_local_us=1700000000000000,
+    end_ts_local_us=1700003600000000,
+    every_us=1_000_000,  # optional cadence for snapshots
+):
+    ...
+```
+
+Guidance:
+- `snapshot_at(...)` should read from `gold.l2_state_checkpoint` when available, then replay
+  forward to the target `ts_local_us`.
+- `replay_between(...)` should hide input scans and emit full-depth snapshots on a cadence.
+- Return snapshots as Arrow Tables (or Polars DataFrames) for zero-copy integration.
+
+Advanced / internal API (infra or power users only):
+
+```python
 engine = l2_replay.Engine(exchange_id=21, symbol_id=1234)
-engine.apply_batch(arrow_table)   # Arrow or Polars batch
+engine.apply_batch(arrow_table)   # pre-sorted Arrow/Polars batch
 snapshot = engine.snapshot()      # full-depth bids/asks
 ```
 
-Consider returning snapshots as Arrow Tables for zero-copy integration with Polars.
+`apply_batch` is a low-level hook intended for infra pipelines; it should not be promoted in
+researcher documentation.
 
 ## 9. Determinism Guardrails
 

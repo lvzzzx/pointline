@@ -161,6 +161,28 @@ To get the book state at time `T`:
 1.  Find the snapshot with max `ts_local_us <= T`.
 2.  Apply all `l2_updates` where `snapshot_ts < ts_local_us <= T`.
 
+### 6.3 L2 Replay (Researcher Usage)
+Use the high-level L2 replay APIs; they hide batch management and input scans.
+
+```python
+import l2_replay
+
+snapshot = l2_replay.snapshot_at(
+    exchange_id=21,
+    symbol_id=1234,
+    ts_local_us=1700000000000000,
+)
+
+for snap in l2_replay.replay_between(
+    exchange_id=21,
+    symbol_id=1234,
+    start_ts_local_us=1700000000000000,
+    end_ts_local_us=1700003600000000,
+    every_us=1_000_000,
+):
+    ...
+```
+
 ## 7. Researcher Interface (Conventions)
 
 ### 7.1 Exchange and Symbol Identity
