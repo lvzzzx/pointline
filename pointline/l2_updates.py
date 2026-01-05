@@ -23,6 +23,7 @@ import polars as pl
 # - Use Int16 instead of UInt16 for exchange_id
 # - Use Int32 instead of UInt32 for ingest_seq, file_id, file_line_number
 # - Use Int64 for symbol_id to match dim_symbol
+# - UInt8 is supported and maps to TINYINT (use for side)
 #
 # This schema is the single source of truth.
 L2_UPDATES_SCHEMA: dict[str, pl.DataType] = {
@@ -33,7 +34,7 @@ L2_UPDATES_SCHEMA: dict[str, pl.DataType] = {
     "ts_local_us": pl.Int64,
     "ts_exch_us": pl.Int64,
     "ingest_seq": pl.Int32,
-    "side": pl.Int8,        # 0=bid, 1=ask
+    "side": pl.UInt8,       # 0=bid, 1=ask
     "price_int": pl.Int64,  # Fixed-point
     "size_int": pl.Int64,   # Fixed-point (absolute size)
     "is_snapshot": pl.Boolean,
@@ -52,7 +53,7 @@ def parse_tardis_l2_updates_csv(df: pl.DataFrame) -> pl.DataFrame:
     - ts_local_us (i64)
     - ts_exch_us (i64)
     - is_snapshot (bool)
-    - side (i8): 0=bid, 1=ask
+    - side (u8): 0=bid, 1=ask
     - price (f64): temp column for encoding
     - amount (f64): temp column for encoding
     """
@@ -86,7 +87,7 @@ def parse_tardis_l2_updates_csv(df: pl.DataFrame) -> pl.DataFrame:
         pl.when(pl.col("side") == "bid").then(0)
         .when(pl.col("side") == "ask").then(1)
         .otherwise(None) # Should not happen
-        .cast(pl.Int8)
+        .cast(pl.UInt8)
         .alias("side")
     )
     

@@ -188,7 +188,7 @@ for snap in l2_replay.replay_between(
 ### 7.1 Exchange and Symbol Identity
 - **exchange (string):** vendor name from Tardis, used for partitioning.
 - **exchange_id (i16):** stable numeric mapping (`EXCHANGE_MAP` in `pointline/config.py`) used for joins.
-- **symbol_id (i32):** stable identifier from `silver.dim_symbol` (SCD Type 2).
+- **symbol_id (i64):** stable identifier from `silver.dim_symbol` (SCD Type 2).
 
 ### 7.2 Safe query template (DuckDB)
 ```sql

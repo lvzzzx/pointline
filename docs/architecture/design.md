@@ -92,7 +92,8 @@ Additional replay accelerators (derived from `silver.l2_updates`):
 Delta Lake (via Parquet) does not support unsigned integer types `UInt16` and `UInt32`.
 These are automatically converted to signed types (`Int16` and `Int32`) when written.
 - Use `Int16` instead of `UInt16` for `exchange_id`
-- Use `Int32` instead of `UInt32` for `symbol_id`, `ingest_seq`, `file_id`, `flags`
+- Use `Int32` instead of `UInt32` for `ingest_seq`, `file_id`, `flags`
+- Use `Int64` for `symbol_id` to match `dim_symbol`
 - `UInt8` is supported and maps to TINYINT (use for `side`, `asset_type`)
 
 **Data Organization inside partitions**:
@@ -112,7 +113,7 @@ Symbols change over time (renames, delistings, tick size changes). Maintain a **
 
 **Implementation:** Delta Table (`silver.dim_symbol`)
 - **Storage:** Single versioned table (not partitioned, as it's small).
-- **Surrogate Key (`symbol_id`):** `i32` integer. 
+- **Surrogate Key (`symbol_id`):** `i64` integer. 
   - *Strategy:* Use a deterministic hash of `(exchange_id, exchange_symbol, valid_from_ts)` or a managed autoincrementing sequence during registry updates.
 - **Natural Key:** `(exchange_id, exchange_symbol)`.
 
@@ -625,5 +626,5 @@ pl.read_delta("/lake/silver/trades", version=None) \
 
 ### ID dictionaries
 - `exchange_id`: i16
-- `symbol_id`: i32
+- `symbol_id`: i64
 - See [Schema Reference - dim_symbol](../schemas.md#11-silverdim_symbol) for `dim_symbol` (SCD Type 2) structure.

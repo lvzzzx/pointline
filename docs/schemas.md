@@ -20,12 +20,12 @@ Slowly Changing Dimension (SCD) Type 2 table tracking instrument metadata over t
 
 **Storage:** Single unpartitioned Delta table (small size).
 
-**Surrogate Key:** `symbol_id` (i32)  
+**Surrogate Key:** `symbol_id` (i64)  
 **Natural Key:** `(exchange_id, exchange_symbol)`
 
 | Column | Type | Description |
 |---|---|---|
-| **symbol_id** | i32 | Surrogate Key (Primary Key) |
+| **symbol_id** | i64 | Surrogate Key (Primary Key) |
 | **exchange_id** | i16 | Dictionary ID (e.g., 1=binance, 2=binance-futures) |
 | **exchange** | string | Normalized exchange name (e.g., `binance-futures`) for consistency with silver tables |
 | **exchange_symbol** | string | Raw vendor ticker (e.g., `BTC-PERPETUAL`) |
@@ -119,7 +119,7 @@ Silver tables are the canonical research foundation. They are normalized, typed 
 - `date` (date): Partition key, derived from `ts_local_us` in UTC
 - `exchange` (string): Partition key (not stored in Parquet, reconstructed from directory)
 - `exchange_id` (i16): For joins and compression
-- `symbol_id` (i32/i64): Stable identifier from `dim_symbol`
+- `symbol_id` (i64): Stable identifier from `dim_symbol`
 - `ts_local_us` (i64): Primary replay timeline (arrival time)
 - `ts_exch_us` (i64): Exchange time if available
 - `ingest_seq` (i32): Stable ordering within file
@@ -140,7 +140,7 @@ Incremental Level 2 order book updates from Tardis `incremental_book_L2`. Update
 | date | date | derived from `ts_local_us` in UTC |
 | exchange | string | partitioned by (not stored in Parquet files) |
 | exchange_id | i16 | dictionary-encoded |
-| symbol_id | i32 | dictionary-encoded |
+| symbol_id | i64 | dictionary-encoded |
 | ts_local_us | i64 | primary replay timeline |
 | ts_exch_us | i64 | exchange time if available |
 | ingest_seq | i32 | stable ordering within file |
@@ -222,7 +222,7 @@ Trade executions from Tardis `trades` dataset.
 | date | date | |
 | exchange | string | partitioned by (not stored in Parquet files) |
 | exchange_id | i16 | |
-| symbol_id | i32 | |
+| symbol_id | i64 | |
 | ts_local_us | i64 | |
 | ts_exch_us | i64 | |
 | ingest_seq | i32 | |
@@ -248,7 +248,7 @@ Top-of-book quotes from Tardis `quotes` dataset or derived from L2.
 | date | date | |
 | exchange | string | partitioned by (not stored in Parquet files) |
 | exchange_id | i16 | |
-| symbol_id | i32 | |
+| symbol_id | i64 | |
 | ts_local_us | i64 | |
 | ts_exch_us | i64 | |
 | ingest_seq | i32 | |
@@ -286,7 +286,7 @@ Derivative market data including mark/index, funding, open interest, etc.
 | date | date | |
 | exchange | string | partitioned by (not stored in Parquet files) |
 | exchange_id | i16 | |
-| symbol_id | i32 | |
+| symbol_id | i64 | |
 | ts_local_us | i64 | |
 | ts_exch_us | i64 | |
 | ingest_seq | i32 | |
@@ -314,7 +314,7 @@ Liquidation events from Tardis `liquidations` dataset.
 | date | date | |
 | exchange | string | partitioned by (not stored in Parquet files) |
 | exchange_id | i16 | |
-| symbol_id | i32 | |
+| symbol_id | i64 | |
 | ts_local_us | i64 | |
 | ts_exch_us | i64 | |
 | ingest_seq | i32 | |
@@ -339,8 +339,8 @@ Options chain data, typically cross-sectional and heavy. Store updates per contr
 | date | date | |
 | exchange | string | partitioned by (not stored in Parquet files) |
 | exchange_id | i16 | |
-| underlying_symbol_id | i32 | underlying |
-| option_symbol_id | i32 | contract |
+| underlying_symbol_id | i64 | underlying |
+| option_symbol_id | i64 | contract |
 | ts_local_us | i64 | |
 | ts_exch_us | i64 | |
 | ingest_seq | i32 | |
@@ -378,7 +378,7 @@ OHLCV (Open-High-Low-Close-Volume) time bars derived from `silver.trades`.
 | date | date | |
 | exchange | string | partitioned by (not stored in Parquet files) |
 | exchange_id | i16 | |
-| symbol_id | i32 | |
+| symbol_id | i64 | |
 | ts_bucket_start_us | i64 | bucket start time |
 | open_px_int | i64 | fixed-point |
 | high_px_int | i64 | fixed-point |
@@ -429,7 +429,7 @@ Snapshot anchor index for fast lookup of the latest L2 snapshot at or before a t
 | date | date | derived from `ts_local_us` in UTC |
 | exchange | string | partitioned by (not stored in Parquet files) |
 | exchange_id | i16 | |
-| symbol_id | i32 | |
+| symbol_id | i64 | |
 | ts_local_us | i64 | snapshot timestamp (replay timeline) |
 | file_id | i32 | lineage tracking |
 | file_line_number | i32 | first row for the snapshot group |
@@ -452,7 +452,7 @@ Full-depth book checkpoints to accelerate incremental replay over long ranges.
 | date | date | derived from `ts_local_us` in UTC |
 | exchange | string | partitioned by (not stored in Parquet files) |
 | exchange_id | i16 | |
-| symbol_id | i32 | |
+| symbol_id | i64 | |
 | ts_local_us | i64 | checkpoint timestamp (replay timeline) |
 | bids | list<struct<price_int: i64, size_int: i64>> | descending by price |
 | asks | list<struct<price_int: i64, size_int: i64>> | ascending by price |
@@ -516,7 +516,7 @@ Most Silver tables include these standard columns:
 | `date` | date | Partition key, derived from `ts_local_us` in UTC |
 | `exchange` | string | Partition key (not stored in Parquet, reconstructed from directory) |
 | `exchange_id` | i16 | Dictionary-encoded exchange ID for joins |
-| `symbol_id` | i32/i64 | Stable identifier from `dim_symbol` |
+| `symbol_id` | i64 | Stable identifier from `dim_symbol` |
 | `ts_local_us` | i64 | Primary replay timeline (arrival time) |
 | `ts_exch_us` | i64 | Exchange time if available |
 | `ingest_seq` | i32 | Stable ordering within file |
@@ -562,7 +562,8 @@ For datasets like `options_chain` where a single day is massive:
 Delta Lake (via Parquet) does not support unsigned integer types `UInt16` and `UInt32`. These are automatically converted to signed types (`Int16` and `Int32`) when written.
 
 - Use `Int16` instead of `UInt16` for `exchange_id`
-- Use `Int32` instead of `UInt32` for `symbol_id`, `ingest_seq`, `file_id`, `flags`
+- Use `Int32` instead of `UInt32` for `ingest_seq`, `file_id`, `flags`
+- Use `Int64` for `symbol_id` to match `dim_symbol`
 - `UInt8` is supported and maps to TINYINT (use for `side`, `asset_type`)
 
 **Timestamp Units:**
@@ -571,7 +572,7 @@ Delta Lake (via Parquet) does not support unsigned integer types `UInt16` and `U
 
 **ID Dictionaries:**
 - `exchange_id`: i16
-- `symbol_id`: i32 (or i64 for `book_snapshot_25` to match `dim_symbol`)
+- `symbol_id`: i64
 
 ---
 
