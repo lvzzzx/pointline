@@ -12,6 +12,7 @@ TABLE_PATHS = {
     "quotes": "silver/quotes",
     "book_snapshot_25": "silver/book_snapshot_25",
     "l2_updates": "silver/l2_updates",
+    "l2_snapshot_index": "gold/l2_snapshot_index",
 }
 
 # Storage Settings
