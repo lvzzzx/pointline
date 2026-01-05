@@ -75,6 +75,10 @@ Precomputed “fast paths”:
 
 Gold tables are reproducible from Silver (and versioned).
 
+Additional replay accelerators (derived from `silver.l2_updates`):
+- `gold.l2_snapshot_index` for fast snapshot anchors
+- `gold.l2_state_checkpoint` for full-depth replay checkpoints
+
 ---
 
 ## 3) Storage format & performance defaults
@@ -153,6 +157,9 @@ Store both:
 
 **Schema Reference:** For complete column definitions, see [Schema Reference - Silver Tables](../schemas.md#silver-tables).
 
+**Related design:** For the Rust + PyO3 replay engine and build interfaces, see
+[`docs/architecture/l2_replay_engine.md`](l2_replay_engine.md).
+
 ### 5.1 `l2_updates` (from `incremental_book_L2`)
 Tardis incremental L2 updates are **absolute sizes** at a price level (not deltas).
 - `size == 0` means delete the level.
@@ -165,6 +172,180 @@ Tardis incremental L2 updates are **absolute sizes** at a price level (not delta
 **Optional convenience columns:**
 - `msg_id` (group rows belonging to the same source message)
 - `event_group_id` (if vendor provides transaction IDs spanning multiple updates)
+
+**Replay accelerators (Gold):**
+- `gold.l2_snapshot_index` to locate the latest snapshot at or before a start time
+- `gold.l2_state_checkpoint` to jump close to a target time and replay forward
+
+#### 5.1.1 Build Recipes (Data Infra)
+
+These tables are owned by **data infra** and should be built as scheduled jobs.
+
+**DuckDB: snapshot anchor index**
+```sql
+CREATE OR REPLACE TABLE gold.l2_snapshot_index AS
+SELECT
+  exchange_id,
+  symbol_id,
+  ts_local_us,
+  date,
+  file_id,
+  ingest_seq,
+  MIN(file_line_number) AS file_line_number
+FROM delta_scan('${LAKE_ROOT}/silver/l2_updates')
+WHERE is_snapshot
+  AND date BETWEEN '2025-12-01' AND '2025-12-31'
+  AND exchange_id = 21
+GROUP BY exchange_id, symbol_id, ts_local_us, date, file_id, ingest_seq;
+```
+
+If `msg_id` exists, group by `msg_id` instead of `(ts_local_us, file_id, ingest_seq)`.
+
+**Polars: snapshot anchor index (partitioned overwrite)**
+```python
+import os
+import polars as pl
+from pointline import research
+
+lake_root = os.getenv("LAKE_ROOT", "./data/lake")
+exchange = "deribit"
+
+lf = (
+    research.scan_table(
+        "l2_updates",
+        exchange=exchange,
+        start_date="2025-12-01",
+        end_date="2025-12-31",
+        columns=[
+            "exchange",
+            "exchange_id",
+            "symbol_id",
+            "ts_local_us",
+            "date",
+            "file_id",
+            "ingest_seq",
+            "file_line_number",
+            "is_snapshot",
+        ],
+    )
+    .filter(pl.col("is_snapshot"))
+    .group_by(
+        ["exchange", "exchange_id", "symbol_id", "ts_local_us", "date", "file_id", "ingest_seq"]
+    )
+    .agg(pl.col("file_line_number").min().alias("file_line_number"))
+)
+
+df = lf.collect()
+df.write_delta(
+    f"{lake_root}/gold/l2_snapshot_index",
+    mode="overwrite",
+    delta_write_options={
+        "partitionBy": ["exchange", "date"],
+        "partitionOverwriteMode": "dynamic",
+    },
+)
+```
+
+If your Delta writer does not support dynamic partition overwrite, delete the target partitions
+first (by `exchange`/`date`) and then append the rebuilt rows.
+
+**Delta-rs (Python): delete partitions then append**
+```python
+from deltalake import DeltaTable, write_deltalake
+
+table_path = f"{lake_root}/gold/l2_snapshot_index"
+dt = DeltaTable(table_path)
+
+dt.delete("exchange = 'deribit' AND date >= '2025-12-01' AND date <= '2025-12-31'")
+
+write_deltalake(
+    table_path,
+    df,
+    mode="append",
+    partition_by=["exchange", "date"],
+)
+```
+
+**Polars + Python: full-depth checkpoints (skeleton)**
+```python
+import os
+from datetime import datetime, timezone
+import polars as pl
+from pointline import research
+
+lake_root = os.getenv("LAKE_ROOT", "./data/lake")
+
+checkpoint_every_us = 60_000_000
+checkpoint_every_updates = 10_000
+
+updates = (
+    research.scan_table(
+        "l2_updates",
+        exchange_id=21,
+        symbol_id=1234,
+        start_date="2025-12-01",
+        end_date="2025-12-01",
+        columns=[
+            "ts_local_us",
+            "ingest_seq",
+            "file_id",
+            "file_line_number",
+            "is_snapshot",
+            "side",
+            "price_int",
+            "size_int",
+        ],
+    )
+    .sort(["ts_local_us", "ingest_seq", "file_line_number"])
+    .collect()
+)
+
+bids: dict[int, int] = {}
+asks: dict[int, int] = {}
+checkpoints: list[dict] = []
+last_checkpoint_us = None
+updates_since = 0
+
+for row in updates.iter_rows(named=True):
+    if row["is_snapshot"]:
+        bids.clear()
+        asks.clear()
+
+    side_map = bids if row["side"] == 0 else asks
+    if row["size_int"] == 0:
+        side_map.pop(row["price_int"], None)
+    else:
+        side_map[row["price_int"]] = row["size_int"]
+
+    now_us = row["ts_local_us"]
+    if last_checkpoint_us is None:
+        last_checkpoint_us = now_us
+
+    updates_since += 1
+    if (now_us - last_checkpoint_us) >= checkpoint_every_us or updates_since >= checkpoint_every_updates:
+        date = datetime.fromtimestamp(now_us / 1_000_000, tz=timezone.utc).date().isoformat()
+        checkpoints.append(
+            {
+                "exchange_id": 21,
+                "symbol_id": 1234,
+                "date": date,
+                "ts_local_us": now_us,
+                "bids": [{"price_int": p, "size_int": s} for p, s in sorted(bids.items(), reverse=True)],
+                "asks": [{"price_int": p, "size_int": s} for p, s in sorted(asks.items())],
+                "file_id": row["file_id"],
+                "ingest_seq": row["ingest_seq"],
+                "file_line_number": row["file_line_number"],
+                "checkpoint_kind": "periodic",
+            }
+        )
+        last_checkpoint_us = now_us
+        updates_since = 0
+
+pl.DataFrame(checkpoints).write_delta(f"{lake_root}/gold/l2_state_checkpoint", mode="append")
+```
+
+This checkpoint loop is intentionally simple. In production, stream by partition and write
+incrementally to avoid collecting large ranges in memory.
 
 ---
 

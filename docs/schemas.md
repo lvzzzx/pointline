@@ -418,7 +418,59 @@ Same schema as `silver.quotes`.
 
 ---
 
-### 3.4 `gold.options_surface_grid`
+### 3.4 `gold.l2_snapshot_index`
+
+Snapshot anchor index for fast lookup of the latest L2 snapshot at or before a timestamp.
+
+**Source:** Derived from `silver.l2_updates`  
+**Partitioned by:** `["exchange", "date"]`
+
+| Column | Type | Notes |
+|---|---:|---|
+| date | date | derived from `ts_local_us` in UTC |
+| exchange | string | partitioned by (not stored in Parquet files) |
+| exchange_id | i16 | |
+| symbol_id | i32 | |
+| ts_local_us | i64 | snapshot timestamp (replay timeline) |
+| ingest_seq | i32 | stable ordering within file |
+| file_id | i32 | lineage tracking |
+| file_line_number | i32 | first row for the snapshot group |
+| msg_id | i64 | optional, if provided by vendor |
+
+**Semantics:**
+- One row per snapshot group (use `msg_id` when available, otherwise group by `(ts_local_us, file_id, ingest_seq)`).
+- Used to anchor incremental replay without scanning all `l2_updates`.
+
+---
+
+### 3.5 `gold.l2_state_checkpoint`
+
+Full-depth book checkpoints to accelerate incremental replay over long ranges.
+
+**Source:** Derived from `silver.l2_updates`  
+**Partitioned by:** `["exchange", "date"]`
+
+| Column | Type | Notes |
+|---|---:|---|
+| date | date | derived from `ts_local_us` in UTC |
+| exchange | string | partitioned by (not stored in Parquet files) |
+| exchange_id | i16 | |
+| symbol_id | i32 | |
+| ts_local_us | i64 | checkpoint timestamp (replay timeline) |
+| bids | list<struct<price_int: i64, size_int: i64>> | descending by price |
+| asks | list<struct<price_int: i64, size_int: i64>> | ascending by price |
+| file_id | i32 | lineage tracking |
+| ingest_seq | i32 | stable ordering within file |
+| file_line_number | i32 | deterministic ordering |
+| checkpoint_kind | string | optional (`periodic` or `snapshot`) |
+
+**Semantics:**
+- Checkpoints store **full depth** state plus the exact stream position used to create them.
+- Safe replay start point for long-range queries (replay forward from checkpoint).
+
+---
+
+### 3.6 `gold.options_surface_grid`
 
 Options surface snapshots on a time grid for efficient "entire surface at time t" queries.
 

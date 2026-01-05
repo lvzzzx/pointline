@@ -18,3 +18,10 @@
 - **Hatch:** Used as the build system and for project management.
 - **Pytest:** The primary framework for unit and integration testing.
 - **Ruff:** Used for lightning-fast linting and code formatting to maintain code quality.
+
+## Performance Extensions (Planned)
+- **Rust (optional):** High-performance order book replay engine for full-depth L2 reconstruction.
+- **PyO3 (optional):** Python bindings for the Rust replay engine to expose it to researchers.
+
+Rationale: Full-depth L2 replay is CPU-intensive and benefits from a native core while preserving
+the existing Python researcher interface.
