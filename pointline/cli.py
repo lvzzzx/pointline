@@ -20,6 +20,7 @@ from pointline.io.base_repository import BaseDeltaRepository
 from pointline.io.vendor.tardis import build_updates_from_instruments, TardisClient, download_tardis_datasets
 from pointline import research
 from pointline.l2_snapshot_index import build_and_write_snapshot_index
+from pointline.l2_state_checkpoint import build_and_write_state_checkpoints
 from pointline.services.dim_symbol_service import DimSymbolService
 from pointline.services.trades_service import TradesIngestionService
 from pointline.services.quotes_service import QuotesIngestionService
@@ -460,6 +461,73 @@ def _cmd_l2_snapshot_index_build(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_l2_state_checkpoint_build(args: argparse.Namespace) -> int:
+    exchange = args.exchange
+    exchange_id = args.exchange_id
+
+    if exchange and exchange_id is not None:
+        try:
+            expected_id = get_exchange_id(exchange)
+        except ValueError as exc:
+            print(f"Error: {exc}")
+            return 2
+        if expected_id != exchange_id:
+            print(
+                f"Error: exchange_id {exchange_id} does not match exchange "
+                f"{exchange} (expected {expected_id})"
+            )
+            return 2
+
+    if exchange and exchange_id is None:
+        try:
+            exchange_id = get_exchange_id(exchange)
+        except ValueError as exc:
+            print(f"Error: {exc}")
+            return 2
+
+    if exchange is None and exchange_id is not None:
+        try:
+            exchange = get_exchange_name(exchange_id)
+        except ValueError as exc:
+            print(f"Error: {exc}")
+            return 2
+
+    symbol_id = _parse_symbol_ids(args.symbol_id)
+
+    lf = research.scan_table(
+        "l2_updates",
+        exchange=exchange,
+        exchange_id=exchange_id,
+        symbol_id=symbol_id,
+        start_date=args.start_date,
+        end_date=args.end_date,
+        columns=[
+            "exchange",
+            "exchange_id",
+            "symbol_id",
+            "date",
+            "ts_local_us",
+            "ingest_seq",
+            "file_id",
+            "file_line_number",
+            "is_snapshot",
+            "side",
+            "price_int",
+            "size_int",
+        ],
+    )
+
+    rows_written = build_and_write_state_checkpoints(
+        lf,
+        get_table_path("l2_state_checkpoint"),
+        checkpoint_every_us=args.checkpoint_every_us,
+        checkpoint_every_updates=args.checkpoint_every_updates,
+        validate_monotonic=args.validate_monotonic,
+    )
+    print(f"l2_state_checkpoint: wrote {rows_written} row(s)")
+    return 0
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="pointline", description="Pointline data lake CLI")
     subparsers = parser.add_subparsers(dest="command")
@@ -699,6 +767,52 @@ def _build_parser() -> argparse.ArgumentParser:
         help="End date YYYY-MM-DD (inclusive)",
     )
     l2_snapshot_index.set_defaults(func=_cmd_l2_snapshot_index_build)
+
+    l2_state_checkpoint = gold_sub.add_parser(
+        "l2-state-checkpoint",
+        help="Build gold.l2_state_checkpoint from silver.l2_updates",
+    )
+    l2_state_checkpoint.add_argument(
+        "--exchange",
+        help="Exchange name (e.g., deribit). Optional if using --exchange-id",
+    )
+    l2_state_checkpoint.add_argument(
+        "--exchange-id",
+        type=int,
+        help="Exchange ID (optional if using --exchange)",
+    )
+    l2_state_checkpoint.add_argument(
+        "--symbol-id",
+        help="Comma-separated list of symbol_id values (optional)",
+    )
+    l2_state_checkpoint.add_argument(
+        "--start-date",
+        required=True,
+        help="Start date YYYY-MM-DD (inclusive)",
+    )
+    l2_state_checkpoint.add_argument(
+        "--end-date",
+        required=True,
+        help="End date YYYY-MM-DD (inclusive)",
+    )
+    l2_state_checkpoint.add_argument(
+        "--checkpoint-every-us",
+        type=int,
+        default=60_000_000,
+        help="Emit a checkpoint at this time cadence in microseconds (default: 60_000_000)",
+    )
+    l2_state_checkpoint.add_argument(
+        "--checkpoint-every-updates",
+        type=int,
+        default=10_000,
+        help="Emit a checkpoint after this many updates (default: 10_000)",
+    )
+    l2_state_checkpoint.add_argument(
+        "--validate-monotonic",
+        action="store_true",
+        help="Fail if updates are not strictly ordered by replay key",
+    )
+    l2_state_checkpoint.set_defaults(func=_cmd_l2_state_checkpoint_build)
 
     return parser
 
