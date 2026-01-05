@@ -21,6 +21,7 @@ from pointline.services.dim_symbol_service import DimSymbolService
 from pointline.services.trades_service import TradesIngestionService
 from pointline.services.quotes_service import QuotesIngestionService
 from pointline.services.book_snapshots_service import BookSnapshotsIngestionService
+from pointline.services.l2_updates_service import L2UpdatesIngestionService
 
 
 def _sorted_files(files: Iterable[BronzeFileMetadata]) -> list[BronzeFileMetadata]:
@@ -89,6 +90,12 @@ def _create_ingestion_service(data_type: str, manifest_repo):
             partition_by=["exchange", "date"]
         )
         return BookSnapshotsIngestionService(repo, dim_symbol_repo, manifest_repo)
+    elif data_type == "incremental_book_L2":
+        repo = BaseDeltaRepository(
+            get_table_path("l2_updates"),
+            partition_by=["exchange", "date"]
+        )
+        return L2UpdatesIngestionService(repo, dim_symbol_repo, manifest_repo)
     else:
         raise ValueError(f"Unsupported data type: {data_type}")
 

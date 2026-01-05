@@ -52,7 +52,6 @@ struct L2Update {
     price_int: i64,
     size_int: i64,
     file_id: i32,
-    msg_id: Option<i64>,
 }
 
 struct OrderBook {
@@ -85,7 +84,7 @@ Engine responsibilities:
 ### Snapshot Index
 Build `gold.l2_snapshot_index` from `silver.l2_updates`:
 - Filter `is_snapshot = true`.
-- Group by `msg_id` if available; otherwise `(ts_local_us, file_id, ingest_seq)`.
+- Group by `(ts_local_us, file_id, ingest_seq)`.
 - Keep the minimum `file_line_number` per group.
 
 ### State Checkpoints

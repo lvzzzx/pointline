@@ -152,7 +152,6 @@ Incremental Level 2 order book updates from Tardis `incremental_book_L2`. Update
 | file_line_number | i32 | lineage tracking |
 
 **Optional convenience columns:**
-- `msg_id` (group rows belonging to the same source message)
 - `event_group_id` (if vendor provides transaction IDs spanning multiple updates)
 
 **Data Semantics:**
@@ -435,10 +434,9 @@ Snapshot anchor index for fast lookup of the latest L2 snapshot at or before a t
 | ingest_seq | i32 | stable ordering within file |
 | file_id | i32 | lineage tracking |
 | file_line_number | i32 | first row for the snapshot group |
-| msg_id | i64 | optional, if provided by vendor |
 
 **Semantics:**
-- One row per snapshot group (use `msg_id` when available, otherwise group by `(ts_local_us, file_id, ingest_seq)`).
+- One row per snapshot group (group by `(ts_local_us, file_id, ingest_seq)`).
 - Used to anchor incremental replay without scanning all `l2_updates`.
 
 ---

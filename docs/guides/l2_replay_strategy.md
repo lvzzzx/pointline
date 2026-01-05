@@ -90,8 +90,6 @@ WHERE is_snapshot
 GROUP BY exchange_id, symbol_id, ts_local_us, date, file_id, ingest_seq;
 ```
 
-If `msg_id` exists, you can group by `msg_id` instead of `(ts_local_us, file_id, ingest_seq)`.
-
 **Anchor lookup:**
 ```sql
 SELECT *

@@ -170,8 +170,8 @@ Tardis incremental L2 updates are **absolute sizes** at a price level (not delta
 **Schema:** See [Schema Reference - l2_updates](../schemas.md#21-silverl2_updates)
 
 **Optional convenience columns:**
-- `msg_id` (group rows belonging to the same source message)
-- `event_group_id` (if vendor provides transaction IDs spanning multiple updates)
+- `file_id` (lineage tracking)
+- `file_line_number` (lineage tracking)
 
 **Replay accelerators (Gold):**
 - `gold.l2_snapshot_index` to locate the latest snapshot at or before a start time
@@ -198,8 +198,6 @@ WHERE is_snapshot
   AND exchange_id = 21
 GROUP BY exchange_id, symbol_id, ts_local_us, date, file_id, ingest_seq;
 ```
-
-If `msg_id` exists, group by `msg_id` instead of `(ts_local_us, file_id, ingest_seq)`.
 
 **Polars: snapshot anchor index (partitioned overwrite)**
 ```python
