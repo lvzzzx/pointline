@@ -84,7 +84,7 @@ Engine responsibilities:
 ### Snapshot Index
 Build `gold.l2_snapshot_index` from `silver.l2_updates`:
 - Filter `is_snapshot = true`.
-- Group by `(ts_local_us, file_id, ingest_seq)`.
+- Group by `(exchange_id, symbol_id, ts_local_us, file_id)`.
 - Keep the minimum `file_line_number` per group.
 
 ### State Checkpoints

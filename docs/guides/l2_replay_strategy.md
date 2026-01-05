@@ -71,6 +71,8 @@ Suggested table: `gold.l2_snapshot_index`
 - `file_id`, `file_line_number`
 
 Purpose: find `max(ts_local_us) <= start` without scanning full L2 updates.
+Tardis can emit multiple price levels in one message, so `ts_local_us` is the message
+group key (per symbol + file).
 
 **Schema:** See `docs/schemas.md` (`gold.l2_snapshot_index`).
 
@@ -83,11 +85,10 @@ SELECT
   ts_local_us,
   date,
   file_id,
-  ingest_seq,
   MIN(file_line_number) AS file_line_number
 FROM delta_scan('${LAKE_ROOT}/silver/l2_updates')
 WHERE is_snapshot
-GROUP BY exchange_id, symbol_id, ts_local_us, date, file_id, ingest_seq;
+GROUP BY exchange_id, symbol_id, ts_local_us, date, file_id;
 ```
 
 **Anchor lookup:**

@@ -431,12 +431,11 @@ Snapshot anchor index for fast lookup of the latest L2 snapshot at or before a t
 | exchange_id | i16 | |
 | symbol_id | i32 | |
 | ts_local_us | i64 | snapshot timestamp (replay timeline) |
-| ingest_seq | i32 | stable ordering within file |
 | file_id | i32 | lineage tracking |
 | file_line_number | i32 | first row for the snapshot group |
 
 **Semantics:**
-- One row per snapshot group (group by `(ts_local_us, file_id, ingest_seq)`).
+- One row per snapshot group (group by `(exchange_id, symbol_id, ts_local_us, file_id)`).
 - Used to anchor incremental replay without scanning all `l2_updates`.
 
 ---

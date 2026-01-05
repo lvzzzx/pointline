@@ -190,13 +190,12 @@ SELECT
   ts_local_us,
   date,
   file_id,
-  ingest_seq,
   MIN(file_line_number) AS file_line_number
 FROM delta_scan('${LAKE_ROOT}/silver/l2_updates')
 WHERE is_snapshot
   AND date BETWEEN '2025-12-01' AND '2025-12-31'
   AND exchange_id = 21
-GROUP BY exchange_id, symbol_id, ts_local_us, date, file_id, ingest_seq;
+GROUP BY exchange_id, symbol_id, ts_local_us, date, file_id;
 ```
 
 **Polars: snapshot anchor index (partitioned overwrite)**
@@ -221,15 +220,12 @@ lf = (
             "ts_local_us",
             "date",
             "file_id",
-            "ingest_seq",
             "file_line_number",
             "is_snapshot",
         ],
     )
     .filter(pl.col("is_snapshot"))
-    .group_by(
-        ["exchange", "exchange_id", "symbol_id", "ts_local_us", "date", "file_id", "ingest_seq"]
-    )
+    .group_by(["exchange", "exchange_id", "symbol_id", "ts_local_us", "date", "file_id"])
     .agg(pl.col("file_line_number").min().alias("file_line_number"))
 )
 
