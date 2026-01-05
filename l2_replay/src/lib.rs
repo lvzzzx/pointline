@@ -1,17 +1,24 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::path::Path;
 use std::sync::Arc;
 
 use anyhow::{anyhow, Context, Result};
 use chrono::{NaiveDate, NaiveDateTime};
 use deltalake::arrow::array::{
-    Array, BooleanArray, Int32Array, Int64Array, LargeListArray, ListArray, StructArray, UInt8Array,
+    Array, ArrayRef, BooleanArray, Date32Array, Date32Builder, Int16Array, Int16Builder,
+    Int32Array, Int32Builder, Int64Array, Int64Builder, LargeListArray, ListArray, ListBuilder,
+    StringArray, StringBuilder, StructArray, StructBuilder, UInt8Array,
 };
+use deltalake::arrow::datatypes::{DataType, Field, Schema};
 use deltalake::arrow::record_batch::RecordBatch;
 use deltalake::datafusion::prelude::*;
 use deltalake::datafusion::physical_plan::SendableRecordBatchStream;
 use deltalake::datafusion::scalar::ScalarValue;
 use deltalake::open_table;
+use deltalake::parquet::basic::{Compression, ZstdLevel};
+use deltalake::parquet::file::properties::WriterProperties;
+use deltalake::protocol::SaveMode;
+use deltalake::DeltaOps;
 use futures::StreamExt;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -112,6 +119,29 @@ pub struct SnapshotWithPos {
     pub asks: Vec<(i64, i64)>,
 }
 
+#[derive(Debug, Clone)]
+struct CheckpointMeta {
+    exchange: String,
+    exchange_id: i16,
+    symbol_id: i64,
+    date: i32,
+}
+
+#[derive(Debug, Clone)]
+struct CheckpointRow {
+    exchange: String,
+    exchange_id: i16,
+    symbol_id: i64,
+    date: i32,
+    ts_local_us: i64,
+    bids: Vec<(i64, i64)>,
+    asks: Vec<(i64, i64)>,
+    file_id: i32,
+    ingest_seq: i32,
+    file_line_number: i32,
+    checkpoint_kind: String,
+}
+
 #[derive(Default)]
 struct SnapshotReset {
     snapshot_key: Option<(i64, i32)>,
@@ -154,6 +184,10 @@ fn parse_date_opt(value: Option<&str>) -> Result<Option<NaiveDate>> {
 fn date_to_scalar(date: NaiveDate) -> ScalarValue {
     let epoch = NaiveDate::from_ymd_opt(1970, 1, 1).expect("epoch");
     let days = (date - epoch).num_days() as i32;
+    ScalarValue::Date32(Some(days))
+}
+
+fn date32_scalar(days: i32) -> ScalarValue {
     ScalarValue::Date32(Some(days))
 }
 
@@ -292,6 +326,63 @@ async fn build_updates_df(
     Ok(df)
 }
 
+async fn build_checkpoint_updates_df(
+    updates_path: &str,
+    exchange: Option<&str>,
+    exchange_id: Option<i16>,
+    symbol_ids: Option<&[i64]>,
+    start_date: NaiveDate,
+    end_date: NaiveDate,
+) -> Result<DataFrame> {
+    let table = open_table(updates_path).await?;
+    let ctx = SessionContext::new();
+    ctx.register_table("updates", Arc::new(table))?;
+
+    let mut df = ctx.table("updates").await?;
+    if let Some(exchange_id) = exchange_id {
+        df = df.filter(col("exchange_id").eq(lit(exchange_id)))?;
+    }
+    if let Some(exchange) = exchange {
+        df = df.filter(col("exchange").eq(lit(exchange)))?;
+    }
+
+    if let Some(symbol_ids) = symbol_ids {
+        if symbol_ids.len() == 1 {
+            df = df.filter(col("symbol_id").eq(lit(symbol_ids[0])))?;
+        } else if !symbol_ids.is_empty() {
+            let values: Vec<Expr> = symbol_ids.iter().map(|id| lit(*id)).collect();
+            df = df.filter(col("symbol_id").in_list(values, false))?;
+        }
+    }
+
+    let start_date_expr = Expr::Literal(date_to_scalar(start_date));
+    let end_date_expr = Expr::Literal(date_to_scalar(end_date));
+    df = df.filter(col("date").gt_eq(start_date_expr))?;
+    df = df.filter(col("date").lt_eq(end_date_expr))?;
+
+    df = df.select(vec![
+        col("exchange"),
+        col("exchange_id"),
+        col("symbol_id"),
+        col("date"),
+        col("ts_local_us"),
+        col("ingest_seq"),
+        col("file_line_number"),
+        col("is_snapshot"),
+        col("side"),
+        col("price_int"),
+        col("size_int"),
+        col("file_id"),
+    ])?;
+    df = df.sort(vec![
+        col("ts_local_us").sort(true, true),
+        col("ingest_seq").sort(true, true),
+        col("file_line_number").sort(true, true),
+    ])?;
+
+    Ok(df)
+}
+
 struct UpdateColumns<'a> {
     ts_local_us: &'a Int64Array,
     ingest_seq: &'a Int32Array,
@@ -329,6 +420,61 @@ fn update_from_columns(cols: &UpdateColumns<'_>, row: usize) -> L2Update {
     }
 }
 
+struct CheckpointUpdateColumns<'a> {
+    exchange: &'a StringArray,
+    exchange_id: &'a Int16Array,
+    symbol_id: &'a Int64Array,
+    date: &'a Date32Array,
+    ts_local_us: &'a Int64Array,
+    ingest_seq: &'a Int32Array,
+    file_line_number: &'a Int32Array,
+    is_snapshot: &'a BooleanArray,
+    side: &'a UInt8Array,
+    price_int: &'a Int64Array,
+    size_int: &'a Int64Array,
+    file_id: &'a Int32Array,
+}
+
+fn checkpoint_update_columns<'a>(batch: &'a RecordBatch) -> Result<CheckpointUpdateColumns<'a>> {
+    Ok(CheckpointUpdateColumns {
+        exchange: get_array(batch, "exchange")?,
+        exchange_id: get_array(batch, "exchange_id")?,
+        symbol_id: get_array(batch, "symbol_id")?,
+        date: get_array(batch, "date")?,
+        ts_local_us: get_array(batch, "ts_local_us")?,
+        ingest_seq: get_array(batch, "ingest_seq")?,
+        file_line_number: get_array(batch, "file_line_number")?,
+        is_snapshot: get_array(batch, "is_snapshot")?,
+        side: get_array(batch, "side")?,
+        price_int: get_array(batch, "price_int")?,
+        size_int: get_array(batch, "size_int")?,
+        file_id: get_array(batch, "file_id")?,
+    })
+}
+
+fn checkpoint_update_from_columns(
+    cols: &CheckpointUpdateColumns<'_>,
+    row: usize,
+) -> (CheckpointMeta, L2Update) {
+    let meta = CheckpointMeta {
+        exchange: cols.exchange.value(row).to_string(),
+        exchange_id: cols.exchange_id.value(row),
+        symbol_id: cols.symbol_id.value(row),
+        date: cols.date.value(row),
+    };
+    let update = L2Update {
+        ts_local_us: cols.ts_local_us.value(row),
+        ingest_seq: cols.ingest_seq.value(row),
+        file_line_number: cols.file_line_number.value(row),
+        is_snapshot: cols.is_snapshot.value(row),
+        side: cols.side.value(row),
+        price_int: cols.price_int.value(row),
+        size_int: cols.size_int.value(row),
+        file_id: cols.file_id.value(row),
+    };
+    (meta, update)
+}
+
 async fn for_each_update<F>(mut stream: SendableRecordBatchStream, mut f: F) -> Result<()>
 where
     F: FnMut(L2Update),
@@ -338,6 +484,24 @@ where
         let cols = update_columns(&batch)?;
         for row in 0..batch.num_rows() {
             f(update_from_columns(&cols, row));
+        }
+    }
+    Ok(())
+}
+
+async fn for_each_checkpoint_update<F>(
+    mut stream: SendableRecordBatchStream,
+    mut f: F,
+) -> Result<()>
+where
+    F: FnMut(CheckpointMeta, L2Update),
+{
+    while let Some(batch) = stream.next().await {
+        let batch = batch?;
+        let cols = checkpoint_update_columns(&batch)?;
+        for row in 0..batch.num_rows() {
+            let (meta, update) = checkpoint_update_from_columns(&cols, row);
+            f(meta, update);
         }
     }
     Ok(())
@@ -433,6 +597,96 @@ fn book_levels(book: &OrderBook) -> (Vec<(i64, i64)>, Vec<(i64, i64)>) {
         .map(|(price, size)| (*price, *size))
         .collect();
     (bids, asks)
+}
+
+fn append_levels(builder: &mut ListBuilder<StructBuilder>, levels: &[(i64, i64)]) {
+    let struct_builder = builder.values();
+    let price_builder = struct_builder
+        .field_builder::<Int64Builder>(0)
+        .expect("price builder");
+    let size_builder = struct_builder
+        .field_builder::<Int64Builder>(1)
+        .expect("size builder");
+
+    for (price, size) in levels {
+        price_builder.append_value(*price);
+        size_builder.append_value(*size);
+        struct_builder.append(true);
+    }
+    builder.append(true);
+}
+
+fn build_checkpoint_batch(rows: &[CheckpointRow]) -> Result<RecordBatch> {
+    let level_fields = vec![
+        Field::new("price_int", DataType::Int64, false),
+        Field::new("size_int", DataType::Int64, false),
+    ];
+    let level_struct = DataType::Struct(level_fields.clone());
+    let list_field = Field::new("item", level_struct, true);
+
+    let schema = Arc::new(Schema::new(vec![
+        Field::new("exchange", DataType::Utf8, false),
+        Field::new("exchange_id", DataType::Int16, false),
+        Field::new("symbol_id", DataType::Int64, false),
+        Field::new("date", DataType::Date32, false),
+        Field::new("ts_local_us", DataType::Int64, false),
+        Field::new("bids", DataType::List(Arc::new(list_field.clone())), true),
+        Field::new("asks", DataType::List(Arc::new(list_field)), true),
+        Field::new("file_id", DataType::Int32, false),
+        Field::new("ingest_seq", DataType::Int32, false),
+        Field::new("file_line_number", DataType::Int32, false),
+        Field::new("checkpoint_kind", DataType::Utf8, false),
+    ]));
+
+    let mut exchange_builder = StringBuilder::new();
+    let mut exchange_id_builder = Int16Builder::new();
+    let mut symbol_id_builder = Int64Builder::new();
+    let mut date_builder = Date32Builder::new();
+    let mut ts_builder = Int64Builder::new();
+
+    let mut bids_builder = ListBuilder::new(StructBuilder::new(
+        level_fields.clone(),
+        vec![Box::new(Int64Builder::new()), Box::new(Int64Builder::new())],
+    ));
+    let mut asks_builder = ListBuilder::new(StructBuilder::new(
+        level_fields,
+        vec![Box::new(Int64Builder::new()), Box::new(Int64Builder::new())],
+    ));
+
+    let mut file_id_builder = Int32Builder::new();
+    let mut ingest_seq_builder = Int32Builder::new();
+    let mut file_line_builder = Int32Builder::new();
+    let mut checkpoint_kind_builder = StringBuilder::new();
+
+    for row in rows {
+        exchange_builder.append_value(&row.exchange);
+        exchange_id_builder.append_value(row.exchange_id);
+        symbol_id_builder.append_value(row.symbol_id);
+        date_builder.append_value(row.date);
+        ts_builder.append_value(row.ts_local_us);
+        append_levels(&mut bids_builder, &row.bids);
+        append_levels(&mut asks_builder, &row.asks);
+        file_id_builder.append_value(row.file_id);
+        ingest_seq_builder.append_value(row.ingest_seq);
+        file_line_builder.append_value(row.file_line_number);
+        checkpoint_kind_builder.append_value(&row.checkpoint_kind);
+    }
+
+    let arrays: Vec<ArrayRef> = vec![
+        Arc::new(exchange_builder.finish()),
+        Arc::new(exchange_id_builder.finish()),
+        Arc::new(symbol_id_builder.finish()),
+        Arc::new(date_builder.finish()),
+        Arc::new(ts_builder.finish()),
+        Arc::new(bids_builder.finish()),
+        Arc::new(asks_builder.finish()),
+        Arc::new(file_id_builder.finish()),
+        Arc::new(ingest_seq_builder.finish()),
+        Arc::new(file_line_builder.finish()),
+        Arc::new(checkpoint_kind_builder.finish()),
+    ];
+
+    RecordBatch::try_new(schema, arrays).map_err(|err| anyhow!(err.to_string()))
 }
 
 pub async fn snapshot_at_delta(
@@ -613,6 +867,156 @@ pub async fn replay_between_delta(
     Ok(snapshots)
 }
 
+pub async fn build_state_checkpoints_delta(
+    updates_path: &str,
+    output_path: &str,
+    exchange: Option<&str>,
+    exchange_id: Option<i16>,
+    symbol_ids: Option<Vec<i64>>,
+    start_date: &str,
+    end_date: &str,
+    checkpoint_every_us: Option<i64>,
+    checkpoint_every_updates: Option<u64>,
+    validate_monotonic: bool,
+) -> Result<usize> {
+    let every_us = checkpoint_every_us.filter(|value| *value > 0);
+    let every_updates = checkpoint_every_updates.filter(|value| *value > 0);
+    if every_us.is_none() && every_updates.is_none() {
+        return Err(anyhow!(
+            "build_state_checkpoints: at least one cadence must be set"
+        ));
+    }
+
+    let start_date =
+        NaiveDate::parse_from_str(start_date, "%Y-%m-%d").with_context(|| {
+            format!("invalid start_date string: {}", start_date)
+        })?;
+    let end_date = NaiveDate::parse_from_str(end_date, "%Y-%m-%d")
+        .with_context(|| format!("invalid end_date string: {}", end_date))?;
+
+    let df = build_checkpoint_updates_df(
+        updates_path,
+        exchange,
+        exchange_id,
+        symbol_ids.as_deref(),
+        start_date,
+        end_date,
+    )
+    .await?;
+
+    let mut rows: Vec<CheckpointRow> = Vec::new();
+    let mut book = OrderBook::default();
+    let mut reset = SnapshotReset::default();
+    let mut last_checkpoint_ts: Option<i64> = None;
+    let mut updates_since: u64 = 0;
+    let mut prev_key: Option<(i64, i32, i32)> = None;
+
+    let stream = df.execute_stream().await?;
+    for_each_checkpoint_update(stream, |meta, update| {
+        if validate_monotonic {
+            let key = (update.ts_local_us, update.ingest_seq, update.file_line_number);
+            if let Some(prev) = prev_key {
+                if key < prev {
+                    panic!(
+                        "build_state_checkpoints: updates out of order: {:?} < {:?}",
+                        key, prev
+                    );
+                }
+            }
+            prev_key = Some(key);
+        }
+
+        reset.apply(&mut book, &update);
+
+        if last_checkpoint_ts.is_none() {
+            last_checkpoint_ts = Some(update.ts_local_us);
+        }
+
+        updates_since = updates_since.saturating_add(1);
+
+        let mut emit = false;
+        if let (Some(every_us), Some(last_ts)) = (every_us, last_checkpoint_ts) {
+            if update.ts_local_us.saturating_sub(last_ts) >= every_us {
+                emit = true;
+            }
+        }
+        if let Some(every_updates) = every_updates {
+            if every_updates > 0 && updates_since >= every_updates {
+                emit = true;
+            }
+        }
+
+        if emit {
+            let (bids, asks) = book_levels(&book);
+            rows.push(CheckpointRow {
+                exchange: meta.exchange,
+                exchange_id: meta.exchange_id,
+                symbol_id: meta.symbol_id,
+                date: meta.date,
+                ts_local_us: update.ts_local_us,
+                bids,
+                asks,
+                file_id: update.file_id,
+                ingest_seq: update.ingest_seq,
+                file_line_number: update.file_line_number,
+                checkpoint_kind: "periodic".to_string(),
+            });
+            updates_since = 0;
+            last_checkpoint_ts = Some(update.ts_local_us);
+        }
+    })
+    .await?;
+
+    if rows.is_empty() {
+        return Ok(0);
+    }
+
+    let batch = build_checkpoint_batch(&rows)?;
+
+    let mut table = if delta_table_exists(output_path) {
+        Some(open_table(output_path).await?)
+    } else {
+        None
+    };
+
+    if let Some(current) = table.take() {
+        let mut current = current;
+        let mut partitions: HashSet<(String, i32)> = HashSet::new();
+        for row in &rows {
+            partitions.insert((row.exchange.clone(), row.date));
+        }
+
+        for (exchange, date) in partitions {
+            let predicate = col("exchange")
+                .eq(lit(exchange))
+                .and(col("date").eq(Expr::Literal(date32_scalar(date))));
+            let (next, _) = DeltaOps::from(current).delete().with_predicate(predicate).await?;
+            current = next;
+        }
+        table = Some(current);
+    }
+
+    let writer_properties = WriterProperties::builder()
+        .set_compression(Compression::ZSTD(
+            ZstdLevel::try_new(3).unwrap_or_else(|_| ZstdLevel::default()),
+        ))
+        .build();
+
+    let ops = if let Some(table) = table {
+        DeltaOps::from(table)
+    } else {
+        DeltaOps::try_from_uri(output_path).await?
+    };
+
+    ops.write(vec![batch])
+        .with_save_mode(SaveMode::Append)
+        .with_partition_columns(["exchange", "date"])
+        .with_writer_properties(writer_properties)
+        .await?;
+
+    Ok(rows.len())
+}
+
 pub fn replay<I, F, G>(
     updates: I,
     config: &ReplayConfig,
@@ -712,7 +1116,10 @@ pub fn replay<I, F, G>(
 
 #[cfg(feature = "python")]
 mod python {
-    use super::{replay_between_delta, snapshot_at_delta, L2Update, OrderBook, Snapshot, SnapshotWithPos};
+    use super::{
+        build_state_checkpoints_delta, replay_between_delta, snapshot_at_delta, L2Update,
+        OrderBook, Snapshot, SnapshotWithPos,
+    };
     use pyo3::exceptions::PyRuntimeError;
     use pyo3::prelude::*;
     use pyo3::types::{PyDict, PyList};
@@ -826,6 +1233,56 @@ mod python {
     }
 
     #[derive(FromPyObject)]
+    enum SymbolIdArg {
+        One(i64),
+        Many(Vec<i64>),
+    }
+
+    fn normalize_symbol_ids(symbol_id: Option<SymbolIdArg>) -> Option<Vec<i64>> {
+        match symbol_id {
+            Some(SymbolIdArg::One(id)) => Some(vec![id]),
+            Some(SymbolIdArg::Many(ids)) => Some(ids),
+            None => None,
+        }
+    }
+
+    #[pyfunction]
+    fn build_state_checkpoints(
+        py: Python<'_>,
+        updates_path: String,
+        output_path: String,
+        exchange: Option<String>,
+        exchange_id: Option<i16>,
+        symbol_id: Option<SymbolIdArg>,
+        start_date: String,
+        end_date: String,
+        checkpoint_every_us: Option<i64>,
+        checkpoint_every_updates: Option<u64>,
+        validate_monotonic: bool,
+    ) -> PyResult<usize> {
+        let symbol_ids = normalize_symbol_ids(symbol_id);
+        let result = py.allow_threads(|| {
+            runtime().block_on(build_state_checkpoints_delta(
+                &updates_path,
+                &output_path,
+                exchange.as_deref(),
+                exchange_id,
+                symbol_ids,
+                &start_date,
+                &end_date,
+                checkpoint_every_us,
+                checkpoint_every_updates,
+                validate_monotonic,
+            ))
+        });
+
+        match result {
+            Ok(count) => Ok(count),
+            Err(err) => Err(PyRuntimeError::new_err(err.to_string())),
+        }
+    }
+
+    #[derive(FromPyObject)]
     struct PyUpdate {
         ts_local_us: i64,
         ingest_seq: i32,
@@ -930,6 +1387,7 @@ mod python {
         module.add_class::<Engine>()?;
         module.add_function(wrap_pyfunction!(snapshot_at, module)?)?;
         module.add_function(wrap_pyfunction!(replay_between, module)?)?;
+        module.add_function(wrap_pyfunction!(build_state_checkpoints, module)?)?;
         Ok(())
     }
 }

@@ -20,7 +20,7 @@ from pointline.io.base_repository import BaseDeltaRepository
 from pointline.io.vendor.tardis import build_updates_from_instruments, TardisClient, download_tardis_datasets
 from pointline import research
 from pointline.l2_snapshot_index import build_and_write_snapshot_index
-from pointline.l2_state_checkpoint import build_and_write_state_checkpoints
+from pointline.l2_state_checkpoint import build_state_checkpoints_delta
 from pointline.services.dim_symbol_service import DimSymbolService
 from pointline.services.trades_service import TradesIngestionService
 from pointline.services.quotes_service import QuotesIngestionService
@@ -494,32 +494,14 @@ def _cmd_l2_state_checkpoint_build(args: argparse.Namespace) -> int:
 
     symbol_id = _parse_symbol_ids(args.symbol_id)
 
-    lf = research.scan_table(
-        "l2_updates",
+    rows_written = build_state_checkpoints_delta(
+        updates_path=get_table_path("l2_updates"),
+        output_path=get_table_path("l2_state_checkpoint"),
         exchange=exchange,
         exchange_id=exchange_id,
         symbol_id=symbol_id,
         start_date=args.start_date,
         end_date=args.end_date,
-        columns=[
-            "exchange",
-            "exchange_id",
-            "symbol_id",
-            "date",
-            "ts_local_us",
-            "ingest_seq",
-            "file_id",
-            "file_line_number",
-            "is_snapshot",
-            "side",
-            "price_int",
-            "size_int",
-        ],
-    )
-
-    rows_written = build_and_write_state_checkpoints(
-        lf,
-        get_table_path("l2_state_checkpoint"),
         checkpoint_every_us=args.checkpoint_every_us,
         checkpoint_every_updates=args.checkpoint_every_updates,
         validate_monotonic=args.validate_monotonic,
