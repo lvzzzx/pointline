@@ -153,3 +153,18 @@ researcher documentation.
 - Symbol resolution remains in Python (`silver.dim_symbol`), then pass `symbol_id` to the engine.
 - `pointline.research.scan_table` can provide Arrow/Polars batches for the bindings.
 - Output should remain fixed-point for storage; convert to real values at presentation.
+
+## 11. Implementation Plan (Tracked)
+
+1. Review lake schemas and any existing replay utilities to confirm required inputs/outputs and
+   checkpoint formats.
+2. Define Rust core API and data structures (`L2Update`, `OrderBook`, stream position) plus
+   ordering/validation rules.
+3. Implement the Rust replay engine with snapshot resets, update application, checkpoint
+   emission, and deterministic ordering tests.
+4. Build the infra CLI to scan Delta partitions, generate snapshot index and state checkpoints,
+   and write to gold tables.
+5. Expose Python bindings with high-level researcher APIs (`snapshot_at`, `replay_between`) and
+   keep `apply_batch` internal.
+6. Add integration tests for PIT correctness, replay determinism, and checkpoint round-trips;
+   document usage.
