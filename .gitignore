@@ -71,3 +71,7 @@ dmypy.json
 data/
 *.parquet
 *.delta
+
+# Rust
+**/target/
+**/Cargo.lock
