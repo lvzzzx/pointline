@@ -15,13 +15,13 @@
 - **DuckDB:** Recommended for ad-hoc SQL analysis over the Parquet/Delta Lake files.
 
 ## Infrastructure & Tooling
-- **Hatch:** Used as the build system and for project management.
+- **Maturin:** Used as the build system and for packaging the Rust replay engine extension in the wheel.
 - **Pytest:** The primary framework for unit and integration testing.
 - **Ruff:** Used for lightning-fast linting and code formatting to maintain code quality.
 
-## Performance Extensions (Planned)
-- **Rust (optional):** High-performance order book replay engine for full-depth L2 reconstruction.
-- **PyO3 (optional):** Python bindings for the Rust replay engine to expose it to researchers.
+## Performance Extensions
+- **Rust:** High-performance order book replay engine for full-depth L2 reconstruction.
+- **PyO3:** Python bindings for the Rust replay engine to expose it to researchers.
 
 Rationale: Full-depth L2 replay is CPU-intensive and benefits from a native core while preserving
-the existing Python researcher interface.
+the existing Python researcher interface, and the build uses a single wheel to ship the extension.

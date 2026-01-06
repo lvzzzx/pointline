@@ -17,7 +17,8 @@ This project provides ETL utilities and a structured data lake design optimized 
 
 ### Prerequisites
 - Python >= 3.10
-- [Hatch](https://hatch.pypa.io/) (Build system)
+- Rust toolchain (for the PyO3 extension)
+- [Maturin](https://www.maturin.rs/) (Build system)
 
 ### Setup
 ```bash

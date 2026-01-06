@@ -10,7 +10,8 @@
 - `pip install -e .` installs the package in editable mode.
 - `pip install -e .[dev]` adds dev dependencies (pytest).
 - `pytest` runs the full test suite (uses `tests/`).
-- `hatch build` builds a wheel using the configured build backend.
+- `maturin develop` builds the Rust extension into the active environment.
+- `maturin build` builds a wheel using the configured build backend.
 
 ## Coding Style & Naming Conventions
 - Python 3.10+.

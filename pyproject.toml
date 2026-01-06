@@ -20,21 +20,12 @@ dev = [
 ]
 
 [build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
+requires = ["maturin>=1.0,<2.0"]
+build-backend = "maturin"
 
-[tool.hatch.build.targets.wheel]
-packages = ["pointline"]
-
-[tool.hatch.envs.smoke]
-dependencies = [
-  "polars>=0.20",
-  "deltalake>=0.15",
-  "pyarrow>=14.0",
-]
-
-[tool.hatch.envs.smoke.scripts]
-dim_symbol = "python scripts/smoke_dim_symbol.py"
+[tool.maturin]
+manifest-path = "l2_replay/Cargo.toml"
+features = ["python"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

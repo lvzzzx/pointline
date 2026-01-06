@@ -1141,6 +1141,7 @@ mod python {
     };
     use pyo3::exceptions::PyRuntimeError;
     use pyo3::prelude::*;
+    use pyo3::wrap_pyfunction;
     use pyo3::types::{PyDict, PyList};
     use std::sync::OnceLock;
     use tokio::runtime::Runtime;
@@ -1184,15 +1185,27 @@ mod python {
         dict.into()
     }
 
-    #[pyfunction]
+    #[pyfunction(
+        signature = (
+            updates_path,
+            exchange_id,
+            symbol_id,
+            ts_local_us,
+            *,
+            checkpoint_path=None,
+            exchange=None,
+            start_date=None,
+            end_date=None
+        )
+    )]
     fn snapshot_at(
         py: Python<'_>,
         updates_path: String,
-        checkpoint_path: Option<String>,
-        exchange: Option<String>,
         exchange_id: i16,
         symbol_id: i64,
         ts_local_us: i64,
+        checkpoint_path: Option<String>,
+        exchange: Option<String>,
         start_date: Option<String>,
         end_date: Option<String>,
     ) -> PyResult<PyObject> {
@@ -1215,16 +1228,29 @@ mod python {
         }
     }
 
-    #[pyfunction]
+    #[pyfunction(
+        signature = (
+            updates_path,
+            exchange_id,
+            symbol_id,
+            start_ts_local_us,
+            end_ts_local_us,
+            *,
+            checkpoint_path=None,
+            exchange=None,
+            every_us=None,
+            every_updates=None
+        )
+    )]
     fn replay_between(
         py: Python<'_>,
         updates_path: String,
-        checkpoint_path: Option<String>,
-        exchange: Option<String>,
         exchange_id: i16,
         symbol_id: i64,
         start_ts_local_us: i64,
         end_ts_local_us: i64,
+        checkpoint_path: Option<String>,
+        exchange: Option<String>,
         every_us: Option<i64>,
         every_updates: Option<u64>,
     ) -> PyResult<Vec<PyObject>> {
@@ -1265,16 +1291,30 @@ mod python {
         }
     }
 
-    #[pyfunction]
+    #[pyfunction(
+        signature = (
+            updates_path,
+            output_path,
+            start_date,
+            end_date,
+            *,
+            exchange=None,
+            exchange_id=None,
+            symbol_id=None,
+            checkpoint_every_us=None,
+            checkpoint_every_updates=None,
+            validate_monotonic=false
+        )
+    )]
     fn build_state_checkpoints(
         py: Python<'_>,
         updates_path: String,
         output_path: String,
+        start_date: String,
+        end_date: String,
         exchange: Option<String>,
         exchange_id: Option<i16>,
         symbol_id: Option<SymbolIdArg>,
-        start_date: String,
-        end_date: String,
         checkpoint_every_us: Option<i64>,
         checkpoint_every_updates: Option<u64>,
         validate_monotonic: bool,
