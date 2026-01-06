@@ -18,6 +18,7 @@ def build_state_checkpoints_delta(
     checkpoint_every_us: int | None = None,
     checkpoint_every_updates: int | None = None,
     validate_monotonic: bool = False,
+    assume_sorted: bool = False,
 ) -> int:
     """Build state checkpoints via the Rust replay engine and write to Delta."""
     try:
@@ -41,4 +42,5 @@ def build_state_checkpoints_delta(
         checkpoint_every_us=checkpoint_every_us,
         checkpoint_every_updates=checkpoint_every_updates,
         validate_monotonic=validate_monotonic,
+        assume_sorted=assume_sorted,
     )

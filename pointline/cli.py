@@ -505,6 +505,7 @@ def _cmd_l2_state_checkpoint_build(args: argparse.Namespace) -> int:
         checkpoint_every_us=args.checkpoint_every_us,
         checkpoint_every_updates=args.checkpoint_every_updates,
         validate_monotonic=args.validate_monotonic,
+        assume_sorted=args.assume_sorted,
     )
     print(f"l2_state_checkpoint: wrote {rows_written} row(s)")
     return 0
@@ -793,6 +794,14 @@ def _build_parser() -> argparse.ArgumentParser:
         "--validate-monotonic",
         action="store_true",
         help="Fail if updates are not strictly ordered by replay key",
+    )
+    l2_state_checkpoint.add_argument(
+        "--assume-sorted",
+        action="store_true",
+        help=(
+            "Skip global sort and assume updates are already ordered by "
+            "ts_local_us, ingest_seq, file_line_number"
+        ),
     )
     l2_state_checkpoint.set_defaults(func=_cmd_l2_state_checkpoint_build)
 
