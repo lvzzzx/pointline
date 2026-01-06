@@ -5,12 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
-from typing import Iterable
 
 import polars as pl
-from deltalake import DeltaTable, WriterProperties, write_deltalake
-
-from pointline.config import STORAGE_OPTIONS
 
 REQUIRED_COLUMNS = {
     "exchange",
@@ -178,70 +174,6 @@ def build_state_checkpoints(
         return pl.DataFrame(schema=CHECKPOINT_SCHEMA)
 
     return pl.DataFrame(checkpoints, schema=CHECKPOINT_SCHEMA)
-
-
-def write_state_checkpoints(
-    df: pl.DataFrame,
-    table_path: Path | str,
-    *,
-    partition_by: list[str] | None = None,
-) -> None:
-    """Write checkpoint rows to Delta, deleting affected partitions first."""
-    if df.is_empty():
-        return
-
-    if partition_by is None:
-        partition_by = ["exchange", "date"]
-
-    partitions = df.select(["exchange", "date"]).unique()
-    table_path = str(table_path)
-
-    writer_properties = None
-    if "compression" in STORAGE_OPTIONS:
-        writer_properties = WriterProperties(compression=STORAGE_OPTIONS["compression"].upper())
-
-    table_exists = Path(table_path, "_delta_log").exists()
-
-    if table_exists:
-        try:
-            dt = DeltaTable(table_path)
-        except Exception:
-            dt = None
-
-        if dt is not None:
-            for row in partitions.iter_rows(named=True):
-                exchange = row["exchange"]
-                date_value = row["date"]
-                dt.delete(f"exchange = '{exchange}' AND date = '{date_value}'")
-
-    mode = "append" if table_exists else "overwrite"
-    write_deltalake(
-        table_path,
-        df.to_arrow(),
-        mode=mode,
-        partition_by=partition_by,
-        writer_properties=writer_properties,
-    )
-
-
-def build_and_write_state_checkpoints(
-    lf: pl.LazyFrame,
-    table_path: Path | str,
-    *,
-    checkpoint_every_us: int | None = None,
-    checkpoint_every_updates: int | None = None,
-    validate_monotonic: bool = False,
-    partition_by: list[str] | None = None,
-) -> int:
-    """Build checkpoint rows and write them to Delta."""
-    df = build_state_checkpoints(
-        lf,
-        checkpoint_every_us=checkpoint_every_us,
-        checkpoint_every_updates=checkpoint_every_updates,
-        validate_monotonic=validate_monotonic,
-    )
-    write_state_checkpoints(df, table_path, partition_by=partition_by)
-    return df.height
 
 
 def build_state_checkpoints_delta(
