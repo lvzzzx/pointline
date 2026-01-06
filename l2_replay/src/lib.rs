@@ -3,10 +3,10 @@ use std::path::Path;
 use std::sync::Arc;
 
 use anyhow::{anyhow, Context, Result};
-use chrono::{NaiveDate, NaiveDateTime};
+use chrono::{Duration, NaiveDate, NaiveDateTime};
 use deltalake::arrow::array::{
-    Array, ArrayRef, BooleanArray, Date32Builder, Int16Array, Int16Builder,
-    Int32Array, Int32Builder, Int64Array, Int64Builder, LargeListArray, ListArray, ListBuilder,
+    Array, ArrayRef, BooleanArray, Date32Builder, Int16Array, Int16Builder, Int32Array,
+    Int32Builder, Int64Array, Int64Builder, Int8Array, LargeListArray, ListArray, ListBuilder,
     StringBuilder, StructArray, StructBuilder, UInt8Array,
 };
 use deltalake::arrow::datatypes::{DataType, Field, Schema};
@@ -187,6 +187,13 @@ fn date_to_days(date: NaiveDate) -> i32 {
     (date - epoch).num_days() as i32
 }
 
+fn days_to_date(days: i32) -> Result<NaiveDate> {
+    let epoch = NaiveDate::from_ymd_opt(1970, 1, 1).expect("epoch");
+    epoch
+        .checked_add_signed(Duration::days(days as i64))
+        .ok_or_else(|| anyhow!("invalid date days: {}", days))
+}
+
 fn date_to_ts_local_us(date: NaiveDate, end_of_day: bool) -> i64 {
     let dt = if end_of_day {
         date.and_hms_micro_opt(23, 59, 59, 999_999)
@@ -201,12 +208,12 @@ fn date_to_scalar(date: NaiveDate) -> ScalarValue {
     ScalarValue::Date32(Some(date_to_days(date)))
 }
 
-fn date32_scalar(days: i32) -> ScalarValue {
-    ScalarValue::Date32(Some(days))
-}
-
 fn delta_table_exists(path: &str) -> bool {
     Path::new(path).join("_delta_log").exists()
+}
+
+fn escape_sql_string(value: &str) -> String {
+    value.replace('\'', "''")
 }
 
 fn after_pos_expr(pos: &StreamPos) -> Expr {
@@ -237,20 +244,34 @@ async fn latest_checkpoint(
 
     let target_date = ts_to_date(ts_local_us)?;
     let table = open_table(checkpoint_path).await?;
+    let mut partition_filters = Vec::new();
+    if let Some(exchange) = exchange {
+        partition_filters.push(PartitionFilter {
+            key: "exchange".to_string(),
+            value: PartitionValue::Equal(exchange.to_string()),
+        });
+    }
+    partition_filters.push(PartitionFilter {
+        key: "date".to_string(),
+        value: PartitionValue::Equal(target_date.to_string()),
+    });
+
+    let file_uris = table
+        .get_file_uris_by_partitions(&partition_filters)
+        .context("fetch checkpoint files for partition filters")?;
+    if file_uris.is_empty() {
+        return Ok(None);
+    }
+
     let config = SessionConfig::new()
         .with_parquet_pruning(false)
         .with_parquet_bloom_filter_pruning(false)
         .with_parquet_page_index_pruning(false);
     let ctx = SessionContext::new_with_config(config);
-    ctx.register_table("checkpoints", Arc::new(table))?;
-
-    let mut df = ctx.table("checkpoints").await?;
+    let read_options = ParquetReadOptions::default().parquet_pruning(false);
+    let mut df = ctx.read_parquet(file_uris, read_options).await?;
     df = df.filter(col("exchange_id").eq(lit(exchange_id)))?;
     df = df.filter(col("symbol_id").eq(lit(symbol_id)))?;
-    if let Some(exchange) = exchange {
-        df = df.filter(col("exchange").eq(lit(exchange)))?;
-    }
-    df = df.filter(col("date").eq(Expr::Literal(date_to_scalar(target_date))))?;
     df = df.filter(col("ts_local_us").lt_eq(lit(ts_local_us)))?;
 
     df = df.select(vec![
@@ -304,24 +325,39 @@ async fn build_updates_df(
     min_pos_exclusive: Option<StreamPos>,
 ) -> Result<DataFrame> {
     let table = open_table(updates_path).await?;
-    let ctx = SessionContext::new();
-    ctx.register_table("updates", Arc::new(table))?;
+    let mut partition_filters = Vec::new();
+    if let Some(exchange) = exchange {
+        partition_filters.push(PartitionFilter {
+            key: "exchange".to_string(),
+            value: PartitionValue::Equal(exchange.to_string()),
+        });
+    }
+    partition_filters.push(PartitionFilter {
+        key: "date".to_string(),
+        value: PartitionValue::GreaterThanOrEqual(start_date.to_string()),
+    });
+    partition_filters.push(PartitionFilter {
+        key: "date".to_string(),
+        value: PartitionValue::LessThanOrEqual(end_date.to_string()),
+    });
 
-    let mut df = ctx.table("updates").await?;
+    let file_uris = table
+        .get_file_uris_by_partitions(&partition_filters)
+        .context("fetch delta files for partition filters")?;
+
+    let ctx = SessionContext::new();
+    if file_uris.is_empty() {
+        return ctx.read_empty().context("create empty updates dataframe");
+    }
+
+    let read_options = ParquetReadOptions::default().parquet_pruning(false);
+    let mut df = ctx.read_parquet(file_uris, read_options).await?;
     if std::env::var("POINTLINE_L2_DEBUG").is_ok() {
         println!("l2_updates schema: {:?}", df.schema());
     }
+
     df = df.filter(col("exchange_id").eq(lit(exchange_id)))?;
     df = df.filter(col("symbol_id").eq(lit(symbol_id)))?;
-    if let Some(exchange) = exchange {
-        df = df.filter(col("exchange").eq(lit(exchange)))?;
-    }
-
-    let start_date_expr = Expr::Literal(date_to_scalar(start_date));
-    let end_date_expr = Expr::Literal(date_to_scalar(end_date));
-    df = df.filter(col("date").gt_eq(start_date_expr))?;
-    df = df.filter(col("date").lt_eq(end_date_expr))?;
-
     df = df.filter(col("ts_local_us").lt_eq(lit(max_ts_inclusive)))?;
 
     if let Some(pos) = min_pos_exclusive {
@@ -354,6 +390,7 @@ async fn build_checkpoint_updates_df(
     symbol_ids: Option<&[i64]>,
     start_date: NaiveDate,
     end_date: NaiveDate,
+    assume_sorted: bool,
 ) -> Result<DataFrame> {
     let table = open_table(updates_path).await?;
     let mut partition_filters = Vec::new();
@@ -377,9 +414,8 @@ async fn build_checkpoint_updates_df(
         .context("fetch delta files for partition filters")?;
 
     let ctx = SessionContext::new();
-    let mut df = ctx
-        .read_parquet(file_uris, ParquetReadOptions::default())
-        .await?;
+    let read_options = ParquetReadOptions::default().parquet_pruning(false);
+    let mut df = ctx.read_parquet(file_uris, read_options).await?;
     let df_schema = df.schema().clone();
     if let Some(exchange_id) = exchange_id {
         let exchange_expr = col("exchange_id").cast_to(&DataType::Int64, &df_schema)?;
@@ -409,11 +445,13 @@ async fn build_checkpoint_updates_df(
         col("size_int"),
         col("file_id"),
     ])?;
-    df = df.sort(vec![
-        col("ts_local_us").sort(true, true),
-        col("ingest_seq").sort(true, true),
-        col("file_line_number").sort(true, true),
-    ])?;
+    if !assume_sorted {
+        df = df.sort(vec![
+            col("ts_local_us").sort(true, true),
+            col("ingest_seq").sort(true, true),
+            col("file_line_number").sort(true, true),
+        ])?;
+    }
 
     Ok(df)
 }
@@ -423,7 +461,7 @@ struct UpdateColumns<'a> {
     ingest_seq: &'a Int32Array,
     file_line_number: &'a Int32Array,
     is_snapshot: &'a BooleanArray,
-    side: &'a UInt8Array,
+    side: ArrayRef,
     price_int: &'a Int64Array,
     size_int: &'a Int64Array,
     file_id: &'a Int32Array,
@@ -435,7 +473,7 @@ fn update_columns<'a>(batch: &'a RecordBatch) -> Result<UpdateColumns<'a>> {
         ingest_seq: get_array(batch, "ingest_seq")?,
         file_line_number: get_array(batch, "file_line_number")?,
         is_snapshot: get_array(batch, "is_snapshot")?,
-        side: get_array(batch, "side")?,
+        side: batch.column(batch.schema().index_of("side")?).clone(),
         price_int: get_array(batch, "price_int")?,
         size_int: get_array(batch, "size_int")?,
         file_id: get_array(batch, "file_id")?,
@@ -448,7 +486,7 @@ fn update_from_columns(cols: &UpdateColumns<'_>, row: usize) -> L2Update {
         ingest_seq: cols.ingest_seq.value(row),
         file_line_number: cols.file_line_number.value(row),
         is_snapshot: cols.is_snapshot.value(row),
-        side: cols.side.value(row),
+        side: get_u8_value(&cols.side, row).unwrap_or_default(),
         price_int: cols.price_int.value(row),
         size_int: cols.size_int.value(row),
         file_id: cols.file_id.value(row),
@@ -462,7 +500,7 @@ struct CheckpointUpdateColumns<'a> {
     ingest_seq: &'a Int32Array,
     file_line_number: &'a Int32Array,
     is_snapshot: &'a BooleanArray,
-    side: &'a UInt8Array,
+    side: ArrayRef,
     price_int: &'a Int64Array,
     size_int: &'a Int64Array,
     file_id: &'a Int32Array,
@@ -476,7 +514,7 @@ fn checkpoint_update_columns<'a>(batch: &'a RecordBatch) -> Result<CheckpointUpd
         ingest_seq: get_array(batch, "ingest_seq")?,
         file_line_number: get_array(batch, "file_line_number")?,
         is_snapshot: get_array(batch, "is_snapshot")?,
-        side: get_array(batch, "side")?,
+        side: batch.column(batch.schema().index_of("side")?).clone(),
         price_int: get_array(batch, "price_int")?,
         size_int: get_array(batch, "size_int")?,
         file_id: get_array(batch, "file_id")?,
@@ -486,7 +524,7 @@ fn checkpoint_update_columns<'a>(batch: &'a RecordBatch) -> Result<CheckpointUpd
 fn checkpoint_update_from_columns(
     cols: &CheckpointUpdateColumns<'_>,
     row: usize,
-) -> (CheckpointMeta, L2Update) {
+) -> Result<(CheckpointMeta, L2Update)> {
     let meta = CheckpointMeta {
         exchange_id: cols.exchange_id.value(row),
         symbol_id: cols.symbol_id.value(row),
@@ -496,12 +534,12 @@ fn checkpoint_update_from_columns(
         ingest_seq: cols.ingest_seq.value(row),
         file_line_number: cols.file_line_number.value(row),
         is_snapshot: cols.is_snapshot.value(row),
-        side: cols.side.value(row),
+        side: get_u8_value(&cols.side, row)?,
         price_int: cols.price_int.value(row),
         size_int: cols.size_int.value(row),
         file_id: cols.file_id.value(row),
     };
-    (meta, update)
+    Ok((meta, update))
 }
 
 async fn for_each_update<F>(mut stream: SendableRecordBatchStream, mut f: F) -> Result<()>
@@ -529,7 +567,7 @@ where
         let batch = batch?;
         let cols = checkpoint_update_columns(&batch)?;
         for row in 0..batch.num_rows() {
-            let (meta, update) = checkpoint_update_from_columns(&cols, row);
+            let (meta, update) = checkpoint_update_from_columns(&cols, row)?;
             f(meta, update)?;
         }
     }
@@ -543,6 +581,20 @@ fn get_array<'a, T: 'static>(batch: &'a RecordBatch, name: &str) -> Result<&'a T
         .as_any()
         .downcast_ref::<T>()
         .ok_or_else(|| anyhow!("column {} has unexpected type", name))
+}
+
+fn get_u8_value(array: &ArrayRef, row: usize) -> Result<u8> {
+    if let Some(values) = array.as_any().downcast_ref::<UInt8Array>() {
+        return Ok(values.value(row));
+    }
+    if let Some(values) = array.as_any().downcast_ref::<Int8Array>() {
+        let value = values.value(row);
+        if value < 0 {
+            return Err(anyhow!("column side has negative value {}", value));
+        }
+        return Ok(value as u8);
+    }
+    Err(anyhow!("column side has unexpected type"))
 }
 
 
@@ -911,6 +963,7 @@ pub async fn build_state_checkpoints_delta(
     checkpoint_every_us: Option<i64>,
     checkpoint_every_updates: Option<u64>,
     validate_monotonic: bool,
+    assume_sorted: bool,
 ) -> Result<usize> {
     let every_us = checkpoint_every_us.filter(|value| *value > 0);
     let every_updates = checkpoint_every_updates.filter(|value| *value > 0);
@@ -941,6 +994,7 @@ pub async fn build_state_checkpoints_delta(
         symbol_ids.as_deref(),
         start_date,
         end_date,
+        assume_sorted,
     )
     .await
     .context("build checkpoint updates dataframe")?;
@@ -1038,9 +1092,12 @@ pub async fn build_state_checkpoints_delta(
         }
 
         for (exchange, date) in partitions {
-            let predicate = col("exchange")
-                .eq(lit(exchange))
-                .and(col("date").eq(Expr::Literal(date32_scalar(date))));
+            let date = days_to_date(date)?;
+            let predicate = format!(
+                "exchange = '{}' AND date = '{}'",
+                escape_sql_string(&exchange),
+                date.format("%Y-%m-%d")
+            );
             let (next, _) = DeltaOps::from(current)
                 .delete()
                 .with_predicate(predicate)
@@ -1340,7 +1397,8 @@ mod python {
             symbol_id=None,
             checkpoint_every_us=None,
             checkpoint_every_updates=None,
-            validate_monotonic=false
+            validate_monotonic=false,
+            assume_sorted=false
         )
     )]
     fn build_state_checkpoints(
@@ -1355,6 +1413,7 @@ mod python {
         checkpoint_every_us: Option<i64>,
         checkpoint_every_updates: Option<u64>,
         validate_monotonic: bool,
+        assume_sorted: bool,
     ) -> PyResult<usize> {
         let symbol_ids = normalize_symbol_ids(symbol_id);
         let result = py.allow_threads(|| {
@@ -1369,6 +1428,7 @@ mod python {
                 checkpoint_every_us,
                 checkpoint_every_updates,
                 validate_monotonic,
+                assume_sorted,
             ))
         });
 
