@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-import gzip
 import logging
+import os
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
@@ -27,6 +27,19 @@ from pointline.l2_updates import (
 )
 
 logger = logging.getLogger(__name__)
+
+L2_UPDATES_RAW_COLUMNS = [
+    "exchange",
+    "symbol",
+    "timestamp",
+    "local_timestamp",
+    "is_snapshot",
+    "side",
+    "price",
+    "amount",
+]
+
+DEFAULT_L2_UPDATES_BATCH_SIZE = 200_000
 
 
 class L2UpdatesIngestionService(BaseService):
@@ -82,28 +95,13 @@ class L2UpdatesIngestionService(BaseService):
             )
 
         try:
-            # 1. Read bronze CSV file
-            df = self._read_bronze_csv(bronze_path)
-
-            if df.is_empty():
-                logger.warning(f"Empty CSV file: {bronze_path}")
-                return IngestionResult(
-                    row_count=0,
-                    ts_local_min_us=0,
-                    ts_local_max_us=0,
-                    error_message=None,
-                )
-
-            # 2. Parse CSV
-            df = parse_tardis_l2_updates_csv(df)
-
-            # 3. Load dim_symbol for quarantine check
+            # 1. Load dim_symbol for quarantine check
             dim_symbol = self.dim_symbol_repo.read_all()
 
-            # 4. Quarantine check
+            # 2. Quarantine check
             exchange_id = self._resolve_exchange_id(meta.exchange)
             is_valid, error_msg = self._check_quarantine(
-                meta, dim_symbol, exchange_id, df
+                meta, dim_symbol, exchange_id, dim_symbol
             )
 
             if not is_valid:
@@ -115,56 +113,84 @@ class L2UpdatesIngestionService(BaseService):
                     error_message=error_msg,
                 )
 
-            # 5. Resolve symbol IDs
-            df = resolve_symbol_ids(
-                df,
-                dim_symbol,
-                exchange_id,
-                meta.symbol,
-                ts_col="ts_local_us",
-            )
+            # 3. Stream bronze CSV in batches to avoid loading multi-GB files into memory
+            reader = self._read_bronze_csv_batches(bronze_path)
 
-            # 6. Encode fixed-point
-            df = encode_l2_updates_fixed_point(df, dim_symbol)
+            total_rows = 0
+            ts_min: int | None = None
+            ts_max: int | None = None
 
-            # 7. Add lineage columns
-            df = self._add_lineage(df, file_id)
+            while True:
+                batches = reader.next_batches(1)
+                if not batches:
+                    break
 
-            # 8. Add exchange, exchange_id and date
-            normalized_exchange = normalize_exchange(meta.exchange)
-            df = self._add_metadata(df, normalized_exchange, exchange_id)
+                df = batches[0]
+                if df.is_empty():
+                    continue
 
-            # 9. Normalize schema
-            df = normalize_l2_updates_schema(df)
+                # 4. Parse CSV
+                df = parse_tardis_l2_updates_csv(df)
 
-            # 10. Validate
-            df = self.validate(df)
+                # 5. Resolve symbol IDs
+                df = resolve_symbol_ids(
+                    df,
+                    dim_symbol,
+                    exchange_id,
+                    meta.symbol,
+                    ts_col="ts_local_us",
+                )
 
-            if df.is_empty():
-                logger.warning(f"No valid rows after validation: {bronze_path}")
+                # 6. Encode fixed-point
+                df = encode_l2_updates_fixed_point(df, dim_symbol)
+
+                # 7. Add lineage columns
+                df = self._add_lineage(df, file_id)
+
+                # 8. Add exchange, exchange_id and date
+                normalized_exchange = normalize_exchange(meta.exchange)
+                df = self._add_metadata(df, normalized_exchange, exchange_id)
+
+                # 9. Normalize schema
+                df = normalize_l2_updates_schema(df)
+
+                # 10. Validate
+                df = self.validate(df)
+
+                if df.is_empty():
+                    logger.warning(f"No valid rows after validation: {bronze_path}")
+                    continue
+
+                # 11. Append to Delta table
+                self.write(df)
+
+                # 12. Update stats
+                batch_min = df["ts_local_us"].min()
+                batch_max = df["ts_local_us"].max()
+                if batch_min is not None:
+                    ts_min = batch_min if ts_min is None else min(ts_min, batch_min)
+                if batch_max is not None:
+                    ts_max = batch_max if ts_max is None else max(ts_max, batch_max)
+                total_rows += df.height
+
+            if total_rows == 0:
+                logger.warning(f"Empty CSV file: {bronze_path}")
                 return IngestionResult(
                     row_count=0,
                     ts_local_min_us=0,
                     ts_local_max_us=0,
-                    error_message="All rows filtered by validation",
+                    error_message=None,
                 )
 
-            # 11. Append to Delta table
-            self.write(df)
-
-            # 12. Compute result stats
-            ts_min = df["ts_local_us"].min()
-            ts_max = df["ts_local_us"].max()
-
             logger.info(
-                f"Ingested {df.height} l2_updates from {meta.bronze_file_path} "
+                f"Ingested {total_rows} l2_updates from {meta.bronze_file_path} "
                 f"(ts range: {ts_min} - {ts_max})"
             )
 
             return IngestionResult(
-                row_count=df.height,
-                ts_local_min_us=ts_min,
-                ts_local_max_us=ts_max,
+                row_count=total_rows,
+                ts_local_min_us=ts_min or 0,
+                ts_local_max_us=ts_max or 0,
                 error_message=None,
             )
 
@@ -183,11 +209,22 @@ class L2UpdatesIngestionService(BaseService):
             "infer_schema_length": 10000,
             "try_parse_dates": False,
         }
-        if path.suffix == ".gz" or str(path).endswith(".csv.gz"):
-            with gzip.open(path, "rt", encoding="utf-8") as f:
-                return pl.read_csv(f, **read_options)
-        else:
-            return pl.read_csv(path, **read_options)
+        return pl.read_csv(path, **read_options)
+
+    def _read_bronze_csv_batches(self, path: Path) -> pl.io.csv.BatchedCsvReader:
+        batch_size = int(
+            os.getenv("POINTLINE_L2_UPDATES_BATCH_SIZE", str(DEFAULT_L2_UPDATES_BATCH_SIZE))
+        )
+        read_options = {
+            "infer_schema_length": 10000,
+            "try_parse_dates": False,
+            "low_memory": True,
+            "batch_size": batch_size,
+            "columns": L2_UPDATES_RAW_COLUMNS,
+            "row_index_name": "file_line_number",
+            "row_index_offset": 1,
+        }
+        return pl.read_csv_batched(path, **read_options)
 
     def _resolve_exchange_id(self, exchange: str) -> int:
         return get_exchange_id(exchange)
@@ -232,7 +269,11 @@ class L2UpdatesIngestionService(BaseService):
         return True, ""
 
     def _add_lineage(self, df: pl.DataFrame, file_id: int) -> pl.DataFrame:
-        file_line_number = pl.int_range(1, df.height + 1, dtype=pl.Int32)
+        if "file_line_number" in df.columns:
+            file_line_number = pl.col("file_line_number").cast(pl.Int32)
+        else:
+            file_line_number = pl.int_range(1, df.height + 1, dtype=pl.Int32)
+
         return df.with_columns([
             pl.lit(file_id, dtype=pl.Int32).alias("file_id"),
             file_line_number.alias("file_line_number"),
