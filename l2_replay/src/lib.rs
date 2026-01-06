@@ -5,20 +5,22 @@ use std::sync::Arc;
 use anyhow::{anyhow, Context, Result};
 use chrono::{NaiveDate, NaiveDateTime};
 use deltalake::arrow::array::{
-    Array, ArrayRef, BooleanArray, Date32Array, Date32Builder, Int16Array, Int16Builder,
+    Array, ArrayRef, BooleanArray, Date32Builder, Int16Array, Int16Builder,
     Int32Array, Int32Builder, Int64Array, Int64Builder, LargeListArray, ListArray, ListBuilder,
-    StringArray, StringBuilder, StructArray, StructBuilder, UInt8Array,
+    StringBuilder, StructArray, StructBuilder, UInt8Array,
 };
-use deltalake::arrow::compute::cast;
 use deltalake::arrow::datatypes::{DataType, Field, Schema};
 use deltalake::arrow::record_batch::RecordBatch;
+use deltalake::datafusion::logical_expr::ExprSchemable;
 use deltalake::datafusion::prelude::*;
 use deltalake::datafusion::physical_plan::SendableRecordBatchStream;
 use deltalake::datafusion::scalar::ScalarValue;
+use deltalake::datafusion::execution::context::SessionConfig;
 use deltalake::open_table;
 use deltalake::parquet::basic::{Compression, ZstdLevel};
 use deltalake::parquet::file::properties::WriterProperties;
 use deltalake::protocol::SaveMode;
+use deltalake::schema::partitions::{PartitionFilter, PartitionValue};
 use deltalake::DeltaOps;
 use futures::StreamExt;
 
@@ -122,10 +124,8 @@ pub struct SnapshotWithPos {
 
 #[derive(Debug, Clone)]
 struct CheckpointMeta {
-    exchange: String,
     exchange_id: i16,
     symbol_id: i64,
-    date: i32,
 }
 
 #[derive(Debug, Clone)]
@@ -182,10 +182,23 @@ fn parse_date_opt(value: Option<&str>) -> Result<Option<NaiveDate>> {
         .transpose()
 }
 
-fn date_to_scalar(date: NaiveDate) -> ScalarValue {
+fn date_to_days(date: NaiveDate) -> i32 {
     let epoch = NaiveDate::from_ymd_opt(1970, 1, 1).expect("epoch");
-    let days = (date - epoch).num_days() as i32;
-    ScalarValue::Date32(Some(days))
+    (date - epoch).num_days() as i32
+}
+
+fn date_to_ts_local_us(date: NaiveDate, end_of_day: bool) -> i64 {
+    let dt = if end_of_day {
+        date.and_hms_micro_opt(23, 59, 59, 999_999)
+    } else {
+        date.and_hms_micro_opt(0, 0, 0, 0)
+    }
+    .expect("valid date time");
+    dt.timestamp_micros()
+}
+
+fn date_to_scalar(date: NaiveDate) -> ScalarValue {
+    ScalarValue::Date32(Some(date_to_days(date)))
 }
 
 fn date32_scalar(days: i32) -> ScalarValue {
@@ -224,7 +237,11 @@ async fn latest_checkpoint(
 
     let target_date = ts_to_date(ts_local_us)?;
     let table = open_table(checkpoint_path).await?;
-    let ctx = SessionContext::new();
+    let config = SessionConfig::new()
+        .with_parquet_pruning(false)
+        .with_parquet_bloom_filter_pruning(false)
+        .with_parquet_page_index_pruning(false);
+    let ctx = SessionContext::new_with_config(config);
     ctx.register_table("checkpoints", Arc::new(table))?;
 
     let mut df = ctx.table("checkpoints").await?;
@@ -291,6 +308,9 @@ async fn build_updates_df(
     ctx.register_table("updates", Arc::new(table))?;
 
     let mut df = ctx.table("updates").await?;
+    if std::env::var("POINTLINE_L2_DEBUG").is_ok() {
+        println!("l2_updates schema: {:?}", df.schema());
+    }
     df = df.filter(col("exchange_id").eq(lit(exchange_id)))?;
     df = df.filter(col("symbol_id").eq(lit(symbol_id)))?;
     if let Some(exchange) = exchange {
@@ -336,36 +356,50 @@ async fn build_checkpoint_updates_df(
     end_date: NaiveDate,
 ) -> Result<DataFrame> {
     let table = open_table(updates_path).await?;
-    let ctx = SessionContext::new();
-    ctx.register_table("updates", Arc::new(table))?;
-
-    let mut df = ctx.table("updates").await?;
-    if let Some(exchange_id) = exchange_id {
-        df = df.filter(col("exchange_id").eq(lit(exchange_id)))?;
-    }
+    let mut partition_filters = Vec::new();
     if let Some(exchange) = exchange {
-        df = df.filter(col("exchange").eq(lit(exchange)))?;
+        partition_filters.push(PartitionFilter {
+            key: "exchange".to_string(),
+            value: PartitionValue::Equal(exchange.to_string()),
+        });
+    }
+    partition_filters.push(PartitionFilter {
+        key: "date".to_string(),
+        value: PartitionValue::GreaterThanOrEqual(start_date.to_string()),
+    });
+    partition_filters.push(PartitionFilter {
+        key: "date".to_string(),
+        value: PartitionValue::LessThanOrEqual(end_date.to_string()),
+    });
+
+    let file_uris = table
+        .get_file_uris_by_partitions(&partition_filters)
+        .context("fetch delta files for partition filters")?;
+
+    let ctx = SessionContext::new();
+    let mut df = ctx
+        .read_parquet(file_uris, ParquetReadOptions::default())
+        .await?;
+    let df_schema = df.schema().clone();
+    if let Some(exchange_id) = exchange_id {
+        let exchange_expr = col("exchange_id").cast_to(&DataType::Int64, &df_schema)?;
+        df = df.filter(exchange_expr.eq(lit(i64::from(exchange_id))))?;
     }
 
     if let Some(symbol_ids) = symbol_ids {
         if symbol_ids.len() == 1 {
-            df = df.filter(col("symbol_id").eq(lit(symbol_ids[0])))?;
+            let symbol_expr = col("symbol_id").cast_to(&DataType::Int64, &df_schema)?;
+            df = df.filter(symbol_expr.eq(lit(symbol_ids[0])))?;
         } else if !symbol_ids.is_empty() {
             let values: Vec<Expr> = symbol_ids.iter().map(|id| lit(*id)).collect();
-            df = df.filter(col("symbol_id").in_list(values, false))?;
+            let symbol_expr = col("symbol_id").cast_to(&DataType::Int64, &df_schema)?;
+            df = df.filter(symbol_expr.in_list(values, false))?;
         }
     }
 
-    let start_date_expr = Expr::Literal(date_to_scalar(start_date));
-    let end_date_expr = Expr::Literal(date_to_scalar(end_date));
-    df = df.filter(col("date").gt_eq(start_date_expr))?;
-    df = df.filter(col("date").lt_eq(end_date_expr))?;
-
     df = df.select(vec![
-        col("exchange"),
         col("exchange_id"),
         col("symbol_id"),
-        col("date"),
         col("ts_local_us"),
         col("ingest_seq"),
         col("file_line_number"),
@@ -422,10 +456,8 @@ fn update_from_columns(cols: &UpdateColumns<'_>, row: usize) -> L2Update {
 }
 
 struct CheckpointUpdateColumns<'a> {
-    exchange: StringArray,
     exchange_id: &'a Int16Array,
     symbol_id: &'a Int64Array,
-    date: &'a Date32Array,
     ts_local_us: &'a Int64Array,
     ingest_seq: &'a Int32Array,
     file_line_number: &'a Int32Array,
@@ -438,10 +470,8 @@ struct CheckpointUpdateColumns<'a> {
 
 fn checkpoint_update_columns<'a>(batch: &'a RecordBatch) -> Result<CheckpointUpdateColumns<'a>> {
     Ok(CheckpointUpdateColumns {
-        exchange: get_string_array(batch, "exchange")?,
         exchange_id: get_array(batch, "exchange_id")?,
         symbol_id: get_array(batch, "symbol_id")?,
-        date: get_array(batch, "date")?,
         ts_local_us: get_array(batch, "ts_local_us")?,
         ingest_seq: get_array(batch, "ingest_seq")?,
         file_line_number: get_array(batch, "file_line_number")?,
@@ -458,10 +488,8 @@ fn checkpoint_update_from_columns(
     row: usize,
 ) -> (CheckpointMeta, L2Update) {
     let meta = CheckpointMeta {
-        exchange: cols.exchange.value(row).to_string(),
         exchange_id: cols.exchange_id.value(row),
         symbol_id: cols.symbol_id.value(row),
-        date: cols.date.value(row),
     };
     let update = L2Update {
         ts_local_us: cols.ts_local_us.value(row),
@@ -495,14 +523,14 @@ async fn for_each_checkpoint_update<F>(
     mut f: F,
 ) -> Result<()>
 where
-    F: FnMut(CheckpointMeta, L2Update),
+    F: FnMut(CheckpointMeta, L2Update) -> Result<()>,
 {
     while let Some(batch) = stream.next().await {
         let batch = batch?;
         let cols = checkpoint_update_columns(&batch)?;
         for row in 0..batch.num_rows() {
             let (meta, update) = checkpoint_update_from_columns(&cols, row);
-            f(meta, update);
+            f(meta, update)?;
         }
     }
     Ok(())
@@ -517,20 +545,6 @@ fn get_array<'a, T: 'static>(batch: &'a RecordBatch, name: &str) -> Result<&'a T
         .ok_or_else(|| anyhow!("column {} has unexpected type", name))
 }
 
-fn get_string_array(batch: &RecordBatch, name: &str) -> Result<StringArray> {
-    let idx = batch.schema().index_of(name)?;
-    let array = batch.column(idx);
-    let casted: ArrayRef = if matches!(array.data_type(), DataType::Utf8) {
-        array.clone()
-    } else {
-        cast(array.as_ref(), &DataType::Utf8)?
-    };
-    casted
-        .as_any()
-        .downcast_ref::<StringArray>()
-        .cloned()
-        .ok_or_else(|| anyhow!("column {} has unexpected type", name))
-}
 
 fn get_i64(batch: &RecordBatch, name: &str, row: usize) -> Result<i64> {
     Ok(get_array::<Int64Array>(batch, name)?.value(row))
@@ -913,15 +927,23 @@ pub async fn build_state_checkpoints_delta(
     let end_date = NaiveDate::parse_from_str(end_date, "%Y-%m-%d")
         .with_context(|| format!("invalid end_date string: {}", end_date))?;
 
+    let exchange = exchange
+        .ok_or_else(|| anyhow!("build_state_checkpoints: exchange is required"))?;
+    let exchange = exchange.to_string();
+
+    let start_ts = date_to_ts_local_us(start_date, false);
+    let end_ts = date_to_ts_local_us(end_date, true);
+
     let df = build_checkpoint_updates_df(
         updates_path,
-        exchange,
+        Some(exchange.as_str()),
         exchange_id,
         symbol_ids.as_deref(),
         start_date,
         end_date,
     )
-    .await?;
+    .await
+    .context("build checkpoint updates dataframe")?;
 
     let mut rows: Vec<CheckpointRow> = Vec::new();
     let mut book = OrderBook::default();
@@ -930,8 +952,15 @@ pub async fn build_state_checkpoints_delta(
     let mut updates_since: u64 = 0;
     let mut prev_key: Option<(i64, i32, i32)> = None;
 
-    let stream = df.execute_stream().await?;
+    let stream = df
+        .execute_stream()
+        .await
+        .context("execute checkpoint updates stream")?;
     for_each_checkpoint_update(stream, |meta, update| {
+        if update.ts_local_us < start_ts || update.ts_local_us > end_ts {
+            return Ok(());
+        }
+
         if validate_monotonic {
             let key = (update.ts_local_us, update.ingest_seq, update.file_line_number);
             if let Some(prev) = prev_key {
@@ -966,12 +995,14 @@ pub async fn build_state_checkpoints_delta(
         }
 
         if emit {
+            let date = ts_to_date(update.ts_local_us)?;
+            let date_days = date_to_days(date);
             let (bids, asks) = book_levels(&book);
             rows.push(CheckpointRow {
-                exchange: meta.exchange,
+                exchange: exchange.clone(),
                 exchange_id: meta.exchange_id,
                 symbol_id: meta.symbol_id,
-                date: meta.date,
+                date: date_days,
                 ts_local_us: update.ts_local_us,
                 bids,
                 asks,
@@ -983,6 +1014,7 @@ pub async fn build_state_checkpoints_delta(
             updates_since = 0;
             last_checkpoint_ts = Some(update.ts_local_us);
         }
+        Ok(())
     })
     .await?;
 
@@ -990,7 +1022,7 @@ pub async fn build_state_checkpoints_delta(
         return Ok(0);
     }
 
-    let batch = build_checkpoint_batch(&rows)?;
+    let batch = build_checkpoint_batch(&rows).context("build checkpoint record batch")?;
 
     let mut table = if delta_table_exists(output_path) {
         Some(open_table(output_path).await?)
@@ -1009,7 +1041,11 @@ pub async fn build_state_checkpoints_delta(
             let predicate = col("exchange")
                 .eq(lit(exchange))
                 .and(col("date").eq(Expr::Literal(date32_scalar(date))));
-            let (next, _) = DeltaOps::from(current).delete().with_predicate(predicate).await?;
+            let (next, _) = DeltaOps::from(current)
+                .delete()
+                .with_predicate(predicate)
+                .await
+                .context("delete existing checkpoint partitions")?;
             current = next;
         }
         table = Some(current);
@@ -1031,7 +1067,8 @@ pub async fn build_state_checkpoints_delta(
         .with_save_mode(SaveMode::Append)
         .with_partition_columns(["exchange", "date"])
         .with_writer_properties(writer_properties)
-        .await?;
+        .await
+        .context("write checkpoint batch")?;
 
     Ok(rows.len())
 }
@@ -1224,7 +1261,7 @@ mod python {
 
         match result {
             Ok(snapshot) => Ok(snapshot_to_py(py, snapshot)),
-            Err(err) => Err(PyRuntimeError::new_err(err.to_string())),
+            Err(err) => Err(PyRuntimeError::new_err(format!("{err:?}"))),
         }
     }
 
@@ -1273,7 +1310,7 @@ mod python {
                 .into_iter()
                 .map(|snapshot| snapshot_with_pos_to_py(py, snapshot))
                 .collect()),
-            Err(err) => Err(PyRuntimeError::new_err(err.to_string())),
+            Err(err) => Err(PyRuntimeError::new_err(format!("{err:?}"))),
         }
     }
 
@@ -1337,7 +1374,7 @@ mod python {
 
         match result {
             Ok(count) => Ok(count),
-            Err(err) => Err(PyRuntimeError::new_err(err.to_string())),
+            Err(err) => Err(PyRuntimeError::new_err(format!("{err:?}"))),
         }
     }
 
