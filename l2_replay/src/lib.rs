@@ -9,6 +9,7 @@ use deltalake::arrow::array::{
     Int32Array, Int32Builder, Int64Array, Int64Builder, LargeListArray, ListArray, ListBuilder,
     StringArray, StringBuilder, StructArray, StructBuilder, UInt8Array,
 };
+use deltalake::arrow::compute::cast;
 use deltalake::arrow::datatypes::{DataType, Field, Schema};
 use deltalake::arrow::record_batch::RecordBatch;
 use deltalake::datafusion::prelude::*;
@@ -421,7 +422,7 @@ fn update_from_columns(cols: &UpdateColumns<'_>, row: usize) -> L2Update {
 }
 
 struct CheckpointUpdateColumns<'a> {
-    exchange: &'a StringArray,
+    exchange: StringArray,
     exchange_id: &'a Int16Array,
     symbol_id: &'a Int64Array,
     date: &'a Date32Array,
@@ -437,7 +438,7 @@ struct CheckpointUpdateColumns<'a> {
 
 fn checkpoint_update_columns<'a>(batch: &'a RecordBatch) -> Result<CheckpointUpdateColumns<'a>> {
     Ok(CheckpointUpdateColumns {
-        exchange: get_array(batch, "exchange")?,
+        exchange: get_string_array(batch, "exchange")?,
         exchange_id: get_array(batch, "exchange_id")?,
         symbol_id: get_array(batch, "symbol_id")?,
         date: get_array(batch, "date")?,
@@ -513,6 +514,21 @@ fn get_array<'a, T: 'static>(batch: &'a RecordBatch, name: &str) -> Result<&'a T
     array
         .as_any()
         .downcast_ref::<T>()
+        .ok_or_else(|| anyhow!("column {} has unexpected type", name))
+}
+
+fn get_string_array(batch: &RecordBatch, name: &str) -> Result<StringArray> {
+    let idx = batch.schema().index_of(name)?;
+    let array = batch.column(idx);
+    let casted: ArrayRef = if matches!(array.data_type(), DataType::Utf8) {
+        array.clone()
+    } else {
+        cast(array.as_ref(), &DataType::Utf8)?
+    };
+    casted
+        .as_any()
+        .downcast_ref::<StringArray>()
+        .cloned()
         .ok_or_else(|| anyhow!("column {} has unexpected type", name))
 }
 
