@@ -601,16 +601,19 @@ fn book_levels(book: &OrderBook) -> (Vec<(i64, i64)>, Vec<(i64, i64)>) {
 
 fn append_levels(builder: &mut ListBuilder<StructBuilder>, levels: &[(i64, i64)]) {
     let struct_builder = builder.values();
-    let price_builder = struct_builder
-        .field_builder::<Int64Builder>(0)
-        .expect("price builder");
-    let size_builder = struct_builder
-        .field_builder::<Int64Builder>(1)
-        .expect("size builder");
-
     for (price, size) in levels {
-        price_builder.append_value(*price);
-        size_builder.append_value(*size);
+        {
+            let price_builder = struct_builder
+                .field_builder::<Int64Builder>(0)
+                .expect("price builder");
+            price_builder.append_value(*price);
+        }
+        {
+            let size_builder = struct_builder
+                .field_builder::<Int64Builder>(1)
+                .expect("size builder");
+            size_builder.append_value(*size);
+        }
         struct_builder.append(true);
     }
     builder.append(true);
@@ -621,7 +624,7 @@ fn build_checkpoint_batch(rows: &[CheckpointRow]) -> Result<RecordBatch> {
         Field::new("price_int", DataType::Int64, false),
         Field::new("size_int", DataType::Int64, false),
     ];
-    let level_struct = DataType::Struct(level_fields.clone());
+    let level_struct = DataType::Struct(level_fields.clone().into());
     let list_field = Field::new("item", level_struct, true);
 
     let schema = Arc::new(Schema::new(vec![
