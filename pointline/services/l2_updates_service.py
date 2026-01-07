@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+import itertools
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
@@ -40,6 +41,7 @@ L2_UPDATES_RAW_COLUMNS = [
 ]
 
 DEFAULT_L2_UPDATES_BATCH_SIZE = 200_000
+DEFAULT_L2_UPDATES_TARGET_FILE_SIZE_BYTES = 64 * 1024**3
 
 
 class L2UpdatesIngestionService(BaseService):
@@ -119,59 +121,172 @@ class L2UpdatesIngestionService(BaseService):
             total_rows = 0
             ts_min: int | None = None
             ts_max: int | None = None
+            partition_symbol_id: int | None = None
+            partition_date = None
+            last_order_key: tuple[int, int, int, int] | None = None
 
-            while True:
-                batches = reader.next_batches(1)
-                if not batches:
-                    break
+            target_file_size = int(
+                os.getenv(
+                    "POINTLINE_L2_UPDATES_TARGET_FILE_SIZE_BYTES",
+                    str(DEFAULT_L2_UPDATES_TARGET_FILE_SIZE_BYTES),
+                )
+            )
+            if target_file_size <= 0:
+                target_file_size = None
 
-                df = batches[0]
-                if df.is_empty():
-                    continue
+            normalized_exchange = normalize_exchange(meta.exchange)
 
-                # 4. Parse CSV
-                df = parse_tardis_l2_updates_csv(df)
+            def _iter_record_batches():
+                nonlocal total_rows, ts_min, ts_max, partition_symbol_id, partition_date
+                nonlocal last_order_key
 
-                # 5. Resolve symbol IDs
-                df = resolve_symbol_ids(
-                    df,
-                    dim_symbol,
-                    exchange_id,
-                    meta.symbol,
-                    ts_col="ts_local_us",
+                while True:
+                    batches = reader.next_batches(1)
+                    if not batches:
+                        break
+
+                    df = batches[0]
+                    if df.is_empty():
+                        continue
+
+                    # 4. Parse CSV
+                    df = parse_tardis_l2_updates_csv(df)
+
+                    # 5. Resolve symbol IDs (preserve ingest order ties)
+                    df = resolve_symbol_ids(
+                        df,
+                        dim_symbol,
+                        exchange_id,
+                        meta.symbol,
+                        ts_col="ts_local_us",
+                        tie_breaker_cols=["file_line_number"],
+                    )
+
+                    # 6. Encode fixed-point
+                    df = encode_l2_updates_fixed_point(df, dim_symbol)
+
+                    # 7. Add lineage columns
+                    df = self._add_lineage(df, file_id)
+
+                    # 8. Add exchange, exchange_id and date
+                    df = self._add_metadata(df, normalized_exchange, exchange_id)
+
+                    # 9. Normalize schema
+                    df = normalize_l2_updates_schema(df)
+
+                    # 10. Validate
+                    df = self.validate(df)
+
+                    if df.is_empty():
+                        logger.warning(f"No valid rows after validation: {bronze_path}")
+                        continue
+
+                    batch_symbol_min = df["symbol_id"].min()
+                    batch_symbol_max = df["symbol_id"].max()
+                    if batch_symbol_min != batch_symbol_max:
+                        raise ValueError(
+                            "l2_updates ingest expects one symbol_id per bronze file"
+                        )
+                    if partition_symbol_id is None:
+                        partition_symbol_id = int(batch_symbol_min)
+                    elif int(batch_symbol_min) != partition_symbol_id:
+                        raise ValueError(
+                            "l2_updates ingest expects a single symbol_id per partition"
+                        )
+
+                    batch_date_min = df["date"].min()
+                    batch_date_max = df["date"].max()
+                    if batch_date_min != batch_date_max:
+                        raise ValueError(
+                            "l2_updates ingest expects one date per bronze file"
+                        )
+                    if partition_date is None:
+                        partition_date = batch_date_min
+                    elif batch_date_min != partition_date:
+                        raise ValueError(
+                            "l2_updates ingest expects a single date per partition"
+                        )
+
+                    first_key = (
+                        int(df["ts_local_us"][0]),
+                        int(df["ingest_seq"][0]),
+                        int(df["file_id"][0]),
+                        int(df["file_line_number"][0]),
+                    )
+                    last_key = (
+                        int(df["ts_local_us"][-1]),
+                        int(df["ingest_seq"][-1]),
+                        int(df["file_id"][-1]),
+                        int(df["file_line_number"][-1]),
+                    )
+                    if last_order_key is not None and first_key < last_order_key:
+                        raise ValueError(
+                            "l2_updates ingest order violation between batches"
+                        )
+                    last_order_key = last_key
+
+                    # Update stats
+                    batch_min = df["ts_local_us"].min()
+                    batch_max = df["ts_local_us"].max()
+                    if batch_min is not None:
+                        ts_min = batch_min if ts_min is None else min(ts_min, batch_min)
+                    if batch_max is not None:
+                        ts_max = batch_max if ts_max is None else max(ts_max, batch_max)
+                    total_rows += df.height
+
+                    table = df.to_arrow()
+                    for record_batch in table.to_batches():
+                        yield record_batch
+
+            batch_iter = _iter_record_batches()
+
+            try:
+                first_batch = next(batch_iter)
+            except StopIteration:
+                logger.warning(f"Empty CSV file: {bronze_path}")
+                return IngestionResult(
+                    row_count=0,
+                    ts_local_min_us=0,
+                    ts_local_max_us=0,
+                    error_message=None,
                 )
 
-                # 6. Encode fixed-point
-                df = encode_l2_updates_fixed_point(df, dim_symbol)
+            if partition_date is None or partition_symbol_id is None:
+                raise ValueError("l2_updates ingest could not resolve partition keys")
 
-                # 7. Add lineage columns
-                df = self._add_lineage(df, file_id)
+            if hasattr(partition_date, "isoformat"):
+                partition_date_str = partition_date.isoformat()
+            else:
+                partition_date_str = str(partition_date)
 
-                # 8. Add exchange, exchange_id and date
-                normalized_exchange = normalize_exchange(meta.exchange)
-                df = self._add_metadata(df, normalized_exchange, exchange_id)
+            if partition_date_str != meta.date.isoformat():
+                raise ValueError(
+                    "l2_updates ingest date mismatch between metadata and ts_local_us"
+                )
 
-                # 9. Normalize schema
-                df = normalize_l2_updates_schema(df)
+            safe_exchange = normalized_exchange.replace("'", "''")
+            predicate = (
+                f"exchange = '{safe_exchange}' AND date = '{partition_date_str}' "
+                f"AND symbol_id = {partition_symbol_id}"
+            )
 
-                # 10. Validate
-                df = self.validate(df)
+            import pyarrow as pa
 
-                if df.is_empty():
-                    logger.warning(f"No valid rows after validation: {bronze_path}")
-                    continue
+            record_batch_reader = pa.RecordBatchReader.from_batches(
+                first_batch.schema,
+                itertools.chain([first_batch], batch_iter),
+            )
 
-                # 11. Append to Delta table
-                self.write(df)
-
-                # 12. Update stats
-                batch_min = df["ts_local_us"].min()
-                batch_max = df["ts_local_us"].max()
-                if batch_min is not None:
-                    ts_min = batch_min if ts_min is None else min(ts_min, batch_min)
-                if batch_max is not None:
-                    ts_max = batch_max if ts_max is None else max(ts_max, batch_max)
-                total_rows += df.height
+            if hasattr(self.repo, "overwrite_partition"):
+                self.repo.overwrite_partition(
+                    record_batch_reader,
+                    predicate=predicate,
+                    target_file_size=target_file_size,
+                )
+            else:
+                raise NotImplementedError(
+                    "Repository must support overwrite_partition() for l2_updates"
+                )
 
             if total_rows == 0:
                 logger.warning(f"Empty CSV file: {bronze_path}")

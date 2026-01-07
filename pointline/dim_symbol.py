@@ -374,6 +374,7 @@ def resolve_symbol_ids(
     dim_symbol: pl.DataFrame,
     *,
     ts_col: str = "ts_local_us",
+    tie_breaker_cols: Sequence[str] | None = None,
 ) -> pl.DataFrame:
     """Resolve symbol_ids for a data DataFrame using as-of join.
 
@@ -388,7 +389,13 @@ def resolve_symbol_ids(
         if col in dim_symbol.columns:
             dim_symbol = dim_symbol.with_columns(pl.col(col).cast(SCHEMA[col]))
 
-    return data.sort(ts_col).join_asof(
+    sort_cols = [ts_col]
+    if tie_breaker_cols:
+        for col in tie_breaker_cols:
+            if col in data.columns and col not in sort_cols:
+                sort_cols.append(col)
+
+    return data.sort(sort_cols).join_asof(
         dim_symbol.sort("valid_from_ts"),
         left_on=ts_col,
         right_on="valid_from_ts",

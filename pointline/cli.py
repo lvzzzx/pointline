@@ -97,7 +97,7 @@ def _create_ingestion_service(data_type: str, manifest_repo):
     elif data_type == "incremental_book_L2":
         repo = BaseDeltaRepository(
             get_table_path("l2_updates"),
-            partition_by=["exchange", "date"]
+            partition_by=["exchange", "date", "symbol_id"]
         )
         return L2UpdatesIngestionService(repo, dim_symbol_repo, manifest_repo)
     else:

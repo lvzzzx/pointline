@@ -207,6 +207,7 @@ def resolve_symbol_ids(
     exchange_symbol: str,
     *,
     ts_col: str = "ts_local_us",
+    tie_breaker_cols: Sequence[str] | None = None,
 ) -> pl.DataFrame:
     """Resolve symbol_ids for l2_updates data using as-of join with dim_symbol."""
     from pointline.dim_symbol import resolve_symbol_ids as _resolve_symbol_ids
@@ -220,7 +221,7 @@ def resolve_symbol_ids(
     if "exchange_symbol" not in result.columns:
         result = result.with_columns(pl.lit(exchange_symbol).alias("exchange_symbol"))
         
-    return _resolve_symbol_ids(result, dim_symbol, ts_col=ts_col)
+    return _resolve_symbol_ids(result, dim_symbol, ts_col=ts_col, tie_breaker_cols=tie_breaker_cols)
 
 
 def required_l2_updates_columns() -> Sequence[str]:

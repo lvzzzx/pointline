@@ -95,6 +95,44 @@ class BaseDeltaRepository:
             partition_by=self.partition_by,
             writer_properties=writer_properties
         )
+
+    def overwrite_partition(
+        self,
+        data,
+        *,
+        predicate: str,
+        target_file_size: int | None = None,
+    ) -> None:
+        """
+        Overwrite a single partition using a predicate (Delta Lake partition overwrite).
+
+        Args:
+            data: Polars DataFrame or Arrow stream/table for the partition.
+            predicate: SQL predicate that selects the partition to replace.
+            target_file_size: Desired target file size (bytes) to avoid splitting.
+        """
+        from deltalake import WriterProperties, write_deltalake
+
+        writer_properties = None
+        if "compression" in STORAGE_OPTIONS:
+            writer_properties = WriterProperties(
+                compression=STORAGE_OPTIONS["compression"].upper()
+            )
+
+        if isinstance(data, pl.DataFrame):
+            arrow_data = data.to_arrow()
+        else:
+            arrow_data = data
+
+        write_deltalake(
+            self.table_path,
+            arrow_data,
+            mode="overwrite",
+            partition_by=self.partition_by,
+            predicate=predicate,
+            target_file_size=target_file_size,
+            writer_properties=writer_properties,
+        )
         
     def merge(self, df: pl.DataFrame, keys: list[str]) -> None:
         """
