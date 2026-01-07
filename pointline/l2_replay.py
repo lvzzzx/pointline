@@ -6,6 +6,8 @@ from datetime import date
 from pathlib import Path
 from typing import Iterator
 
+import polars as pl
+
 from pointline.config import get_table_path
 
 try:
@@ -62,9 +64,9 @@ def replay_between(
     every_us: int | None = None,
     every_updates: int | None = None,
     exchange: str | None = None,
-) -> Iterator[dict[str, object]]:
+) -> pl.DataFrame:
     """Yield snapshots between timestamps on a cadence."""
-    snapshots = _rust_l2_replay.replay_between(
+    batch = _rust_l2_replay.replay_between(
         updates_path=str(get_table_path("l2_updates")),
         checkpoint_path=_checkpoint_path(),
         exchange=exchange,
@@ -75,7 +77,7 @@ def replay_between(
         every_us=every_us,
         every_updates=every_updates,
     )
-    return iter(snapshots)
+    return pl.from_arrow(batch)
 
 
 __all__ = ["snapshot_at", "replay_between"]

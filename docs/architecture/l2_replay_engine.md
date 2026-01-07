@@ -146,14 +146,14 @@ snapshot = l2_replay.snapshot_at(
     ts_local_us=1700000000000000,
 )
 
-for snap in l2_replay.replay_between(
+df = l2_replay.replay_between(
     exchange_id=21,
     symbol_id=1234,
     start_ts_local_us=1700000000000000,
     end_ts_local_us=1700003600000000,
     every_us=1_000_000,  # optional cadence for snapshots
-):
-    ...
+)
+# Returns a Polars DataFrame with full-depth book state columns
 ```
 
 Guidance:

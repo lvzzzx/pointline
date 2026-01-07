@@ -21,6 +21,7 @@ use deltalake::parquet::file::properties::WriterProperties;
 use deltalake::protocol::SaveMode;
 use deltalake::schema::partitions::{PartitionFilter, PartitionValue};
 use deltalake::DeltaOps;
+use deltalake::arrow::ffi;
 use futures::StreamExt;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -892,7 +893,7 @@ pub async fn replay_between_delta(
     end_ts_local_us: i64,
     every_us: Option<i64>,
     every_updates: Option<u64>,
-) -> Result<Vec<SnapshotWithPos>> {
+) -> Result<RecordBatch> {
     if every_us.unwrap_or(0) <= 0 && every_updates.unwrap_or(0) == 0 {
         return Err(anyhow!(
             "replay_between: set every_us or every_updates"
@@ -936,7 +937,41 @@ pub async fn replay_between_delta(
     )
     .await?;
 
-    let mut snapshots = Vec::new();
+    // Builder Setup
+    let level_fields = vec![
+        Field::new("price_int", DataType::Int64, false),
+        Field::new("size_int", DataType::Int64, false),
+    ];
+    let level_struct = DataType::Struct(level_fields.clone().into());
+    let list_field = Field::new("item", level_struct, true);
+    
+    let schema = Arc::new(Schema::new(vec![
+        Field::new("exchange_id", DataType::Int16, false),
+        Field::new("symbol_id", DataType::Int64, false),
+        Field::new("ts_local_us", DataType::Int64, false),
+        Field::new("ingest_seq", DataType::Int32, false),
+        Field::new("file_line_number", DataType::Int32, false),
+        Field::new("file_id", DataType::Int32, false),
+        Field::new("bids", DataType::List(Arc::new(list_field.clone())), true),
+        Field::new("asks", DataType::List(Arc::new(list_field)), true),
+    ]));
+
+    let mut exchange_id_builder = Int16Builder::new();
+    let mut symbol_id_builder = Int64Builder::new();
+    let mut ts_builder = Int64Builder::new();
+    let mut ingest_seq_builder = Int32Builder::new();
+    let mut file_line_builder = Int32Builder::new();
+    let mut file_id_builder = Int32Builder::new();
+    
+    let mut bids_builder = ListBuilder::new(StructBuilder::new(
+        level_fields.clone(),
+        vec![Box::new(Int64Builder::new()), Box::new(Int64Builder::new())],
+    ));
+    let mut asks_builder = ListBuilder::new(StructBuilder::new(
+        level_fields,
+        vec![Box::new(Int64Builder::new()), Box::new(Int64Builder::new())],
+    ));
+
     let mut reset = SnapshotReset::default();
     let mut last_emit_ts: Option<i64> = None;
     let mut updates_since_emit: u64 = 0;
@@ -975,16 +1010,17 @@ pub async fn replay_between_delta(
 
                         if emit {
                             let (bids, asks) = book_levels(&book);
-                            snapshots.push(SnapshotWithPos {
-                                exchange_id,
-                                symbol_id,
-                                ts_local_us: pos.ts_local_us,
-                                ingest_seq: pos.ingest_seq,
-                                file_line_number: pos.file_line_number,
-                                file_id: pos.file_id,
-                                bids,
-                                asks,
-                            });
+                            
+                            // Append to builders
+                            exchange_id_builder.append_value(exchange_id);
+                            symbol_id_builder.append_value(symbol_id);
+                            ts_builder.append_value(pos.ts_local_us);
+                            ingest_seq_builder.append_value(pos.ingest_seq);
+                            file_line_builder.append_value(pos.file_line_number);
+                            file_id_builder.append_value(pos.file_id);
+                            append_levels(&mut bids_builder, &bids);
+                            append_levels(&mut asks_builder, &asks);
+
                             last_emit_ts = Some(pos.ts_local_us);
                             updates_since_emit = 0;
                         }
@@ -1029,21 +1065,32 @@ pub async fn replay_between_delta(
 
             if emit {
                 let (bids, asks) = book_levels(&book);
-                snapshots.push(SnapshotWithPos {
-                    exchange_id,
-                    symbol_id,
-                    ts_local_us: pos.ts_local_us,
-                    ingest_seq: pos.ingest_seq,
-                    file_line_number: pos.file_line_number,
-                    file_id: pos.file_id,
-                    bids,
-                    asks,
-                });
+                
+                // Append to builders
+                exchange_id_builder.append_value(exchange_id);
+                symbol_id_builder.append_value(symbol_id);
+                ts_builder.append_value(pos.ts_local_us);
+                ingest_seq_builder.append_value(pos.ingest_seq);
+                file_line_builder.append_value(pos.file_line_number);
+                file_id_builder.append_value(pos.file_id);
+                append_levels(&mut bids_builder, &bids);
+                append_levels(&mut asks_builder, &asks);
             }
         }
     }
 
-    Ok(snapshots)
+    let arrays: Vec<ArrayRef> = vec![
+        Arc::new(exchange_id_builder.finish()),
+        Arc::new(symbol_id_builder.finish()),
+        Arc::new(ts_builder.finish()),
+        Arc::new(ingest_seq_builder.finish()),
+        Arc::new(file_line_builder.finish()),
+        Arc::new(file_id_builder.finish()),
+        Arc::new(bids_builder.finish()),
+        Arc::new(asks_builder.finish()),
+    ];
+
+    RecordBatch::try_new(schema, arrays).map_err(|err| anyhow!(err.to_string()))
 }
 
 pub async fn build_state_checkpoints_delta(
@@ -1437,6 +1484,9 @@ mod python {
         build_state_checkpoints_delta, replay_between_delta, snapshot_at_delta, L2Update,
         OrderBook, Snapshot, SnapshotWithPos,
     };
+    use deltalake::arrow::array::StructArray;
+    use deltalake::arrow::record_batch::RecordBatch;
+    use deltalake::arrow::ffi;
     use pyo3::exceptions::PyRuntimeError;
     use pyo3::prelude::*;
     use pyo3::wrap_pyfunction;
@@ -1526,6 +1576,17 @@ mod python {
         }
     }
 
+    fn to_pyarrow(py: Python, batch: RecordBatch) -> PyResult<PyObject> {
+        let struct_array: StructArray = batch.into();
+        let (array_ptr, schema_ptr) = ffi::to_ffi(&struct_array.into_data())
+            .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+
+        let pa = py.import("pyarrow")?;
+        let array = pa.call_method1("Array", "_import_from_c", (array_ptr as usize, schema_ptr as usize))?;
+        let batch = pa.call_method1("RecordBatch", "from_struct_array", (array,))?;
+        Ok(batch.into())
+    }
+
     #[pyfunction(
         signature = (
             updates_path,
@@ -1551,7 +1612,7 @@ mod python {
         exchange: Option<String>,
         every_us: Option<i64>,
         every_updates: Option<u64>,
-    ) -> PyResult<Vec<PyObject>> {
+    ) -> PyResult<PyObject> {
         let result = py.allow_threads(|| {
             runtime().block_on(replay_between_delta(
                 &updates_path,
@@ -1567,10 +1628,7 @@ mod python {
         });
 
         match result {
-            Ok(snapshots) => Ok(snapshots
-                .into_iter()
-                .map(|snapshot| snapshot_with_pos_to_py(py, snapshot))
-                .collect()),
+            Ok(batch) => to_pyarrow(py, batch),
             Err(err) => Err(PyRuntimeError::new_err(format!("{err:?}"))),
         }
     }
