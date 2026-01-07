@@ -470,8 +470,10 @@ Maintain:
 - `book_bids: map(price_int -> size_int)`
 - `book_asks: map(price_int -> size_int)`
 
-Apply in strict order:
-- `(ts_local_us ASC, ingest_seq ASC)`
+Apply in strict order (per symbol):
+- `(ts_local_us ASC, ingest_seq ASC)` (assumes **one file per symbol per day**)
+- If multiple files per symbol/day are possible, add `file_id` and `file_line_number`
+  as tie-breakers.
 
 Rules:
 1. If `is_snapshot = true` and you are currently in incremental mode (or you see a snapshot after updates):

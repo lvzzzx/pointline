@@ -14,7 +14,10 @@ and the `silver.l2_updates` update rules used in this repository.
 ## 2. Non-negotiable Semantics
 
 - **Replay timeline:** `ts_local_us` (arrival time) only.
-- **Stable ordering:** `(ts_local_us, ingest_seq, file_line_number)` ascending.
+- **Stable ordering (per symbol):** `(ts_local_us, ingest_seq)` ascending.
+  If multiple files per symbol/day are possible, add `file_id` and `file_line_number`.
+- **Single-symbol replay:** the engine operates on one `exchange_id + symbol_id` stream
+  at a time; callers must filter before replay.
 - **Snapshot rules:** `is_snapshot = true` resets state before applying rows.
 - **Update rules:** `size_int == 0` deletes a level; sizes are absolute (not deltas).
 - **Fixed-point:** keep `price_int` and `size_int` as `i64` until output.
@@ -83,7 +86,8 @@ struct ReplayConfig {
 }
 ```
 
-**Ordering key:** `(ts_local_us, ingest_seq, file_line_number)` ascending.  
+**Ordering key:** `(ts_local_us, ingest_seq)` ascending (single file per symbol/day).  
+If multiple files per symbol/day are possible, add `file_id` and `file_line_number`.
 `StreamPos` captures the exact replay position for checkpoints and reproducibility.
 
 ### 5.2 Replay Function

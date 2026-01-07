@@ -159,7 +159,9 @@ Incremental Level 2 order book updates from Tardis `incremental_book_L2`. Update
 - `is_snapshot` marks snapshot rows.
 - If a new snapshot appears after incremental updates, **reset book state** before applying it.
 
-**Reconstruction Order:** Apply updates in strict order: `(ts_local_us ASC, ingest_seq ASC)`
+**Reconstruction Order (per symbol):** Apply updates in strict order:
+`(ts_local_us ASC, ingest_seq ASC)`. This assumes **one file per symbol per day**.
+If that invariant changes, add `file_id` and `file_line_number` as tie-breakers.
 
 ---
 
