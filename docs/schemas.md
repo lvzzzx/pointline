@@ -420,30 +420,7 @@ Same schema as `silver.quotes`.
 
 ---
 
-### 3.4 `gold.l2_snapshot_index`
-
-Snapshot anchor index for fast lookup of the latest L2 snapshot at or before a timestamp.
-
-**Source:** Derived from `silver.l2_updates`  
-**Partitioned by:** `["exchange", "date"]`
-
-| Column | Type | Notes |
-|---|---:|---|
-| date | date | derived from `ts_local_us` in UTC |
-| exchange | string | partitioned by (not stored in Parquet files) |
-| exchange_id | i16 | |
-| symbol_id | i64 | |
-| ts_local_us | i64 | snapshot timestamp (replay timeline) |
-| file_id | i32 | lineage tracking |
-| file_line_number | i32 | first row for the snapshot group |
-
-**Semantics:**
-- One row per snapshot group (group by `(exchange_id, symbol_id, ts_local_us, file_id)`).
-- Used to anchor incremental replay without scanning all `l2_updates`.
-
----
-
-### 3.5 `gold.l2_state_checkpoint`
+### 3.4 `gold.l2_state_checkpoint`
 
 Full-depth book checkpoints to accelerate incremental replay over long ranges.
 

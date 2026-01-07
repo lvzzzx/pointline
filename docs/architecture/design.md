@@ -75,8 +75,7 @@ Precomputed “fast paths”:
 
 Gold tables are reproducible from Silver (and versioned).
 
-Additional replay accelerators (derived from `silver.l2_updates`):
-- `gold.l2_snapshot_index` for fast snapshot anchors
+Additional replay accelerator (derived from `silver.l2_updates`):
 - `gold.l2_state_checkpoint` for full-depth replay checkpoints
 
 ---
@@ -174,92 +173,12 @@ Tardis incremental L2 updates are **absolute sizes** at a price level (not delta
 - `file_id` (lineage tracking)
 - `file_line_number` (lineage tracking)
 
-**Replay accelerators (Gold):**
-- `gold.l2_snapshot_index` to locate the latest snapshot at or before a start time
+**Replay accelerator (Gold):**
 - `gold.l2_state_checkpoint` to jump close to a target time and replay forward
 
 #### 5.1.1 Build Recipes (Data Infra)
 
 These tables are owned by **data infra** and should be built as scheduled jobs.
-
-**DuckDB: snapshot anchor index**
-```sql
-CREATE OR REPLACE TABLE gold.l2_snapshot_index AS
-SELECT
-  exchange_id,
-  symbol_id,
-  ts_local_us,
-  date,
-  file_id,
-  MIN(file_line_number) AS file_line_number
-FROM delta_scan('${LAKE_ROOT}/silver/l2_updates')
-WHERE is_snapshot
-  AND date BETWEEN '2025-12-01' AND '2025-12-31'
-  AND exchange_id = 21
-GROUP BY exchange_id, symbol_id, ts_local_us, date, file_id;
-```
-
-**Polars: snapshot anchor index (partitioned overwrite)**
-```python
-import os
-import polars as pl
-from pointline import research
-
-lake_root = os.getenv("LAKE_ROOT", "./data/lake")
-exchange = "deribit"
-
-lf = (
-    research.scan_table(
-        "l2_updates",
-        exchange=exchange,
-        start_date="2025-12-01",
-        end_date="2025-12-31",
-        columns=[
-            "exchange",
-            "exchange_id",
-            "symbol_id",
-            "ts_local_us",
-            "date",
-            "file_id",
-            "file_line_number",
-            "is_snapshot",
-        ],
-    )
-    .filter(pl.col("is_snapshot"))
-    .group_by(["exchange", "exchange_id", "symbol_id", "ts_local_us", "date", "file_id"])
-    .agg(pl.col("file_line_number").min().alias("file_line_number"))
-)
-
-df = lf.collect()
-df.write_delta(
-    f"{lake_root}/gold/l2_snapshot_index",
-    mode="overwrite",
-    delta_write_options={
-        "partitionBy": ["exchange", "date"],
-        "partitionOverwriteMode": "dynamic",
-    },
-)
-```
-
-If your Delta writer does not support dynamic partition overwrite, delete the target partitions
-first (by `exchange`/`date`) and then append the rebuilt rows.
-
-**Delta-rs (Python): delete partitions then append**
-```python
-from deltalake import DeltaTable, write_deltalake
-
-table_path = f"{lake_root}/gold/l2_snapshot_index"
-dt = DeltaTable(table_path)
-
-dt.delete("exchange = 'deribit' AND date >= '2025-12-01' AND date <= '2025-12-31'")
-
-write_deltalake(
-    table_path,
-    df,
-    mode="append",
-    partition_by=["exchange", "date"],
-)
-```
 
 **Polars + Python: full-depth checkpoints (skeleton)**
 ```python

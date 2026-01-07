@@ -37,7 +37,7 @@ Responsibilities:
 
 ### 3.2 Infra CLI (`l2_cli`)
 Responsibilities:
-- Build `gold.l2_snapshot_index` and `gold.l2_state_checkpoint`.
+- Build `gold.l2_state_checkpoint`.
 - Scan Delta/Parquet partitions with partition-first filters.
 - Write Delta tables with partitioned overwrite or delete-then-append.
 
@@ -111,15 +111,8 @@ Engine responsibilities:
 - Emit checkpoints on a time or update cadence.
 - Optionally validate monotonic ordering (debug mode).
 
-## 6. Snapshot Index and Checkpoints (Infra Build)
+## 6. State Checkpoints (Infra Build)
 
-### Snapshot Index
-Build `gold.l2_snapshot_index` from `silver.l2_updates`:
-- Filter `is_snapshot = true`.
-- Group by `(exchange_id, symbol_id, ts_local_us, file_id)`.
-- Keep the minimum `file_line_number` per group.
-
-### State Checkpoints
 Build `gold.l2_state_checkpoint` by replaying from the latest snapshot and writing the full book
 state on a cadence (time or update count). Each checkpoint records the exact stream position.
 
@@ -195,8 +188,7 @@ researcher documentation.
    ordering/validation rules.
 3. Implement the Rust replay engine with snapshot resets, update application, checkpoint
    emission, and deterministic ordering tests.
-4. Build the infra CLI to scan Delta partitions, generate snapshot index and state checkpoints,
-   and write to gold tables.
+4. Build the infra CLI to scan Delta partitions, generate state checkpoints, and write to gold tables.
 5. Expose Python bindings with high-level researcher APIs (`snapshot_at`, `replay_between`) and
    keep `apply_batch` internal.
 6. Add integration tests for PIT correctness, replay determinism, and checkpoint round-trips;

@@ -19,7 +19,6 @@ from pointline.io.protocols import BronzeFileMetadata
 from pointline.io.base_repository import BaseDeltaRepository
 from pointline.io.vendor.tardis import build_updates_from_instruments, TardisClient, download_tardis_datasets
 from pointline import research
-from pointline.l2_snapshot_index import build_and_write_snapshot_index
 from pointline.l2_state_checkpoint import build_state_checkpoints_delta
 from pointline.services.dim_symbol_service import DimSymbolService
 from pointline.services.trades_service import TradesIngestionService
@@ -390,17 +389,6 @@ def _cmd_dim_symbol_sync(args: argparse.Namespace) -> int:
     return 0
 
 
-def _parse_symbol_ids(value: str | None) -> int | list[int] | None:
-    if not value:
-        return None
-    items = [int(part.strip()) for part in value.split(",") if part.strip()]
-    if not items:
-        return None
-    if len(items) == 1:
-        return items[0]
-    return items
-
-
 def _parse_symbol_id_single(value: str | None) -> int | None:
     if not value:
         return None
@@ -411,65 +399,6 @@ def _parse_symbol_id_single(value: str | None) -> int | None:
         raise ValueError("symbol_id must be a single value")
     return items[0]
 
-
-def _cmd_l2_snapshot_index_build(args: argparse.Namespace) -> int:
-    exchange = args.exchange
-    exchange_id = args.exchange_id
-
-    if exchange and exchange_id is not None:
-        try:
-            expected_id = get_exchange_id(exchange)
-        except ValueError as exc:
-            print(f"Error: {exc}")
-            return 2
-        if expected_id != exchange_id:
-            print(
-                f"Error: exchange_id {exchange_id} does not match exchange "
-                f"{exchange} (expected {expected_id})"
-            )
-            return 2
-
-    if exchange and exchange_id is None:
-        try:
-            exchange_id = get_exchange_id(exchange)
-        except ValueError as exc:
-            print(f"Error: {exc}")
-            return 2
-
-    if exchange is None and exchange_id is not None:
-        try:
-            exchange = get_exchange_name(exchange_id)
-        except ValueError as exc:
-            print(f"Error: {exc}")
-            return 2
-
-    symbol_id = _parse_symbol_ids(args.symbol_id)
-
-    lf = research.scan_table(
-        "l2_updates",
-        exchange=exchange,
-        exchange_id=exchange_id,
-        symbol_id=symbol_id,
-        start_date=args.start_date,
-        end_date=args.end_date,
-        columns=[
-            "exchange",
-            "exchange_id",
-            "symbol_id",
-            "ts_local_us",
-            "date",
-            "file_id",
-            "file_line_number",
-            "is_snapshot",
-        ],
-    )
-
-    rows_written = build_and_write_snapshot_index(
-        lf,
-        get_table_path("l2_snapshot_index"),
-    )
-    print(f"l2_snapshot_index: wrote {rows_written} row(s)")
-    return 0
 
 
 def _cmd_l2_state_checkpoint_build(args: argparse.Namespace) -> int:
@@ -740,35 +669,6 @@ def _build_parser() -> argparse.ArgumentParser:
 
     gold = subparsers.add_parser("gold", help="Gold table build utilities")
     gold_sub = gold.add_subparsers(dest="gold_command")
-
-    l2_snapshot_index = gold_sub.add_parser(
-        "l2-snapshot-index",
-        help="Build gold.l2_snapshot_index from silver.l2_updates",
-    )
-    l2_snapshot_index.add_argument(
-        "--exchange",
-        help="Exchange name (e.g., deribit). Optional if using --exchange-id",
-    )
-    l2_snapshot_index.add_argument(
-        "--exchange-id",
-        type=int,
-        help="Exchange ID (optional if using --exchange)",
-    )
-    l2_snapshot_index.add_argument(
-        "--symbol-id",
-        help="Comma-separated list of symbol_id values (optional)",
-    )
-    l2_snapshot_index.add_argument(
-        "--start-date",
-        required=True,
-        help="Start date YYYY-MM-DD (inclusive)",
-    )
-    l2_snapshot_index.add_argument(
-        "--end-date",
-        required=True,
-        help="End date YYYY-MM-DD (inclusive)",
-    )
-    l2_snapshot_index.set_defaults(func=_cmd_l2_snapshot_index_build)
 
     l2_state_checkpoint = gold_sub.add_parser(
         "l2-state-checkpoint",
