@@ -101,7 +101,7 @@ fn test_build_state_checkpoints_delta_end_to_end() -> Result<()> {
             output_path.to_str().expect("output path"),
             Some("deribit"),
             Some(21),
-            Some(vec![1]),
+            1,
             "2025-01-01",
             "2025-01-01",
             None,

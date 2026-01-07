@@ -401,6 +401,17 @@ def _parse_symbol_ids(value: str | None) -> int | list[int] | None:
     return items
 
 
+def _parse_symbol_id_single(value: str | None) -> int | None:
+    if not value:
+        return None
+    items = [int(part.strip()) for part in value.split(",") if part.strip()]
+    if not items:
+        return None
+    if len(items) != 1:
+        raise ValueError("symbol_id must be a single value")
+    return items[0]
+
+
 def _cmd_l2_snapshot_index_build(args: argparse.Namespace) -> int:
     exchange = args.exchange
     exchange_id = args.exchange_id
@@ -492,7 +503,15 @@ def _cmd_l2_state_checkpoint_build(args: argparse.Namespace) -> int:
             print(f"Error: {exc}")
             return 2
 
-    symbol_id = _parse_symbol_ids(args.symbol_id)
+    try:
+        symbol_id = _parse_symbol_id_single(args.symbol_id)
+    except ValueError as exc:
+        print(f"Error: {exc}")
+        return 2
+
+    if symbol_id is None:
+        print("Error: symbol_id is required for l2-state-checkpoint")
+        return 2
 
     rows_written = build_state_checkpoints_delta(
         updates_path=get_table_path("l2_updates"),
@@ -766,7 +785,8 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     l2_state_checkpoint.add_argument(
         "--symbol-id",
-        help="Comma-separated list of symbol_id values (optional)",
+        required=True,
+        help="Single symbol_id value (required)",
     )
     l2_state_checkpoint.add_argument(
         "--start-date",

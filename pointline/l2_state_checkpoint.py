@@ -12,7 +12,7 @@ def build_state_checkpoints_delta(
     output_path: Path | str,
     exchange: str | None,
     exchange_id: int | None,
-    symbol_id: int | list[int] | None,
+    symbol_id: int,
     start_date: date | str,
     end_date: date | str,
     checkpoint_every_us: int | None = None,

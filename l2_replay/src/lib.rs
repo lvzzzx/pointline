@@ -389,7 +389,7 @@ async fn build_checkpoint_updates_df(
     updates_path: &str,
     exchange: Option<&str>,
     exchange_id: Option<i16>,
-    symbol_ids: Option<&[i64]>,
+    symbol_id: i64,
     start_date: NaiveDate,
     end_date: NaiveDate,
     assume_sorted: bool,
@@ -428,17 +428,8 @@ async fn build_checkpoint_updates_df(
         let exchange_expr = col("exchange_id").cast_to(&DataType::Int64, &df_schema)?;
         df = df.filter(exchange_expr.eq(lit(i64::from(exchange_id))))?;
     }
-
-    if let Some(symbol_ids) = symbol_ids {
-        if symbol_ids.len() == 1 {
-            let symbol_expr = col("symbol_id").cast_to(&DataType::Int64, &df_schema)?;
-            df = df.filter(symbol_expr.eq(lit(symbol_ids[0])))?;
-        } else if !symbol_ids.is_empty() {
-            let values: Vec<Expr> = symbol_ids.iter().map(|id| lit(*id)).collect();
-            let symbol_expr = col("symbol_id").cast_to(&DataType::Int64, &df_schema)?;
-            df = df.filter(symbol_expr.in_list(values, false))?;
-        }
-    }
+    let symbol_expr = col("symbol_id").cast_to(&DataType::Int64, &df_schema)?;
+    df = df.filter(symbol_expr.eq(lit(symbol_id)))?;
 
     df = df.select(vec![
         col("exchange_id"),
@@ -975,7 +966,7 @@ pub async fn build_state_checkpoints_delta(
     output_path: &str,
     exchange: Option<&str>,
     exchange_id: Option<i16>,
-    symbol_ids: Option<Vec<i64>>,
+    symbol_id: i64,
     start_date: &str,
     end_date: &str,
     checkpoint_every_us: Option<i64>,
@@ -1009,7 +1000,7 @@ pub async fn build_state_checkpoints_delta(
         updates_path,
         Some(exchange.as_str()),
         exchange_id,
-        symbol_ids.as_deref(),
+        symbol_id,
         start_date,
         end_date,
         assume_sorted,
@@ -1399,20 +1390,6 @@ mod python {
         }
     }
 
-    #[derive(FromPyObject)]
-    enum SymbolIdArg {
-        One(i64),
-        Many(Vec<i64>),
-    }
-
-    fn normalize_symbol_ids(symbol_id: Option<SymbolIdArg>) -> Option<Vec<i64>> {
-        match symbol_id {
-            Some(SymbolIdArg::One(id)) => Some(vec![id]),
-            Some(SymbolIdArg::Many(ids)) => Some(ids),
-            None => None,
-        }
-    }
-
     #[pyfunction(
         signature = (
             updates_path,
@@ -1422,7 +1399,7 @@ mod python {
             *,
             exchange=None,
             exchange_id=None,
-            symbol_id=None,
+            symbol_id,
             checkpoint_every_us=None,
             checkpoint_every_updates=None,
             validate_monotonic=false,
@@ -1437,20 +1414,19 @@ mod python {
         end_date: String,
         exchange: Option<String>,
         exchange_id: Option<i16>,
-        symbol_id: Option<SymbolIdArg>,
+        symbol_id: i64,
         checkpoint_every_us: Option<i64>,
         checkpoint_every_updates: Option<u64>,
         validate_monotonic: bool,
         assume_sorted: bool,
     ) -> PyResult<usize> {
-        let symbol_ids = normalize_symbol_ids(symbol_id);
         let result = py.allow_threads(|| {
             runtime().block_on(build_state_checkpoints_delta(
                 &updates_path,
                 &output_path,
                 exchange.as_deref(),
                 exchange_id,
-                symbol_ids,
+                symbol_id,
                 &start_date,
                 &end_date,
                 checkpoint_every_us,
