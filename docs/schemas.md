@@ -133,14 +133,14 @@ Silver tables are the canonical research foundation. They are normalized, typed 
 Incremental Level 2 order book updates from Tardis `incremental_book_L2`. Updates are **absolute sizes** at a price level (not deltas).
 
 **Source:** Tardis `incremental_book_L2`  
-**Partitioned by:** `["exchange", "date"]`
+**Partitioned by:** `["exchange", "date", "symbol_id"]`
 
 | Column | Type | Notes |
 |---|---:|---|
 | date | date | derived from `ts_local_us` in UTC |
 | exchange | string | partitioned by (not stored in Parquet files) |
 | exchange_id | i16 | dictionary-encoded |
-| symbol_id | i64 | dictionary-encoded |
+| symbol_id | i64 | partitioned by (not stored in Parquet files) |
 | ts_local_us | i64 | primary replay timeline |
 | ts_exch_us | i64 | exchange time if available |
 | ingest_seq | i32 | stable ordering within file |
@@ -159,9 +159,10 @@ Incremental Level 2 order book updates from Tardis `incremental_book_L2`. Update
 - `is_snapshot` marks snapshot rows.
 - If a new snapshot appears after incremental updates, **reset book state** before applying it.
 
-**Reconstruction Order (per symbol):** Apply updates in strict order:
-`(ts_local_us ASC, ingest_seq ASC)`. This assumes **one file per symbol per day**.
-If that invariant changes, add `file_id` and `file_line_number` as tie-breakers.
+**Reconstruction Order (per symbol, per day):** Apply updates in strict order:
+`(ts_local_us ASC, ingest_seq ASC, file_id ASC, file_line_number ASC)`.
+Ingest must write sorted files within each `exchange/date/symbol_id` partition to avoid a
+global sort at replay time.
 
 ---
 
@@ -586,7 +587,7 @@ Delta Lake (via Parquet) does not support unsigned integer types `UInt16` and `U
 |---|---|---|---|
 | `dim_symbol` | Silver (Reference) | none | `symbol_id`, `exchange_id`, `exchange_symbol`, validity range |
 | `ingest_manifest` | Silver (Reference) | none | `exchange`, `data_type`, `date`, `status` |
-| `l2_updates` | Silver | `exchange`, `date` | `ts_local_us`, `symbol_id`, `price_int`, `size_int` |
+| `l2_updates` | Silver | `exchange`, `date`, `symbol_id` | `ts_local_us`, `symbol_id`, `price_int`, `size_int` |
 | `book_snapshot_25` | Silver | `exchange`, `date` | `ts_local_us`, `symbol_id`, `bids_px`, `asks_px` |
 | `trades` | Silver | `exchange`, `date` | `ts_local_us`, `symbol_id`, `price_int`, `qty_int` |
 | `quotes` | Silver | `exchange`, `date` | `ts_local_us`, `symbol_id`, `bid_px_int`, `ask_px_int` |

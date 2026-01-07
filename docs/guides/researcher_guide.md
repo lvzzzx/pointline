@@ -64,7 +64,7 @@ daily_vol = (
     .filter((pl.col("date") == "2025-12-28") & (pl.col("symbol_id") == symbol_id))
     .group_by("symbol_id")
     .agg([
-        pl.count().alias("trade_count"),
+        pl.len().alias("trade_count"),
         pl.col("qty_int").sum().alias("total_volume"),
     ])
     .collect()
@@ -78,7 +78,9 @@ daily_vol = (
 - **Silver:** canonical tables (research foundation)
 - **Gold:** derived tables for convenience (optional)
 
-**Partitioning:** Silver tables are partitioned by `exchange` and `date`, with `date` derived from `ts_local_us` in UTC.
+**Partitioning:** Most Silver tables are partitioned by `exchange` and `date` (with `date`
+derived from `ts_local_us` in UTC). `silver.l2_updates` additionally partitions by
+`symbol_id` to preserve replay ordering without a global sort.
 Example:
 `/lake/silver/trades/exchange=binance/date=2025-12-28/part-*.parquet`
 
@@ -88,7 +90,7 @@ Example:
 | trades | `/lake/silver/trades` | `exchange`, `date` | `ts_local_us`, `symbol_id`, `price_int`, `qty_int` |
 | quotes | `/lake/silver/quotes` | `exchange`, `date` | `ts_local_us`, `symbol_id`, `bid_px_int`, `ask_px_int` |
 | book_snapshot_25 | `/lake/silver/book_snapshot_25` | `exchange`, `date` | `ts_local_us`, `symbol_id`, `bids_px`, `asks_px` |
-| l2_updates | `/lake/silver/l2_updates` | `exchange`, `date` | `ts_local_us`, `symbol_id`, `side`, `price_int`, `size_int` |
+| l2_updates | `/lake/silver/l2_updates` | `exchange`, `date`, `symbol_id` | `ts_local_us`, `symbol_id`, `side`, `price_int`, `size_int` |
 | dim_symbol | `/lake/silver/dim_symbol` | none | `symbol_id`, `exchange_id`, `exchange_symbol`, validity range |
 | ingest_manifest | `/lake/silver/ingest_manifest` | none | `exchange`, `data_type`, `date`, `status` |
 

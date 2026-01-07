@@ -16,6 +16,10 @@ and the `silver.l2_updates` update rules used in this repository.
 - **Replay timeline:** `ts_local_us` (arrival time) only.
 - **Stable ordering (per symbol):** `(ts_local_us, ingest_seq)` ascending.
   If multiple files per symbol/day are possible, add `file_id` and `file_line_number`.
+- **Ingest-ordered writes:** `silver.l2_updates` is partitioned by
+  `exchange/date/symbol_id` and written sorted by
+  `(ts_local_us, ingest_seq, file_id, file_line_number)` within each partition.
+  Replay may skip a global sort only when this invariant is guaranteed.
 - **Single-symbol replay:** the engine operates on one `exchange_id + symbol_id` stream
   at a time; callers must filter before replay.
 - **Snapshot rules:** `is_snapshot = true` resets state before applying rows.

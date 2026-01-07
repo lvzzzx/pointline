@@ -444,16 +444,20 @@ Derived from `silver.trades`. Standard time bars for signal generation.
 
 ## 6) Partitioning strategy
 
-**Primary Partitioning:**
+**Default Partitioning (most Silver tables):**
 - `exchange`
 - `date` (daily partitions, derived from `ts_local_us` in UTC)
 
-**Do NOT partition by `symbol`**.
-- High-cardinality partitioning creates too many tiny files and metadata overhead in Delta Lake.
-- Instead, rely on **Z-Ordering** (or local sorting) within the daily partition to cluster data by `symbol_id`.
+**`silver.l2_updates` (ingest-ordered for replay):**
+- `exchange`
+- `date`
+- `symbol_id`
 
-**Path structure:**
-`/lake/silver/l2_updates/exchange=deribit/date=2025-12-28/part-000-uuid.parquet`
+This extra `symbol_id` partition makes replay ordering guarantees enforceable without a global
+sort, at the cost of more partitions (acceptable in development).
+
+**Path structure (l2_updates):**
+`/lake/silver/l2_updates/exchange=deribit/date=2025-12-28/symbol_id=1234/part-000-uuid.parquet`
 
 **Handling Massive Universes (e.g., Options):**
 For datasets like `options_chain` where a single day is massive:
@@ -470,10 +474,10 @@ Maintain:
 - `book_bids: map(price_int -> size_int)`
 - `book_asks: map(price_int -> size_int)`
 
-Apply in strict order (per symbol):
-- `(ts_local_us ASC, ingest_seq ASC)` (assumes **one file per symbol per day**)
-- If multiple files per symbol/day are possible, add `file_id` and `file_line_number`
-  as tie-breakers.
+Apply in strict order (per symbol, per day):
+- `(ts_local_us ASC, ingest_seq ASC, file_id ASC, file_line_number ASC)`
+- Ingest must write **sorted** files within each `exchange/date/symbol_id` partition.
+  Readers may skip global sort only if this invariant is guaranteed.
 
 Rules:
 1. If `is_snapshot = true` and you are currently in incremental mode (or you see a snapshot after updates):
