@@ -264,12 +264,23 @@ async fn latest_checkpoint(
     }
 
     let config = SessionConfig::new()
-        .with_parquet_pruning(false)
-        .with_parquet_bloom_filter_pruning(false)
-        .with_parquet_page_index_pruning(false);
+        .with_parquet_pruning(true)
+        .with_parquet_bloom_filter_pruning(true)
+        .with_parquet_page_index_pruning(true);
     let ctx = SessionContext::new_with_config(config);
-    let read_options = ParquetReadOptions::default().parquet_pruning(false);
+    let read_options = ParquetReadOptions::default().parquet_pruning(true);
     let mut df = ctx.read_parquet(file_uris, read_options).await?;
+    let df_schema = df.schema().clone();
+    if let Some(exchange) = exchange {
+        if df_schema.field_with_unqualified_name("exchange").is_ok() {
+            let exchange_expr = col("exchange").cast_to(&DataType::Utf8, &df_schema)?;
+            df = df.filter(exchange_expr.eq(lit(exchange)))?;
+        }
+    }
+    if df_schema.field_with_unqualified_name("date").is_ok() {
+        let date_expr = col("date").cast_to(&DataType::Utf8, &df_schema)?;
+        df = df.filter(date_expr.eq(lit(target_date.to_string())))?;
+    }
     df = df.filter(col("exchange_id").eq(lit(exchange_id)))?;
     df = df.filter(col("symbol_id").eq(lit(symbol_id)))?;
     df = df.filter(col("ts_local_us").lt_eq(lit(ts_local_us)))?;
@@ -351,8 +362,20 @@ async fn build_updates_df(
         return ctx.read_empty().context("create empty updates dataframe");
     }
 
-    let read_options = ParquetReadOptions::default().parquet_pruning(false);
+    let read_options = ParquetReadOptions::default().parquet_pruning(true);
     let mut df = ctx.read_parquet(file_uris, read_options).await?;
+    let df_schema = df.schema().clone();
+    if let Some(exchange) = exchange {
+        if df_schema.field_with_unqualified_name("exchange").is_ok() {
+            let exchange_expr = col("exchange").cast_to(&DataType::Utf8, &df_schema)?;
+            df = df.filter(exchange_expr.eq(lit(exchange)))?;
+        }
+    }
+    if df_schema.field_with_unqualified_name("date").is_ok() {
+        let date_expr = col("date").cast_to(&DataType::Utf8, &df_schema)?;
+        df = df.filter(date_expr.clone().gt_eq(lit(start_date.to_string())))?;
+        df = df.filter(date_expr.lt_eq(lit(end_date.to_string())))?;
+    }
     if std::env::var("POINTLINE_L2_DEBUG").is_ok() {
         println!("l2_updates schema: {:?}", df.schema());
     }
@@ -421,9 +444,20 @@ async fn build_checkpoint_updates_df(
             .read_empty()
             .context("create empty checkpoint updates dataframe");
     }
-    let read_options = ParquetReadOptions::default().parquet_pruning(false);
+    let read_options = ParquetReadOptions::default().parquet_pruning(true);
     let mut df = ctx.read_parquet(file_uris, read_options).await?;
     let df_schema = df.schema().clone();
+    if let Some(exchange) = exchange {
+        if df_schema.field_with_unqualified_name("exchange").is_ok() {
+            let exchange_expr = col("exchange").cast_to(&DataType::Utf8, &df_schema)?;
+            df = df.filter(exchange_expr.eq(lit(exchange)))?;
+        }
+    }
+    if df_schema.field_with_unqualified_name("date").is_ok() {
+        let date_expr = col("date").cast_to(&DataType::Utf8, &df_schema)?;
+        df = df.filter(date_expr.clone().gt_eq(lit(start_date.to_string())))?;
+        df = df.filter(date_expr.lt_eq(lit(end_date.to_string())))?;
+    }
     if let Some(exchange_id) = exchange_id {
         let exchange_expr = col("exchange_id").cast_to(&DataType::Int64, &df_schema)?;
         df = df.filter(exchange_expr.eq(lit(i64::from(exchange_id))))?;
