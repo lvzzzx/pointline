@@ -253,6 +253,10 @@ fn delta_table_exists(path: &str) -> bool {
 
 fn parquet_read_session_config() -> SessionConfig {
     let mut config = SessionConfig::new()
+        .with_target_partitions(1)
+        .with_repartition_file_scans(false)
+        .with_repartition_sorts(false)
+        .with_prefer_existing_sort(true)
         .with_parquet_pruning(true)
         .with_parquet_bloom_filter_pruning(true);
     // Parquet page index metadata can be corrupted in some datasets; disable to avoid read errors.

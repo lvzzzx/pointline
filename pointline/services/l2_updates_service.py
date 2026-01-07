@@ -2,13 +2,18 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import itertools
+from uuid import uuid4
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
 import polars as pl
+import pyarrow as pa
+import pyarrow.compute as pc
+import pyarrow.parquet as pq
 
 from pointline.config import LAKE_ROOT, normalize_exchange, get_exchange_id
 from pointline.dim_symbol import check_coverage
@@ -26,6 +31,8 @@ from pointline.l2_updates import (
     resolve_symbol_ids,
     validate_l2_updates,
 )
+from deltalake import DeltaTable
+from deltalake.transaction import AddAction
 
 logger = logging.getLogger(__name__)
 
@@ -181,6 +188,46 @@ class L2UpdatesIngestionService(BaseService):
                         logger.warning(f"No valid rows after validation: {bronze_path}")
                         continue
 
+                    # Fail fast if batch is not already in replay order.
+                    out_of_order = df.select(
+                        (
+                            (pl.col("ts_local_us") < pl.col("ts_local_us").shift(1))
+                            | (
+                                (pl.col("ts_local_us") == pl.col("ts_local_us").shift(1))
+                                & (pl.col("ingest_seq") < pl.col("ingest_seq").shift(1))
+                            )
+                            | (
+                                (pl.col("ts_local_us") == pl.col("ts_local_us").shift(1))
+                                & (pl.col("ingest_seq") == pl.col("ingest_seq").shift(1))
+                                & (pl.col("file_id") < pl.col("file_id").shift(1))
+                            )
+                            | (
+                                (pl.col("ts_local_us") == pl.col("ts_local_us").shift(1))
+                                & (pl.col("ingest_seq") == pl.col("ingest_seq").shift(1))
+                                & (pl.col("file_id") == pl.col("file_id").shift(1))
+                                & (
+                                    pl.col("file_line_number")
+                                    < pl.col("file_line_number").shift(1)
+                                )
+                            )
+                        )
+                        .fill_null(False)
+                        .any()
+                    ).item()
+                    if out_of_order:
+                        raise ValueError(
+                            "l2_updates ingest order violation within batch"
+                        )
+
+                    # Enforce deterministic ordering after joins/validation.
+                    # Joins can reorder rows; replay requires strict ordering.
+                    df = df.sort([
+                        "ts_local_us",
+                        "ingest_seq",
+                        "file_id",
+                        "file_line_number",
+                    ])
+
                     batch_symbol_min = df["symbol_id"].min()
                     batch_symbol_max = df["symbol_id"].max()
                     if batch_symbol_min != batch_symbol_max:
@@ -264,29 +311,126 @@ class L2UpdatesIngestionService(BaseService):
                     "l2_updates ingest date mismatch between metadata and ts_local_us"
                 )
 
+            partition_filters = [
+                ("exchange", "=", normalized_exchange),
+                ("date", "=", partition_date_str),
+                ("symbol_id", "=", str(partition_symbol_id)),
+            ]
+
             safe_exchange = normalized_exchange.replace("'", "''")
             predicate = (
                 f"exchange = '{safe_exchange}' AND date = '{partition_date_str}' "
                 f"AND symbol_id = {partition_symbol_id}"
             )
 
-            import pyarrow as pa
-
-            record_batch_reader = pa.RecordBatchReader.from_batches(
-                first_batch.schema,
-                itertools.chain([first_batch], batch_iter),
+            single_file = os.getenv("POINTLINE_L2_UPDATES_SINGLE_FILE", "").lower() in (
+                "1",
+                "true",
+                "yes",
             )
 
-            if hasattr(self.repo, "overwrite_partition"):
-                self.repo.overwrite_partition(
-                    record_batch_reader,
-                    predicate=predicate,
-                    target_file_size=target_file_size,
+            if single_file:
+                partition_cols = set(self.repo.partition_by or [])
+                keep_cols = [
+                    name
+                    for name in first_batch.schema.names
+                    if name not in partition_cols
+                ]
+                schema = first_batch.select(keep_cols).schema
+
+                partition_dir = (
+                    Path(self.repo.table_path)
+                    / f"exchange={normalized_exchange}"
+                    / f"date={partition_date_str}"
+                    / f"symbol_id={partition_symbol_id}"
                 )
+                partition_dir.mkdir(parents=True, exist_ok=True)
+                file_name = f"part-00000-{uuid4()}-c000.zstd.parquet"
+                file_path = partition_dir / file_name
+
+                stats_min: dict[str, object | None] = {col: None for col in keep_cols}
+                stats_max: dict[str, object | None] = {col: None for col in keep_cols}
+                stats_nulls: dict[str, int] = {col: 0 for col in keep_cols}
+
+                def _accumulate_stats(batch: pa.RecordBatch) -> None:
+                    for col in keep_cols:
+                        array = batch.column(batch.schema.get_field_index(col))
+                        stats_nulls[col] += array.null_count
+                        if len(array) == array.null_count:
+                            continue
+                        batch_min = pc.min(array).as_py()
+                        batch_max = pc.max(array).as_py()
+                        if stats_min[col] is None or batch_min < stats_min[col]:
+                            stats_min[col] = batch_min
+                        if stats_max[col] is None or batch_max > stats_max[col]:
+                            stats_max[col] = batch_max
+
+                writer_rows = 0
+                with pq.ParquetWriter(
+                    file_path,
+                    schema,
+                    compression="zstd",
+                ) as writer:
+                    batch = first_batch.select(keep_cols)
+                    writer.write_table(pa.Table.from_batches([batch]))
+                    _accumulate_stats(batch)
+                    writer_rows += batch.num_rows
+
+                    for batch in batch_iter:
+                        batch = batch.select(keep_cols)
+                        writer.write_table(pa.Table.from_batches([batch]))
+                        _accumulate_stats(batch)
+                        writer_rows += batch.num_rows
+
+                stats_payload = {
+                    "numRecords": writer_rows,
+                    "minValues": {
+                        k: v for k, v in stats_min.items() if v is not None
+                    },
+                    "maxValues": {
+                        k: v for k, v in stats_max.items() if v is not None
+                    },
+                    "nullCount": stats_nulls,
+                }
+
+                add_action = AddAction(
+                    path=str(file_path.relative_to(self.repo.table_path)),
+                    size=file_path.stat().st_size,
+                    partition_values={
+                        "exchange": normalized_exchange,
+                        "date": partition_date_str,
+                        "symbol_id": str(partition_symbol_id),
+                    },
+                    modification_time=int(file_path.stat().st_mtime * 1000),
+                    data_change=True,
+                    stats=json.dumps(stats_payload),
+                )
+
+                table = DeltaTable(self.repo.table_path)
+                table.delete(predicate=predicate)
+                table.create_write_transaction(
+                    actions=[add_action],
+                    mode="append",
+                    schema=table.schema().to_arrow(),
+                    partition_by=self.repo.partition_by or [],
+                )
+                total_rows = writer_rows
             else:
-                raise NotImplementedError(
-                    "Repository must support overwrite_partition() for l2_updates"
+                record_batch_reader = pa.RecordBatchReader.from_batches(
+                    first_batch.schema,
+                    itertools.chain([first_batch], batch_iter),
                 )
+
+                if hasattr(self.repo, "overwrite_partition"):
+                    self.repo.overwrite_partition(
+                        record_batch_reader,
+                        predicate=predicate,
+                        target_file_size=target_file_size,
+                    )
+                else:
+                    raise NotImplementedError(
+                        "Repository must support overwrite_partition() for l2_updates"
+                    )
 
             if total_rows == 0:
                 logger.warning(f"Empty CSV file: {bronze_path}")
