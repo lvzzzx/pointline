@@ -219,14 +219,19 @@ fn escape_sql_string(value: &str) -> String {
 fn after_pos_expr(pos: &StreamPos) -> Expr {
     let ts = lit(pos.ts_local_us);
     let ingest = lit(pos.ingest_seq);
+    let file_id = lit(pos.file_id);
     let line = lit(pos.file_line_number);
 
     col("ts_local_us")
         .gt(ts.clone())
         .or(col("ts_local_us").eq(ts).and(
-            col("ingest_seq")
-                .gt(ingest.clone())
-                .or(col("ingest_seq").eq(ingest).and(col("file_line_number").gt(line))),
+            col("ingest_seq").gt(ingest.clone()).or(col("ingest_seq").eq(ingest).and(
+                col("file_id").gt(file_id.clone()).or(
+                    col("file_id")
+                        .eq(file_id)
+                        .and(col("file_line_number").gt(line)),
+                ),
+            )),
         ))
 }
 
@@ -285,6 +290,7 @@ async fn latest_checkpoint(
     df = df.sort(vec![
         col("ts_local_us").sort(false, true),
         col("ingest_seq").sort(false, true),
+        col("file_id").sort(false, true),
         col("file_line_number").sort(false, true),
     ])?;
     df = df.limit(0, Some(1))?;
@@ -377,6 +383,7 @@ async fn build_updates_df(
     df = df.sort(vec![
         col("ts_local_us").sort(true, true),
         col("ingest_seq").sort(true, true),
+        col("file_id").sort(true, true),
         col("file_line_number").sort(true, true),
     ])?;
 
@@ -414,6 +421,11 @@ async fn build_checkpoint_updates_df(
         .context("fetch delta files for partition filters")?;
 
     let ctx = SessionContext::new();
+    if file_uris.is_empty() {
+        return ctx
+            .read_empty()
+            .context("create empty checkpoint updates dataframe");
+    }
     let read_options = ParquetReadOptions::default().parquet_pruning(false);
     let mut df = ctx.read_parquet(file_uris, read_options).await?;
     let df_schema = df.schema().clone();
@@ -449,6 +461,7 @@ async fn build_checkpoint_updates_df(
         df = df.sort(vec![
             col("ts_local_us").sort(true, true),
             col("ingest_seq").sort(true, true),
+            col("file_id").sort(true, true),
             col("file_line_number").sort(true, true),
         ])?;
     }
@@ -480,17 +493,17 @@ fn update_columns<'a>(batch: &'a RecordBatch) -> Result<UpdateColumns<'a>> {
     })
 }
 
-fn update_from_columns(cols: &UpdateColumns<'_>, row: usize) -> L2Update {
-    L2Update {
+fn update_from_columns(cols: &UpdateColumns<'_>, row: usize) -> Result<L2Update> {
+    Ok(L2Update {
         ts_local_us: cols.ts_local_us.value(row),
         ingest_seq: cols.ingest_seq.value(row),
         file_line_number: cols.file_line_number.value(row),
         is_snapshot: cols.is_snapshot.value(row),
-        side: get_u8_value(&cols.side, row).unwrap_or_default(),
+        side: get_u8_value(&cols.side, row)?,
         price_int: cols.price_int.value(row),
         size_int: cols.size_int.value(row),
         file_id: cols.file_id.value(row),
-    }
+    })
 }
 
 struct CheckpointUpdateColumns<'a> {
@@ -544,13 +557,13 @@ fn checkpoint_update_from_columns(
 
 async fn for_each_update<F>(mut stream: SendableRecordBatchStream, mut f: F) -> Result<()>
 where
-    F: FnMut(L2Update),
+    F: FnMut(L2Update) -> Result<()>,
 {
     while let Some(batch) = stream.next().await {
         let batch = batch?;
         let cols = update_columns(&batch)?;
         for row in 0..batch.num_rows() {
-            f(update_from_columns(&cols, row));
+            f(update_from_columns(&cols, row)?)?;
         }
     }
     Ok(())
@@ -787,10 +800,15 @@ pub async fn snapshot_at_delta(
     let fallback_date = ts_to_date(ts_local_us)?;
     let start_override = parse_date_opt(start_date)?;
     let end_override = parse_date_opt(end_date)?;
-    let (start_date, end_date) = match (start_override, end_override) {
-        (Some(start), Some(end)) => (start, end),
-        _ => (fallback_date, fallback_date),
-    };
+    let start_date = start_override.unwrap_or(fallback_date);
+    let end_date = end_override.unwrap_or(fallback_date);
+    if start_date > end_date {
+        return Err(anyhow!(
+            "snapshot_at: start_date {} is after end_date {}",
+            start_date,
+            end_date
+        ));
+    }
 
     let checkpoint = latest_checkpoint(
         checkpoint_path,
@@ -828,7 +846,11 @@ pub async fn snapshot_at_delta(
 
     let mut reset = SnapshotReset::default();
     let stream = df.execute_stream().await?;
-    for_each_update(stream, |update| reset.apply(&mut book, &update)).await?;
+    for_each_update(stream, |update| {
+        reset.apply(&mut book, &update);
+        Ok(())
+    })
+    .await?;
 
     let (bids, asks) = book_levels(&book);
     Ok(Snapshot {
@@ -904,7 +926,7 @@ pub async fn replay_between_delta(
         reset.apply(&mut book, &update);
 
         if update.ts_local_us < start_ts_local_us {
-            return;
+            return Ok(());
         }
 
         let pos = StreamPos {
@@ -946,6 +968,7 @@ pub async fn replay_between_delta(
             updates_since = 0;
             last_emit_ts = Some(update.ts_local_us);
         }
+        Ok(())
     })
     .await?;
 
@@ -1004,7 +1027,7 @@ pub async fn build_state_checkpoints_delta(
     let mut reset = SnapshotReset::default();
     let mut last_checkpoint_ts: Option<i64> = None;
     let mut updates_since: u64 = 0;
-    let mut prev_key: Option<(i64, i32, i32)> = None;
+    let mut prev_key: Option<(i64, i32, i32, i32)> = None;
 
     let stream = df
         .execute_stream()
@@ -1016,7 +1039,12 @@ pub async fn build_state_checkpoints_delta(
         }
 
         if validate_monotonic {
-            let key = (update.ts_local_us, update.ingest_seq, update.file_line_number);
+            let key = (
+                update.ts_local_us,
+                update.ingest_seq,
+                update.file_id,
+                update.file_line_number,
+            );
             if let Some(prev) = prev_key {
                 if key < prev {
                     panic!(
@@ -1141,7 +1169,7 @@ pub fn replay<I, F, G>(
     G: FnMut(&OrderBook, &StreamPos),
 {
     let mut book = OrderBook::default();
-    let mut prev_key: Option<(i64, i32, i32)> = None;
+    let mut prev_key: Option<(i64, i32, i32, i32)> = None;
 
     let mut snapshot_key: Option<(i64, i32)> = None; // (ts_local_us, file_id)
     let mut snapshot_pos: Option<StreamPos> = None;
@@ -1150,7 +1178,12 @@ pub fn replay<I, F, G>(
     let mut updates_since: u64 = 0;
 
     for update in updates {
-        let current_key = (update.ts_local_us, update.ingest_seq, update.file_line_number);
+        let current_key = (
+            update.ts_local_us,
+            update.ingest_seq,
+            update.file_id,
+            update.file_line_number,
+        );
         if config.validate_monotonic {
             if let Some(prev) = prev_key {
                 if current_key < prev {

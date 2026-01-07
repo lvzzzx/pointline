@@ -22,6 +22,12 @@ fn date32_days(date: NaiveDate) -> i32 {
     (date - epoch).num_days() as i32
 }
 
+fn date_start_ts(date: NaiveDate) -> i64 {
+    date.and_hms_micro_opt(0, 0, 0, 0)
+        .expect("valid date time")
+        .timestamp_micros()
+}
+
 async fn write_updates_table(path: &str) -> Result<()> {
     let schema = Arc::new(Schema::new(vec![
         Field::new("exchange", DataType::Utf8, false),
@@ -38,7 +44,9 @@ async fn write_updates_table(path: &str) -> Result<()> {
         Field::new("file_id", DataType::Int32, false),
     ]));
 
-    let date = date32_days(NaiveDate::from_ymd_opt(2025, 1, 1).expect("date"));
+    let base_date = NaiveDate::from_ymd_opt(2025, 1, 1).expect("date");
+    let date = date32_days(base_date);
+    let base_ts = date_start_ts(base_date);
     let batch = RecordBatch::try_new(
         schema,
         vec![
@@ -46,7 +54,13 @@ async fn write_updates_table(path: &str) -> Result<()> {
             Arc::new(Int16Array::from(vec![21; 5])),
             Arc::new(Int64Array::from(vec![1; 5])),
             Arc::new(Date32Array::from(vec![date; 5])),
-            Arc::new(Int64Array::from(vec![1, 1, 2, 3, 4])),
+            Arc::new(Int64Array::from(vec![
+                base_ts + 1,
+                base_ts + 1,
+                base_ts + 2,
+                base_ts + 3,
+                base_ts + 4,
+            ])),
             Arc::new(Int32Array::from(vec![1, 2, 3, 4, 5])),
             Arc::new(Int32Array::from(vec![1, 2, 3, 4, 5])),
             Arc::new(BooleanArray::from(vec![true, true, false, false, false])),
@@ -93,6 +107,7 @@ fn test_build_state_checkpoints_delta_end_to_end() -> Result<()> {
             None,
             Some(2),
             false,
+            false,
         )
         .await?;
         assert_eq!(rows_written, 2);
@@ -107,13 +122,14 @@ fn test_build_state_checkpoints_delta_end_to_end() -> Result<()> {
         let batch = concat_batches(&batches[0].schema(), &batches)?;
         assert_eq!(batch.num_rows(), 2);
 
+        let base_ts = date_start_ts(NaiveDate::from_ymd_opt(2025, 1, 1).expect("date"));
         let ts = batch
             .column_by_name("ts_local_us")
             .expect("ts_local_us")
             .as_any()
             .downcast_ref::<Int64Array>()
             .expect("ts_local_us array");
-        assert_eq!(ts.values(), &[1, 3]);
+        assert_eq!(ts.values(), &[base_ts + 1, base_ts + 3]);
 
         let exchange = batch.column_by_name("exchange").expect("exchange");
         let exchange = if matches!(exchange.data_type(), DataType::Utf8) {
