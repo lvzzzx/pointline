@@ -1581,8 +1581,11 @@ mod python {
             .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
 
         let pa = py.import("pyarrow")?;
-        let array = pa.call_method1("Array", "_import_from_c", (array_ptr as usize, schema_ptr as usize))?;
-        let batch = pa.call_method1("RecordBatch", "from_struct_array", (array,))?;
+        let array_class = pa.getattr("Array")?;
+        let array = array_class.call_method1("_import_from_c", (array_ptr as usize, schema_ptr as usize))?;
+
+        let batch_class = pa.getattr("RecordBatch")?;
+        let batch = batch_class.call_method1("from_struct_array", (array,))?;
         Ok(batch.into())
     }
 
