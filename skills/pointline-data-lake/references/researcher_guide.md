@@ -64,7 +64,7 @@ daily_vol = (
     .filter((pl.col("date") == "2025-12-28") & (pl.col("symbol_id") == symbol_id))
     .group_by("symbol_id")
     .agg([
-        pl.count().alias("trade_count"),
+        pl.len().alias("trade_count"),
         pl.col("qty_int").sum().alias("total_volume"),
     ])
     .collect()

@@ -939,58 +939,109 @@ pub async fn replay_between_delta(
     let mut snapshots = Vec::new();
     let mut reset = SnapshotReset::default();
     let mut last_emit_ts: Option<i64> = None;
-    let mut updates_since: u64 = 0;
+    let mut updates_since_emit: u64 = 0;
+    
+    // State for atomic processing
+    let mut last_pos: Option<StreamPos> = None;
 
-    let stream = df.execute_stream().await?;
-    for_each_update(stream, |update| {
-        reset.apply(&mut book, &update);
+    let mut stream = df.execute_stream().await?;
+    
+    while let Some(batch) = stream.next().await {
+        let batch = batch?;
+        let cols = update_columns(&batch)?;
+        for row in 0..batch.num_rows() {
+            let update = update_from_columns(&cols, row)?;
+            
+            // Check for timestamp boundary
+            if let Some(pos) = last_pos {
+                if update.ts_local_us != pos.ts_local_us {
+                    // Boundary crossed: evaluate emission for the completed timestamp group (pos)
+                    if pos.ts_local_us >= start_ts_local_us {
+                        if last_emit_ts.is_none() {
+                            last_emit_ts = Some(pos.ts_local_us);
+                        }
 
-        if update.ts_local_us < start_ts_local_us {
-            return Ok(());
-        }
+                        let mut emit = false;
+                        if let (Some(every_us), Some(last_ts)) = (every_us, last_emit_ts) {
+                            if pos.ts_local_us.saturating_sub(last_ts) >= every_us {
+                                emit = true;
+                            }
+                        }
+                        if let Some(every_updates_val) = every_updates {
+                            if every_updates_val > 0 && updates_since_emit >= every_updates_val {
+                                emit = true;
+                            }
+                        }
 
-        let pos = StreamPos {
-            ts_local_us: update.ts_local_us,
-            ingest_seq: update.ingest_seq,
-            file_line_number: update.file_line_number,
-            file_id: update.file_id,
-        };
-
-        if last_emit_ts.is_none() {
-            last_emit_ts = Some(update.ts_local_us);
-        }
-        updates_since = updates_since.saturating_add(1);
-
-        let mut emit = false;
-        if let (Some(every_us), Some(last_ts)) = (every_us, last_emit_ts) {
-            if update.ts_local_us.saturating_sub(last_ts) >= every_us {
-                emit = true;
+                        if emit {
+                            let (bids, asks) = book_levels(&book);
+                            snapshots.push(SnapshotWithPos {
+                                exchange_id,
+                                symbol_id,
+                                ts_local_us: pos.ts_local_us,
+                                ingest_seq: pos.ingest_seq,
+                                file_line_number: pos.file_line_number,
+                                file_id: pos.file_id,
+                                bids,
+                                asks,
+                            });
+                            last_emit_ts = Some(pos.ts_local_us);
+                            updates_since_emit = 0;
+                        }
+                    }
+                }
             }
-        }
-        if let Some(every_updates) = every_updates {
-            if every_updates > 0 && updates_since >= every_updates {
-                emit = true;
+            
+            // Apply current update
+            reset.apply(&mut book, &update);
+            
+            if update.ts_local_us >= start_ts_local_us {
+                updates_since_emit = updates_since_emit.saturating_add(1);
             }
-        }
-
-        if emit {
-            let (bids, asks) = book_levels(&book);
-            snapshots.push(SnapshotWithPos {
-                exchange_id,
-                symbol_id,
-                ts_local_us: pos.ts_local_us,
-                ingest_seq: pos.ingest_seq,
-                file_line_number: pos.file_line_number,
-                file_id: pos.file_id,
-                bids,
-                asks,
+            
+            last_pos = Some(StreamPos {
+                ts_local_us: update.ts_local_us,
+                ingest_seq: update.ingest_seq,
+                file_line_number: update.file_line_number,
+                file_id: update.file_id,
             });
-            updates_since = 0;
-            last_emit_ts = Some(update.ts_local_us);
         }
-        Ok(())
-    })
-    .await?;
+    }
+    
+    // Handle final group after stream ends
+    if let Some(pos) = last_pos {
+        if pos.ts_local_us >= start_ts_local_us {
+            if last_emit_ts.is_none() {
+                last_emit_ts = Some(pos.ts_local_us);
+            }
+
+            let mut emit = false;
+            if let (Some(every_us), Some(last_ts)) = (every_us, last_emit_ts) {
+                if pos.ts_local_us.saturating_sub(last_ts) >= every_us {
+                    emit = true;
+                }
+            }
+            if let Some(every_updates_val) = every_updates {
+                if every_updates_val > 0 && updates_since_emit >= every_updates_val {
+                    emit = true;
+                }
+            }
+
+            if emit {
+                let (bids, asks) = book_levels(&book);
+                snapshots.push(SnapshotWithPos {
+                    exchange_id,
+                    symbol_id,
+                    ts_local_us: pos.ts_local_us,
+                    ingest_seq: pos.ingest_seq,
+                    file_line_number: pos.file_line_number,
+                    file_id: pos.file_id,
+                    bids,
+                    asks,
+                });
+            }
+        }
+    }
 
     Ok(snapshots)
 }
@@ -1049,76 +1100,142 @@ pub async fn build_state_checkpoints_delta(
     let mut updates_since: u64 = 0;
     let mut prev_key: Option<(i64, i32, i32, i32)> = None;
 
-    let stream = df
+    // State for atomic processing
+    let mut last_pos: Option<StreamPos> = None;
+    let mut last_meta: Option<CheckpointMeta> = None;
+
+    let mut stream = df
         .execute_stream()
         .await
         .context("execute checkpoint updates stream")?;
-    for_each_checkpoint_update(stream, |meta, update| {
-        if update.ts_local_us < start_ts || update.ts_local_us > end_ts {
-            return Ok(());
-        }
+    
+    while let Some(batch) = stream.next().await {
+        let batch = batch?;
+        let cols = checkpoint_update_columns(&batch)?;
+        for row in 0..batch.num_rows() {
+            let (meta, update) = checkpoint_update_from_columns(&cols, row)?;
+            
+            if update.ts_local_us < start_ts || update.ts_local_us > end_ts {
+                continue;
+            }
 
-        if validate_monotonic {
-            let key = (
-                update.ts_local_us,
-                update.ingest_seq,
-                update.file_id,
-                update.file_line_number,
-            );
-            if let Some(prev) = prev_key {
-                if key < prev {
-                    panic!(
-                        "build_state_checkpoints: updates out of order: {:?} < {:?}",
-                        key, prev
-                    );
+            if validate_monotonic {
+                let key = (
+                    update.ts_local_us,
+                    update.ingest_seq,
+                    update.file_id,
+                    update.file_line_number,
+                );
+                if let Some(prev) = prev_key {
+                    if key < prev {
+                        panic!(
+                            "build_state_checkpoints: updates out of order: {:?} < {:?}",
+                            key, prev
+                        );
+                    }
+                }
+                prev_key = Some(key);
+            }
+
+            // Check for timestamp boundary
+            if let Some(pos) = last_pos {
+                if update.ts_local_us != pos.ts_local_us {
+                    // Boundary crossed. Evaluate emission for 'pos'
+                    if last_checkpoint_ts.is_none() {
+                        last_checkpoint_ts = Some(pos.ts_local_us);
+                    }
+
+                    let mut emit = false;
+                    if let (Some(every_us), Some(last_ts)) = (every_us, last_checkpoint_ts) {
+                        if pos.ts_local_us.saturating_sub(last_ts) >= every_us {
+                            emit = true;
+                        }
+                    }
+                    if let Some(every_updates_val) = every_updates {
+                        if every_updates_val > 0 && updates_since >= every_updates_val {
+                            emit = true;
+                        }
+                    }
+
+                    if emit {
+                        let date = ts_to_date(pos.ts_local_us)?;
+                        let date_days = date_to_days(date);
+                        let (bids, asks) = book_levels(&book);
+                        
+                        let meta_ref = last_meta.as_ref().expect("last_meta missing");
+                        
+                        rows.push(CheckpointRow {
+                            exchange: exchange.clone(),
+                            exchange_id: meta_ref.exchange_id,
+                            symbol_id: meta_ref.symbol_id,
+                            date: date_days,
+                            ts_local_us: pos.ts_local_us,
+                            bids,
+                            asks,
+                            file_id: pos.file_id,
+                            ingest_seq: pos.ingest_seq,
+                            file_line_number: pos.file_line_number,
+                            checkpoint_kind: "periodic".to_string(),
+                        });
+                        updates_since = 0;
+                        last_checkpoint_ts = Some(pos.ts_local_us);
+                    }
                 }
             }
-            prev_key = Some(key);
+            
+            reset.apply(&mut book, &update);
+
+            updates_since = updates_since.saturating_add(1);
+
+            last_pos = Some(StreamPos {
+                ts_local_us: update.ts_local_us,
+                ingest_seq: update.ingest_seq,
+                file_line_number: update.file_line_number,
+                file_id: update.file_id,
+            });
+            last_meta = Some(meta);
         }
+    }
 
-        reset.apply(&mut book, &update);
-
+    // Handle final group
+    if let Some(pos) = last_pos {
         if last_checkpoint_ts.is_none() {
-            last_checkpoint_ts = Some(update.ts_local_us);
+            last_checkpoint_ts = Some(pos.ts_local_us);
         }
-
-        updates_since = updates_since.saturating_add(1);
 
         let mut emit = false;
         if let (Some(every_us), Some(last_ts)) = (every_us, last_checkpoint_ts) {
-            if update.ts_local_us.saturating_sub(last_ts) >= every_us {
+            if pos.ts_local_us.saturating_sub(last_ts) >= every_us {
                 emit = true;
             }
         }
-        if let Some(every_updates) = every_updates {
-            if every_updates > 0 && updates_since >= every_updates {
+        if let Some(every_updates_val) = every_updates {
+            if every_updates_val > 0 && updates_since >= every_updates_val {
                 emit = true;
             }
         }
 
         if emit {
-            let date = ts_to_date(update.ts_local_us)?;
+            let date = ts_to_date(pos.ts_local_us)?;
             let date_days = date_to_days(date);
             let (bids, asks) = book_levels(&book);
+            let meta_ref = last_meta.as_ref().expect("last_meta missing");
+
             rows.push(CheckpointRow {
                 exchange: exchange.clone(),
-                exchange_id: meta.exchange_id,
-                symbol_id: meta.symbol_id,
+                exchange_id: meta_ref.exchange_id,
+                symbol_id: meta_ref.symbol_id,
                 date: date_days,
-                ts_local_us: update.ts_local_us,
+                ts_local_us: pos.ts_local_us,
                 bids,
                 asks,
-                file_id: update.file_id,
-                ingest_seq: update.ingest_seq,
-                file_line_number: update.file_line_number,
+                file_id: pos.file_id,
+                ingest_seq: pos.ingest_seq,
+                file_line_number: pos.file_line_number,
                 checkpoint_kind: "periodic".to_string(),
             });
-            updates_since = 0;
-            last_checkpoint_ts = Some(update.ts_local_us);
         }
-        Ok(())
-    })
-    .await?;
+    }
 
     if rows.is_empty() {
         return Ok(0);
@@ -1195,7 +1312,10 @@ pub fn replay<I, F, G>(
     let mut snapshot_pos: Option<StreamPos> = None;
 
     let mut last_checkpoint_ts: Option<i64> = None;
-    let mut updates_since: u64 = 0;
+    let mut updates_since_checkpoint: u64 = 0;
+    
+    // Atomic processing state
+    let mut last_pos: Option<StreamPos> = None;
 
     for update in updates {
         let current_key = (
@@ -1215,67 +1335,98 @@ pub fn replay<I, F, G>(
             }
         }
         prev_key = Some(current_key);
+        
+        // 1. Check boundary
+        if let Some(pos) = last_pos {
+            if update.ts_local_us != pos.ts_local_us {
+                // Emit snapshots/checkpoints for 'pos'
+                if snapshot_key.is_some() {
+                    if let Some(snap_pos) = snapshot_pos {
+                        on_snapshot(&book, &snap_pos);
+                    }
+                }
+                
+                if last_checkpoint_ts.is_none() {
+                    last_checkpoint_ts = Some(pos.ts_local_us);
+                }
+                
+                let mut emit_checkpoint = false;
+                if let (Some(every_us), Some(last_ts)) = (config.checkpoint_every_us, last_checkpoint_ts) {
+                    if pos.ts_local_us.saturating_sub(last_ts) >= every_us {
+                        emit_checkpoint = true;
+                    }
+                }
+                if let Some(every_updates) = config.checkpoint_every_updates {
+                    if every_updates > 0 && updates_since_checkpoint >= every_updates {
+                        emit_checkpoint = true;
+                    }
+                }
+                
+                if emit_checkpoint {
+                    on_checkpoint(&book, &pos);
+                    updates_since_checkpoint = 0;
+                    last_checkpoint_ts = Some(pos.ts_local_us);
+                }
+                
+                // Clear snapshot state for new group
+                snapshot_key = None;
+                snapshot_pos = None;
+            }
+        }
 
+        // 2. Apply update
         if update.is_snapshot {
             let key = (update.ts_local_us, update.file_id);
             if snapshot_key != Some(key) {
-                if snapshot_key.is_some() {
-                    if let Some(pos) = snapshot_pos {
-                        on_snapshot(&book, &pos);
-                    }
-                }
                 book.reset();
                 snapshot_key = Some(key);
-                snapshot_pos = None;
             }
-        } else if snapshot_key.is_some() {
-            if let Some(pos) = snapshot_pos {
-                on_snapshot(&book, &pos);
-            }
-            snapshot_key = None;
-            snapshot_pos = None;
-        }
-
+        } 
+        
         book.apply_update(&update);
-
+        
+        // 3. Update state
         let pos = StreamPos {
             ts_local_us: update.ts_local_us,
             ingest_seq: update.ingest_seq,
             file_line_number: update.file_line_number,
             file_id: update.file_id,
         };
-
+        
         if update.is_snapshot {
             snapshot_pos = Some(pos);
         }
+        
+        updates_since_checkpoint = updates_since_checkpoint.saturating_add(1);
+        last_pos = Some(pos);
+    }
 
-        updates_since = updates_since.saturating_add(1);
-        if last_checkpoint_ts.is_none() {
-            last_checkpoint_ts = Some(update.ts_local_us);
+    // Handle final group
+    if let Some(pos) = last_pos {
+        if snapshot_key.is_some() {
+            if let Some(snap_pos) = snapshot_pos {
+                on_snapshot(&book, &snap_pos);
+            }
         }
-
+        
+        if last_checkpoint_ts.is_none() {
+            last_checkpoint_ts = Some(pos.ts_local_us);
+        }
+        
         let mut emit_checkpoint = false;
         if let (Some(every_us), Some(last_ts)) = (config.checkpoint_every_us, last_checkpoint_ts) {
-            if update.ts_local_us.saturating_sub(last_ts) >= every_us {
+            if pos.ts_local_us.saturating_sub(last_ts) >= every_us {
                 emit_checkpoint = true;
             }
         }
         if let Some(every_updates) = config.checkpoint_every_updates {
-            if every_updates > 0 && updates_since >= every_updates {
+            if every_updates > 0 && updates_since_checkpoint >= every_updates {
                 emit_checkpoint = true;
             }
         }
-
+        
         if emit_checkpoint {
             on_checkpoint(&book, &pos);
-            updates_since = 0;
-            last_checkpoint_ts = Some(update.ts_local_us);
-        }
-    }
-
-    if snapshot_key.is_some() {
-        if let Some(pos) = snapshot_pos {
-            on_snapshot(&book, &pos);
         }
     }
 }

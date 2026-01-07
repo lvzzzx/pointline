@@ -74,7 +74,7 @@ trades = research.load_trades(
 
 daily = (
     trades.group_by("symbol_id")
-    .agg([pl.count().alias("trade_count"), pl.col("qty_int").sum().alias("total_qty")])
+    .agg([pl.len().alias("trade_count"), pl.col("qty_int").sum().alias("total_qty")])
     .collect()
 )
 ```
