@@ -1427,7 +1427,10 @@ pub fn replay<I, F, G>(
                 book.reset();
                 snapshot_key = Some(key);
             }
-        } 
+        } else {
+            snapshot_key = None;
+            snapshot_pos = None;
+        }
         
         book.apply_update(&update);
         
@@ -1848,6 +1851,25 @@ mod tests {
         assert_eq!(book.asks.len(), 1);
         assert_eq!(book.bids.get(&99), Some(&1));
         assert_eq!(book.asks.get(&102), Some(&2));
+    }
+
+    #[test]
+    fn snapshot_group_ends_on_non_snapshot() {
+        let updates = vec![
+            update(1, 1, 1, true, 0, 100, 1, 10),
+            update(1, 2, 2, false, 1, 101, 2, 10),
+            update(2, 3, 3, false, 0, 99, 1, 10),
+        ];
+
+        let mut snapshots: Vec<StreamPos> = Vec::new();
+        replay(
+            updates,
+            &ReplayConfig::default(),
+            |_book, pos| snapshots.push(*pos),
+            |_book, _pos| {},
+        );
+
+        assert_eq!(snapshots.len(), 0);
     }
 
     #[test]
