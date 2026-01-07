@@ -11,15 +11,13 @@ Usage:
 
 import argparse
 import logging
-import random
 import sys
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import List, Tuple
 
 import polars as pl
 from pointline import l2_replay
 from pointline.config import get_table_path, get_exchange_id
-from pointline.research import scan_table
 
 # Configure logging
 logging.basicConfig(
@@ -97,15 +95,9 @@ def load_reference_snapshots(
         # we'll grab a larger chunk and sample in memory if it fits, 
         # or just take 'limit' spaced out rows.
         
-        # Strategy: Take every Nth row to spread out coverage
-        step = max(1, count // limit)
-        
-        # Since we can't 'take_every' easily on lazy frame without row index,
-        # we'll collect specific columns first if dataset is huge, or just collect all if < 1GB.
+        # Since we can't easily random sample lazily without a full scan,
+        # we'll collect the filtered data and sample in memory.
         # book_snapshot_25 is usually manageable for one day/symbol.
-        
-        # Optimization: Just take the first 'limit * step' rows and filter in memory
-        # to avoid OOM on massive days.
         
         df = filtered.collect()
         
@@ -147,6 +139,10 @@ def compare_snapshot(
     replayed_top = replayed_bids[:cmp_len]
     ref_top = ref_bids[:cmp_len]
     
+    # Warn if replayed book has fewer levels than reference
+    if len(replayed_bids) < len(ref_bids):
+        logger.warning(f"Replayed book has {len(replayed_bids)} bid levels, reference has {len(ref_bids)}")
+    
     if replayed_top != ref_top:
         logger.error(f"Mismatch at {ts_local_us} (BIDS)")
         logger.error(f"  Ref len: {len(ref_top)}, Replay len: {len(replayed_top)}")
@@ -166,8 +162,13 @@ def compare_snapshot(
     replayed_top = replayed_asks[:cmp_len]
     ref_top = ref_asks[:cmp_len]
     
+    # Warn if replayed book has fewer levels than reference
+    if len(replayed_asks) < len(ref_asks):
+        logger.warning(f"Replayed book has {len(replayed_asks)} ask levels, reference has {len(ref_asks)}")
+    
     if replayed_top != ref_top:
         logger.error(f"Mismatch at {ts_local_us} (ASKS)")
+        logger.error(f"  Ref len: {len(ref_top)}, Replay len: {len(replayed_top)}")
         for i, (ref, rep) in enumerate(zip(ref_top, replayed_top)):
             if ref != rep:
                 logger.error(f"  Level {i}: Ref={ref} vs Rep={rep}")
@@ -201,6 +202,8 @@ def main():
     
     for row in ref_df.iter_rows(named=True):
         ts = row["ts_local_us"]
+        # Use symbol_id from each row in case it changes during the day (SCD Type 2)
+        row_symbol_id = row["symbol_id"]
         
         # 3. Replay
         # We use snapshot_at to get the state at exactly 'ts'
@@ -209,10 +212,19 @@ def main():
             # Note: snapshot_at returns a dict, replay_between returns a DataFrame.
             # We are using snapshot_at here for point-checks.
             result = l2_replay.snapshot_at(
+                exchange=args.exchange,
                 exchange_id=exchange_id,
-                symbol_id=symbol_id,
-                ts_local_us=ts
+                symbol_id=row_symbol_id,
+                ts_local_us=ts,
+                start_date=args.date,
+                end_date=args.date,
             )
+            
+            # Validate timestamp matches
+            if result['ts_local_us'] != ts:
+                logger.error(f"Timestamp mismatch at {ts}: requested {ts}, got {result['ts_local_us']}")
+                failure_count += 1
+                continue
             
             # Convert result dict to list of tuples for comparison
             # Structure: result['bids'] is a list of dicts like {'price_int': 100, 'size_int': 1}
