@@ -251,6 +251,15 @@ fn delta_table_exists(path: &str) -> bool {
     Path::new(path).join("_delta_log").exists()
 }
 
+fn parquet_read_session_config() -> SessionConfig {
+    let mut config = SessionConfig::new()
+        .with_parquet_pruning(true)
+        .with_parquet_bloom_filter_pruning(true);
+    // Parquet page index metadata can be corrupted in some datasets; disable to avoid read errors.
+    config.options_mut().execution.parquet.enable_page_index = false;
+    config
+}
+
 fn escape_sql_string(value: &str) -> String {
     value.replace('\'', "''")
 }
@@ -307,11 +316,7 @@ async fn latest_checkpoint(
         return Ok(None);
     }
 
-    let config = SessionConfig::new()
-        .with_parquet_pruning(true)
-        .with_parquet_bloom_filter_pruning(true)
-        .with_parquet_page_index_pruning(true);
-    let ctx = SessionContext::new_with_config(config);
+    let ctx = SessionContext::new_with_config(parquet_read_session_config());
     let read_options = ParquetReadOptions::default().parquet_pruning(true);
     let mut df = ctx.read_parquet(file_uris, read_options).await?;
     let df_schema = df.schema().clone();
@@ -405,7 +410,7 @@ async fn build_updates_df(
         .get_file_uris_by_partitions(&partition_filters)
         .context("fetch delta files for partition filters")?;
 
-    let ctx = SessionContext::new();
+    let ctx = SessionContext::new_with_config(parquet_read_session_config());
     if file_uris.is_empty() {
         return ctx.read_empty().context("create empty updates dataframe");
     }
@@ -429,7 +434,11 @@ async fn build_updates_df(
     }
 
     df = df.filter(col("exchange_id").eq(lit(exchange_id)))?;
-    df = df.filter(col("symbol_id").eq(lit(symbol_id)))?;
+    // symbol_id is a partition column, not stored in Parquet files
+    // Partition filtering above already ensures we only read files for this symbol_id
+    if df_schema.field_with_unqualified_name("symbol_id").is_ok() {
+        df = df.filter(col("symbol_id").eq(lit(symbol_id)))?;
+    }
     df = df.filter(col("ts_local_us").lt_eq(lit(max_ts_inclusive)))?;
 
     if let Some(pos) = min_pos_exclusive {
@@ -483,7 +492,7 @@ async fn build_checkpoint_updates_df(
         .get_file_uris_by_partitions(&partition_filters)
         .context("fetch delta files for partition filters")?;
 
-    let ctx = SessionContext::new();
+    let ctx = SessionContext::new_with_config(parquet_read_session_config());
     if file_uris.is_empty() {
         return ctx
             .read_empty()
@@ -1440,7 +1449,7 @@ mod python {
         build_state_checkpoints_delta, replay_between_delta, snapshot_at_delta, L2Update,
         OrderBook, Snapshot, SnapshotWithPos,
     };
-    use deltalake::arrow::array::StructArray;
+    use deltalake::arrow::array::{Array, StructArray};
     use deltalake::arrow::record_batch::RecordBatch;
     use arrow::ffi;
     use pyo3::exceptions::PyRuntimeError;
@@ -1534,12 +1543,19 @@ mod python {
 
     fn to_pyarrow(py: Python, batch: RecordBatch) -> PyResult<PyObject> {
         let struct_array: StructArray = batch.into();
-        let (array_ptr, schema_ptr) = ffi::to_ffi(&struct_array.into_data())
+        let array_data = struct_array.to_data();
+        let (mut array_ffi, mut schema_ffi) = ffi::to_ffi(&array_data)
             .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
 
         let pa = py.import("pyarrow")?;
         let array_class = pa.getattr("Array")?;
-        let array = array_class.call_method1("_import_from_c", (array_ptr as usize, schema_ptr as usize))?;
+        let array = array_class.call_method1(
+            "_import_from_c",
+            (
+                std::ptr::addr_of_mut!(array_ffi) as usize,
+                std::ptr::addr_of_mut!(schema_ffi) as usize,
+            ),
+        )?;
 
         let batch_class = pa.getattr("RecordBatch")?;
         let batch = batch_class.call_method1("from_struct_array", (array,))?;
