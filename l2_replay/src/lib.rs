@@ -14,7 +14,6 @@ use deltalake::arrow::record_batch::RecordBatch;
 use deltalake::datafusion::logical_expr::ExprSchemable;
 use deltalake::datafusion::prelude::*;
 use deltalake::datafusion::physical_plan::SendableRecordBatchStream;
-use deltalake::datafusion::scalar::ScalarValue;
 use deltalake::datafusion::execution::context::SessionConfig;
 use deltalake::open_table;
 use deltalake::parquet::basic::{Compression, ZstdLevel};
@@ -202,10 +201,6 @@ fn date_to_ts_local_us(date: NaiveDate, end_of_day: bool) -> i64 {
     }
     .expect("valid date time");
     dt.timestamp_micros()
-}
-
-fn date_to_scalar(date: NaiveDate) -> ScalarValue {
-    ScalarValue::Date32(Some(date_to_days(date)))
 }
 
 fn delta_table_exists(path: &str) -> bool {
