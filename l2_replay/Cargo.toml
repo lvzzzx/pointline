@@ -14,6 +14,7 @@ python = ["pyo3/extension-module"]
 
 [dependencies]
 anyhow = "1"
+arrow = { version = "50", features = ["ffi"] }
 chrono = { version = "=0.4.34", default-features = false, features = ["alloc", "std"] }
 deltalake = { version = "0.17", features = ["datafusion"] }
 futures = "0.3"

@@ -21,7 +21,6 @@ use deltalake::parquet::file::properties::WriterProperties;
 use deltalake::protocol::SaveMode;
 use deltalake::schema::partitions::{PartitionFilter, PartitionValue};
 use deltalake::DeltaOps;
-use deltalake::arrow::ffi;
 use futures::StreamExt;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1486,7 +1485,7 @@ mod python {
     };
     use deltalake::arrow::array::StructArray;
     use deltalake::arrow::record_batch::RecordBatch;
-    use deltalake::arrow::ffi;
+    use arrow::ffi;
     use pyo3::exceptions::PyRuntimeError;
     use pyo3::prelude::*;
     use pyo3::wrap_pyfunction;
