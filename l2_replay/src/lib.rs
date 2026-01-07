@@ -396,6 +396,10 @@ async fn build_updates_df(
         key: "date".to_string(),
         value: PartitionValue::LessThanOrEqual(end_date.to_string()),
     });
+    partition_filters.push(PartitionFilter {
+        key: "symbol_id".to_string(),
+        value: PartitionValue::Equal(symbol_id.to_string()),
+    });
 
     let file_uris = table
         .get_file_uris_by_partitions(&partition_filters)
@@ -442,13 +446,6 @@ async fn build_updates_df(
         col("size_int"),
         col("file_id"),
     ])?;
-    df = df.sort(vec![
-        col("ts_local_us").sort(true, true),
-        col("ingest_seq").sort(true, true),
-        col("file_id").sort(true, true),
-        col("file_line_number").sort(true, true),
-    ])?;
-
     Ok(df)
 }
 
@@ -476,6 +473,10 @@ async fn build_checkpoint_updates_df(
     partition_filters.push(PartitionFilter {
         key: "date".to_string(),
         value: PartitionValue::LessThanOrEqual(end_date.to_string()),
+    });
+    partition_filters.push(PartitionFilter {
+        key: "symbol_id".to_string(),
+        value: PartitionValue::Equal(symbol_id.to_string()),
     });
 
     let file_uris = table
