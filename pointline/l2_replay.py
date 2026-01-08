@@ -9,6 +9,7 @@ from typing import Iterator
 import polars as pl
 
 from pointline.config import get_table_path
+from pointline.registry import resolve_symbol
 
 try:
     import l2_replay as _rust_l2_replay
@@ -35,14 +36,14 @@ def _checkpoint_path() -> str | None:
 
 def snapshot_at(
     *,
-    exchange_id: int,
     symbol_id: int,
     ts_local_us: int,
-    exchange: str | None = None,
     start_date: date | str | None = None,
     end_date: date | str | None = None,
 ) -> dict[str, object]:
     """Return full-depth bids/asks at a point-in-time using ts_local_us."""
+    exchange, exchange_id = resolve_symbol(symbol_id)
+
     return _rust_l2_replay.snapshot_at(
         updates_path=str(get_table_path("l2_updates")),
         checkpoint_path=_checkpoint_path(),
@@ -57,15 +58,15 @@ def snapshot_at(
 
 def replay_between(
     *,
-    exchange_id: int,
     symbol_id: int,
     start_ts_local_us: int,
     end_ts_local_us: int,
     every_us: int | None = None,
     every_updates: int | None = None,
-    exchange: str | None = None,
 ) -> pl.DataFrame:
     """Yield snapshots between timestamps on a cadence."""
+    exchange, exchange_id = resolve_symbol(symbol_id)
+
     batch = _rust_l2_replay.replay_between(
         updates_path=str(get_table_path("l2_updates")),
         checkpoint_path=_checkpoint_path(),
