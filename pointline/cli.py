@@ -25,6 +25,7 @@ from pointline.services.trades_service import TradesIngestionService
 from pointline.services.quotes_service import QuotesIngestionService
 from pointline.services.book_snapshots_service import BookSnapshotsIngestionService
 from pointline.services.l2_updates_service import L2UpdatesIngestionService
+from pointline.registry import find_symbol
 
 
 def _sorted_files(files: Iterable[BronzeFileMetadata]) -> list[BronzeFileMetadata]:
@@ -459,9 +460,50 @@ def _cmd_l2_state_checkpoint_build(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_symbol_search(args: argparse.Namespace) -> int:
+    df = find_symbol(
+        query=args.query,
+        exchange=args.exchange,
+        base_asset=args.base_asset,
+        quote_asset=args.quote_asset,
+    )
+
+    if df.is_empty():
+        print("No matching symbols found.")
+        return 0
+
+    print(f"Found {df.height} matching symbols:")
+    
+    # Configure display options
+    with pl.Config(tbl_rows=100, tbl_cols=20, fmt_float="full"):
+        # Select key columns for display
+        cols = [
+            "symbol_id", "exchange", "exchange_symbol", 
+            "base_asset", "quote_asset", "asset_type",
+            "tick_size", "lot_size", "price_increment", "amount_increment", "contract_size",
+            "valid_from_ts", "valid_until_ts"
+        ]
+        # Only select columns that exist in the dataframe (in case registry schema evolves)
+        display_cols = [c for c in cols if c in df.columns]
+        print(df.select(display_cols))
+
+    return 0
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="pointline", description="Pointline data lake CLI")
     subparsers = parser.add_subparsers(dest="command")
+
+    # --- Symbol Registry ---
+    symbol = subparsers.add_parser("symbol", help="Symbol registry utilities")
+    symbol_sub = symbol.add_subparsers(dest="symbol_command")
+
+    symbol_search = symbol_sub.add_parser("search", help="Search for symbols")
+    symbol_search.add_argument("query", nargs="?", help="Fuzzy search term")
+    symbol_search.add_argument("--exchange", help="Filter by exchange")
+    symbol_search.add_argument("--base-asset", help="Filter by base asset")
+    symbol_search.add_argument("--quote-asset", help="Filter by quote asset")
+    symbol_search.set_defaults(func=_cmd_symbol_search)
 
     download = subparsers.add_parser("download", help="Download Tardis datasets to Bronze layer")
     download.add_argument("--exchange", required=True, help="Exchange name (e.g., binance)")

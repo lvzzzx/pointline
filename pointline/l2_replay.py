@@ -42,7 +42,7 @@ def snapshot_at(
     end_date: date | str | None = None,
 ) -> dict[str, object]:
     """Return full-depth bids/asks at a point-in-time using ts_local_us."""
-    exchange, exchange_id = resolve_symbol(symbol_id)
+    exchange, exchange_id, _ = resolve_symbol(symbol_id)
 
     return _rust_l2_replay.snapshot_at(
         updates_path=str(get_table_path("l2_updates")),
@@ -65,7 +65,7 @@ def replay_between(
     every_updates: int | None = None,
 ) -> pl.DataFrame:
     """Yield snapshots between timestamps on a cadence."""
-    exchange, exchange_id = resolve_symbol(symbol_id)
+    exchange, exchange_id, _ = resolve_symbol(symbol_id)
 
     batch = _rust_l2_replay.replay_between(
         updates_path=str(get_table_path("l2_updates")),
