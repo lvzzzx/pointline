@@ -9,6 +9,7 @@ from typing import Iterable, Sequence
 import polars as pl
 
 from pointline.config import EXCHANGE_MAP, TABLE_PATHS, get_exchange_id, get_table_path, normalize_exchange
+from pointline.registry import resolve_symbols
 
 
 def list_tables() -> list[str]:
@@ -24,20 +25,23 @@ def table_path(table_name: str) -> Path:
 def scan_table(
     table_name: str,
     *,
-    exchange: str | None = None,
-    exchange_id: int | Iterable[int] | None = None,
     symbol_id: int | Iterable[int] | None = None,
+    exchange: str | None = None,
     start_date: date | str | None = None,
     end_date: date | str | None = None,
     columns: Sequence[str] | None = None,
 ) -> pl.LazyFrame:
-    """Return a filtered LazyFrame for a Delta table."""
+    """
+    Return a filtered LazyFrame for a Delta table.
+    
+    Prefers symbol_id as the primary filter. If symbol_id is provided,
+    the exchange filter is automatically resolved for partition pruning.
+    """
     lf = pl.scan_delta(str(get_table_path(table_name)))
     lf = _apply_filters(
         lf,
-        exchange=exchange,
-        exchange_id=exchange_id,
         symbol_id=symbol_id,
+        exchange=exchange,
         start_date=start_date,
         end_date=end_date,
     )
@@ -49,9 +53,8 @@ def scan_table(
 def read_table(
     table_name: str,
     *,
-    exchange: str | None = None,
-    exchange_id: int | Iterable[int] | None = None,
     symbol_id: int | Iterable[int] | None = None,
+    exchange: str | None = None,
     start_date: date | str | None = None,
     end_date: date | str | None = None,
     columns: Sequence[str] | None = None,
@@ -59,9 +62,8 @@ def read_table(
     """Return a filtered DataFrame for a Delta table."""
     return scan_table(
         table_name,
-        exchange=exchange,
-        exchange_id=exchange_id,
         symbol_id=symbol_id,
+        exchange=exchange,
         start_date=start_date,
         end_date=end_date,
         columns=columns,
@@ -70,9 +72,8 @@ def read_table(
 
 def load_trades(
     *,
-    exchange: str | None = None,
-    exchange_id: int | Iterable[int] | None = None,
     symbol_id: int | Iterable[int] | None = None,
+    exchange: str | None = None,
     start_date: date | str | None = None,
     end_date: date | str | None = None,
     columns: Sequence[str] | None = None,
@@ -81,9 +82,8 @@ def load_trades(
     """Load trades with common filters applied."""
     lf = scan_table(
         "trades",
-        exchange=exchange,
-        exchange_id=exchange_id,
         symbol_id=symbol_id,
+        exchange=exchange,
         start_date=start_date,
         end_date=end_date,
         columns=columns,
@@ -93,9 +93,8 @@ def load_trades(
 
 def load_quotes(
     *,
-    exchange: str | None = None,
-    exchange_id: int | Iterable[int] | None = None,
     symbol_id: int | Iterable[int] | None = None,
+    exchange: str | None = None,
     start_date: date | str | None = None,
     end_date: date | str | None = None,
     columns: Sequence[str] | None = None,
@@ -104,9 +103,8 @@ def load_quotes(
     """Load quotes with common filters applied."""
     lf = scan_table(
         "quotes",
-        exchange=exchange,
-        exchange_id=exchange_id,
         symbol_id=symbol_id,
+        exchange=exchange,
         start_date=start_date,
         end_date=end_date,
         columns=columns,
@@ -116,9 +114,8 @@ def load_quotes(
 
 def load_book_snapshot_25(
     *,
-    exchange: str | None = None,
-    exchange_id: int | Iterable[int] | None = None,
     symbol_id: int | Iterable[int] | None = None,
+    exchange: str | None = None,
     start_date: date | str | None = None,
     end_date: date | str | None = None,
     columns: Sequence[str] | None = None,
@@ -127,9 +124,8 @@ def load_book_snapshot_25(
     """Load top-25 book snapshots with common filters applied."""
     lf = scan_table(
         "book_snapshot_25",
-        exchange=exchange,
-        exchange_id=exchange_id,
         symbol_id=symbol_id,
+        exchange=exchange,
         start_date=start_date,
         end_date=end_date,
         columns=columns,
@@ -140,27 +136,31 @@ def load_book_snapshot_25(
 def _apply_filters(
     lf: pl.LazyFrame,
     *,
-    exchange: str | None,
-    exchange_id: int | Iterable[int] | None,
     symbol_id: int | Iterable[int] | None,
+    exchange: str | None,
     start_date: date | str | None,
     end_date: date | str | None,
 ) -> pl.LazyFrame:
+    # 1. Resolve Exchange from Symbol ID if provided (for partition pruning)
+    exchanges_to_filter = []
     if exchange:
-        lf = lf.filter(pl.col("exchange") == normalize_exchange(exchange))
-
-    if exchange_id is not None:
-        if isinstance(exchange_id, Iterable) and not isinstance(exchange_id, (str, bytes)):
-            lf = lf.filter(pl.col("exchange_id").is_in(list(exchange_id)))
-        else:
-            lf = lf.filter(pl.col("exchange_id") == exchange_id)
-
+        exchanges_to_filter.append(normalize_exchange(exchange))
+        
     if symbol_id is not None:
-        if isinstance(symbol_id, Iterable) and not isinstance(symbol_id, (str, bytes)):
-            lf = lf.filter(pl.col("symbol_id").is_in(list(symbol_id)))
-        else:
-            lf = lf.filter(pl.col("symbol_id") == symbol_id)
+        ids = [symbol_id] if isinstance(symbol_id, int) else list(symbol_id)
+        # Add resolved exchanges to the filter list to ensure we hit partitions
+        resolved = resolve_symbols(ids)
+        exchanges_to_filter.extend(resolved)
+        
+        # Apply symbol_id filter
+        lf = lf.filter(pl.col("symbol_id").is_in(ids))
 
+    # 2. Apply unique exchange filters
+    if exchanges_to_filter:
+        unique_exchanges = sorted(list(set(exchanges_to_filter)))
+        lf = lf.filter(pl.col("exchange").is_in(unique_exchanges))
+
+    # 3. Apply Date Filters
     if start_date is not None or end_date is not None:
         start = _to_date(start_date) if start_date is not None else None
         end = _to_date(end_date) if end_date is not None else None

@@ -93,6 +93,23 @@ def resolve_symbol(symbol_id: int) -> tuple[str, int, str]:
     
     return exchange_name, exchange_id, exchange_symbol
 
+def resolve_symbols(symbol_ids: Iterable[int]) -> list[str]:
+    """
+    Resolves a list of symbol_ids to a unique list of exchange names.
+    Useful for partition pruning across multiple symbols.
+    """
+    df = _get_symbol_cache()
+    ids = list(symbol_ids)
+    
+    matches = df.filter(pl.col("symbol_id").is_in(ids))
+    
+    # If some IDs missing, try one refresh
+    if matches.height < len(set(ids)):
+        df = _get_symbol_cache(force_refresh=True)
+        matches = df.filter(pl.col("symbol_id").is_in(ids))
+        
+    return matches.select("exchange").unique()["exchange"].to_list()
+
 def find_symbol(
     query: str | None = None,
     *,
