@@ -12,23 +12,21 @@ Provide PIT-correct data access guidance and query patterns for the Pointline/Ta
 ## Workflow Decision Tree
 
 1. **Clarify the research task** (exploration vs pipeline vs backtest).
-2. **Identify the table(s)** and required fields.
-3. **Resolve `exchange_id` + `symbol_id`** (SCD Type 2 rules) if filtering by symbol.
-4. **Apply partition-first filters** (`date`, then `exchange`/`exchange_id`, then `symbol_id`).
-5. **Choose access method**:
-   - Polars via `pointline.research` helpers for pipelines.
-   - DuckDB `delta_scan` for ad-hoc SQL.
-6. **Handle time correctness**:
+2. **Find the `symbol_id`** using `pointline.registry` or CLI `symbol search`. This is your primary key.
+3. **Identify the table(s)** and required fields.
+4. **Choose access method**:
+   - Polars via `pointline.research` helpers (uses `symbol_id` for auto-partitioning).
+   - DuckDB `delta_scan` for ad-hoc SQL (filter by `symbol_id`).
+5. **Handle time correctness**:
    - Use `ts_local_us` for replay.
    - Use `ts_exch_us` only for latency analysis.
-7. **Convert fixed-point values late** using `price_increment`/`amount_increment`.
+6. **Convert fixed-point values late** using `price_increment`/`amount_increment`.
 
 ## Core Rules
 
+- **Source of Truth:** The `symbol_id` is the canonical identifier. Resolve it once from `dim_symbol` (Registry).
 - **PIT correctness:** Use `ts_local_us` as the primary timeline for any backtest or replay.
-- **Partition-first:** Always filter by `date`; add `exchange`/`exchange_id` and `symbol_id` ASAP.
-- **Symbol changes:** Use `silver.dim_symbol` with validity ranges to resolve `symbol_id`.
-- **Exchange IDs:** Use `get_exchange_id()` (from `pointline.config`) as the source of truth.
+- **Partition-first:** Use `pointline.research` helpers; they automatically resolve partitions from `symbol_id`.
 - **Joins:** Use `join_asof` on `ts_local_us` for asynchronous streams.
 - **Fixed-point:** Keep `price_int`/`qty_int` integers until the final step.
 - **Lake root:** Resolve paths relative to `LAKE_ROOT` (default `./data/lake` in `pointline/config.py`).
@@ -38,34 +36,16 @@ Provide PIT-correct data access guidance and query patterns for the Pointline/Ta
 ### Polars (preferred for pipelines)
 
 ```python
-from datetime import datetime, timezone
 import polars as pl
-from pointline import research
-from pointline.config import get_exchange_id
+from pointline import registry, research
 
-asof = datetime(2025, 12, 28, 12, 0, 0, tzinfo=timezone.utc)
-asof_us = int(asof.timestamp() * 1_000_000)
-exchange_id = get_exchange_id("deribit")
-symbol = "BTC-PERPETUAL"
+# 1. Find your symbol ID
+# Check registry.find_symbol() output for valid_from/until to match your time range
+match = registry.find_symbol("BTC-PERPETUAL", exchange="deribit")
+symbol_id = match["symbol_id"][0]
 
-symbol_id = (
-    research.scan_table(
-        "dim_symbol",
-        exchange_id=exchange_id,
-        columns=["symbol_id", "exchange_symbol", "valid_from_ts", "valid_until_ts"],
-    )
-    .filter(
-        (pl.col("exchange_symbol") == symbol)
-        & (pl.col("valid_from_ts") <= asof_us)
-        & (pl.col("valid_until_ts") > asof_us)
-    )
-    .select("symbol_id")
-    .collect()
-    .item()
-)
-
+# 2. Load data (Partition pruning is handled automatically)
 trades = research.load_trades(
-    exchange="deribit",
     symbol_id=symbol_id,
     start_date="2025-12-28",
     end_date="2025-12-28",
@@ -82,19 +62,12 @@ daily = (
 ### DuckDB (ad-hoc)
 
 ```sql
-WITH resolved AS (
-  SELECT symbol_id
-  FROM delta_scan('${LAKE_ROOT}/silver/dim_symbol')
-  WHERE exchange_id = 21
-    AND exchange_symbol = 'BTC-PERPETUAL'
-    AND valid_from_ts <= 1766923200000000
-    AND valid_until_ts > 1766923200000000
-)
+-- 1. Find ID in CLI: pointline symbol search "BTC-PERPETUAL" --exchange deribit
+-- 2. Use ID in query
 SELECT ts_local_us, side, price_int, qty_int
 FROM delta_scan('${LAKE_ROOT}/silver/trades')
 WHERE date = '2025-12-28'
-  AND exchange_id = 21
-  AND symbol_id = (SELECT symbol_id FROM resolved)
+  AND symbol_id = 101 -- ID found in step 1
 ORDER BY ts_local_us;
 ```
 

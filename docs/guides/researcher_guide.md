@@ -12,16 +12,31 @@ This data lake is designed for **Point-in-Time (PIT) accuracy** and **query spee
 
 **Lake root:** The base path is controlled by `LAKE_ROOT` (see `pointline/config.py`). If unset, it defaults to `./data/lake`.
 
-### 2.1 DuckDB (Ad-hoc SQL)
+### 2.1 Discover Symbols
+Before querying data, find the correct `symbol_id`. This ID is the **primary key** for all research operations.
+
+**CLI:**
+```bash
+pointline symbol search "BTC-PERPETUAL" --exchange deribit
+```
+
+**Python:**
+```python
+from pointline import registry
+import polars as pl
+
+# Find symbols matching criteria
+df = registry.find_symbol("BTC-PERPETUAL", exchange="deribit")
+print(df)
+
+# Pick the ID that covers your time range (check valid_from_ts/valid_until_ts)
+symbol_id = df["symbol_id"][0]
+```
+
+### 2.2 DuckDB (Ad-hoc SQL)
+Once you have the `symbol_id` (e.g., `101`), query the tables directly.
+
 ```sql
-WITH resolved AS (
-  SELECT symbol_id
-  FROM delta_scan('${LAKE_ROOT}/silver/dim_symbol')
-  WHERE exchange_id = 21
-    AND exchange_symbol = 'BTC-PERPETUAL'
-    AND valid_from_ts <= 1766923200000000
-    AND valid_until_ts > 1766923200000000
-)
 SELECT
     ts_local_us,
     side,
@@ -29,46 +44,25 @@ SELECT
     qty_int
 FROM delta_scan('${LAKE_ROOT}/silver/trades')
 WHERE date = '2025-12-28'
-  AND exchange_id = 21
-  AND symbol_id = (SELECT symbol_id FROM resolved)
+  AND symbol_id = 101 -- Use the ID found in step 2.1
 ORDER BY ts_local_us;
 ```
 
-### 2.2 Polars (Python Pipelines)
+### 2.3 Polars (Python Pipelines)
+Use the `pointline.research` helpers for streamlined access. They automatically handle partition pruning.
+
 ```python
-import os
-from datetime import datetime, timezone
-import polars as pl
+from pointline import research
 
-lake_root = os.getenv("LAKE_ROOT", "./data/lake")
-asof = datetime(2025, 12, 28, 12, 0, 0, tzinfo=timezone.utc)
-asof_us = int(asof.timestamp() * 1_000_000)
-symbol = "BTC-PERPETUAL"
-
-dim_symbol = pl.read_delta(f"{lake_root}/silver/dim_symbol", version=None)
-symbol_id = (
-    dim_symbol.filter(
-        (pl.col("exchange_id") == 21)
-        & (pl.col("exchange_symbol") == symbol)
-        & (pl.col("valid_from_ts") <= asof_us)
-        & (pl.col("valid_until_ts") > asof_us)
-    )
-    .select("symbol_id")
-    .collect()
-    .item()
+# Load trades for a specific symbol ID
+# The system automatically resolves the exchange partition for optimization
+trades = research.load_trades(
+    symbol_id=101,
+    start_date="2025-12-28",
+    end_date="2025-12-29"
 )
 
-trades_lf = pl.read_delta(f"{lake_root}/silver/trades", version=None)
-daily_vol = (
-    trades_lf
-    .filter((pl.col("date") == "2025-12-28") & (pl.col("symbol_id") == symbol_id))
-    .group_by("symbol_id")
-    .agg([
-        pl.len().alias("trade_count"),
-        pl.col("qty_int").sum().alias("total_volume"),
-    ])
-    .collect()
-)
+print(trades)
 ```
 
 ## 3. Data Lake Layout
@@ -105,7 +99,7 @@ Example:
 
 DuckDB is the recommended tool for interactive exploration. Polars is ideal for building pipelines.
 
-**Partition-first rule:** always filter by `date` (and `exchange_id` if possible) to avoid full scans.
+**Partition-first rule:** always filter by `date` to avoid full scans. When using `pointline.research` or `l2_replay` APIs with `symbol_id`, exchange partitioning is handled automatically.
 
 ## 5. Core Concepts
 
@@ -117,19 +111,11 @@ DuckDB is the recommended tool for interactive exploration. Polars is ideal for 
 Symbols change (e.g., renames). We use a stable `symbol_id`.
 -   **Table:** `silver.dim_symbol`
 -   **Logic:** A symbol is valid for a specific time range `[valid_from_ts, valid_until_ts)`.
--   **Resolution:** To find the correct `symbol_id` for "BTC-PERPETUAL" at time `T`, query `dim_symbol` where `exchange_symbol = 'BTC-PERPETUAL'` AND `valid_from_ts <= T < valid_until_ts`.
+-   **Resolution:** To find the correct `symbol_id` for "BTC-PERPETUAL" at time `T`, use `pointline.registry.find_symbol()` or query `dim_symbol` directly.
 
 ### 5.2.1 Exchange ID Selection
-`exchange_id` is the stable numeric ID used for joins and filters. It is defined in `pointline/config.py`:
--   **Source of truth:** `EXCHANGE_MAP` and `get_exchange_id()`.
--   **Normalization:** exchange names are lowercased and trimmed before lookup.
--   **If missing:** add a new entry to `EXCHANGE_MAP` with a new stable ID.
-
-```python
-from pointline.config import get_exchange_id
-
-exchange_id = get_exchange_id("deribit")  # 21
-```
+`exchange_id` is the stable numeric ID used for joins and filters. It is defined in `pointline/config.py`.
+While `symbol_id` is now the primary access key, `exchange_id` is still useful for aggregate analysis (e.g., "all volume on Binance").
 
 ### 5.3 Fixed-Point Math
 To save space and ensure precision, prices and quantities are stored as integers (`i64`).
@@ -146,8 +132,8 @@ To get the effective spread at the time of a trade:
 
 ```python
 # Load trades and quotes
-trades = pl.read_delta("/lake/silver/trades").sort("ts_local_us")
-quotes = pl.read_delta("/lake/silver/quotes").sort("ts_local_us")
+trades = research.load_trades(symbol_id=101, start_date="2025-01-01").sort("ts_local_us")
+quotes = research.load_quotes(symbol_id=101, start_date="2025-01-01").sort("ts_local_us")
 
 # Join
 pit_data = trades.join_asof(
@@ -164,21 +150,20 @@ To get the book state at time `T`:
 2.  Apply all `l2_updates` where `snapshot_ts < ts_local_us <= T`.
 
 ### 6.3 L2 Replay (Researcher Usage)
-Use the high-level L2 replay APIs; they hide batch management and input scans. The Rust
-engine reads Delta directly; Python is a thin wrapper.
+Use the high-level L2 replay APIs. They automatically resolve metadata from the `symbol_id`.
 
 ```python
-import l2_replay
+from pointline import l2_replay
 
+# Get a full depth snapshot at a specific time
 snapshot = l2_replay.snapshot_at(
-    exchange_id=21,
-    symbol_id=1234,
+    symbol_id=101,
     ts_local_us=1700000000000000,
 )
 
+# Replay updates over a window
 df = l2_replay.replay_between(
-    exchange_id=21,
-    symbol_id=1234,
+    symbol_id=101,
     start_ts_local_us=1700000000000000,
     end_ts_local_us=1700003600000000,
     every_us=1_000_000,
@@ -189,39 +174,36 @@ df = l2_replay.replay_between(
 ## 7. Researcher Interface (Conventions)
 
 ### 7.1 Exchange and Symbol Identity
-- **exchange (string):** vendor name from Tardis, used for partitioning.
-- **exchange_id (i16):** stable numeric mapping (`EXCHANGE_MAP` in `pointline/config.py`) used for joins.
-- **symbol_id (i64):** stable identifier from `silver.dim_symbol` (SCD Type 2).
+- **symbol_id (i64):** The **Primary Key** for research. It uniquely identifies a specific version of a symbol (with specific tick size, etc.) valid for a specific time range. Use `pointline.registry` or CLI `symbol search` to find it.
+- **exchange (string):** vendor name, used for partitioning. Auto-resolved by APIs when `symbol_id` is provided.
+- **exchange_id (i16):** stable numeric mapping used for joins.
 
 ### 7.2 Safe query template (DuckDB)
 ```sql
+-- 1. Find your ID first
+-- 2. Query with ID
 SELECT *
 FROM delta_scan('/lake/silver/<table_name>')
 WHERE date >= '<start_date>' AND date <= '<end_date>'
-  AND exchange_id = <id>
-  AND symbol_id = <id>
+  AND symbol_id = <your_id>
 LIMIT 100;
 ```
 
 ### 7.3 Polars best practices
-- Use `pl.read_delta` or `pl.scan_delta` with filters on `date`.
+- Use `pointline.research` helpers (`load_trades`, `scan_table`) instead of raw `pl.read_delta` where possible.
+- Provide `symbol_id` to ensure optimal partition pruning.
 - Keep joins on `exchange_id` + `symbol_id`.
-- Convert fixed-point to real values only at the end of a pipeline.
 
 ## 8. Agent Interface
 
 **Instructions for LLMs:**
 When writing code for this data lake, follow these rules:
 
-1.  **Python Access:** Prefer using `pointline.research` helpers (`scan_table`, `load_trades`, etc.) instead of raw `pl.read_delta`.
-2.  **Schema Awareness:** See [Schema Reference](../schemas.md) for complete table schemas.
-3.  **Column Names:**
-    -   Timestamp: `ts_local_us` (int64)
-    -   Price: `price_int` (int64)
-    -   Quantity: `qty_int` (int64)
-    -   IDs: `exchange_id` (u16), `symbol_id` (u32)
-4.  **Joins:** Always use `join_asof` on `ts_local_us` for merging asynchronous streams.
-5.  **Partitioning:** Always filter by `date` partition first to avoid scanning the entire lake.
+1.  **Symbol Discovery:** Always start by finding the correct `symbol_id` using `pointline.registry.find_symbol()`.
+2.  **Python Access:** Use `pointline.research` helpers (`scan_table`, `load_trades`, etc.) passing `symbol_id`.
+3.  **L2 Replay:** Use `pointline.l2_replay.snapshot_at(symbol_id=...)` for book reconstruction.
+4.  **Schema Awareness:** See [Schema Reference](../schemas.md) for complete table schemas.
+5.  **Joins:** Always use `join_asof` on `ts_local_us`.
 
 **Safe Query Template (DuckDB):**
 ```sql
