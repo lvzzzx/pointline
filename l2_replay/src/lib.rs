@@ -520,12 +520,20 @@ async fn build_checkpoint_updates_df(
         let exchange_expr = col("exchange_id").cast_to(&DataType::Int64, &df_schema)?;
         df = df.filter(exchange_expr.eq(lit(i64::from(exchange_id))))?;
     }
-    let symbol_expr = col("symbol_id").cast_to(&DataType::Int64, &df_schema)?;
-    df = df.filter(symbol_expr.eq(lit(symbol_id)))?;
+    let symbol_in_schema = df_schema.field_with_unqualified_name("symbol_id").is_ok();
+    // symbol_id is a partition column in some tables, so it may not be stored in Parquet files
+    if symbol_in_schema {
+        let symbol_expr = col("symbol_id").cast_to(&DataType::Int64, &df_schema)?;
+        df = df.filter(symbol_expr.eq(lit(symbol_id)))?;
+    }
 
     df = df.select(vec![
         col("exchange_id"),
-        col("symbol_id"),
+        if symbol_in_schema {
+            col("symbol_id")
+        } else {
+            lit(symbol_id).alias("symbol_id")
+        },
         col("ts_local_us"),
         col("ingest_seq"),
         col("file_line_number"),
@@ -1289,17 +1297,18 @@ pub async fn build_state_checkpoints_delta(
 
     if let Some(current) = table.take() {
         let mut current = current;
-        let mut partitions: HashSet<(String, i32)> = HashSet::new();
+        let mut partitions: HashSet<(String, i32, i64)> = HashSet::new();
         for row in &rows {
-            partitions.insert((row.exchange.clone(), row.date));
+            partitions.insert((row.exchange.clone(), row.date, row.symbol_id));
         }
 
-        for (exchange, date) in partitions {
+        for (exchange, date, symbol_id) in partitions {
             let date = days_to_date(date)?;
             let predicate = format!(
-                "exchange = '{}' AND date = '{}'",
+                "exchange = '{}' AND date = '{}' AND symbol_id = {}",
                 escape_sql_string(&exchange),
-                date.format("%Y-%m-%d")
+                date.format("%Y-%m-%d"),
+                symbol_id
             );
             let (next, _) = DeltaOps::from(current)
                 .delete()

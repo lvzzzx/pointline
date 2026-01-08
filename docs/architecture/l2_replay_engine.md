@@ -115,11 +115,14 @@ Engine responsibilities:
 
 Build `gold.l2_state_checkpoint` by replaying from the latest snapshot and writing the full book
 state on a cadence (time or update count). Each checkpoint records the exact stream position.
+Initial cadence target: **10 seconds** (`checkpoint_every_us = 10_000_000`) unless workload dictates otherwise.
 
 ## 7. IO and Performance
 
 - **Input:** Delta/Parquet via `delta-rs` with Arrow memory layout.
 - **Filtering:** always apply `date`, then `exchange`, then `symbol_id`.
+- **Storage layout:** partition by `exchange` + `date`, cluster/Z-order by `symbol_id` + `ts_local_us`.
+- **Upserts:** checkpoint rebuilds must be scoped to `(exchange, date, symbol_id)` to avoid wiping other symbols.
 - **Parallelism:** per-symbol or per-partition parallelism; never parallelize within a single
   symbol stream.
 - **Emission:** materialize `Vec<(price,size)>` only at checkpoint time to reduce overhead.

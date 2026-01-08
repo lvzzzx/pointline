@@ -175,6 +175,7 @@ Tardis incremental L2 updates are **absolute sizes** at a price level (not delta
 
 **Replay accelerator (Gold):**
 - `gold.l2_state_checkpoint` to jump close to a target time and replay forward
+- Partition by `exchange` + `date`, cluster/Z-order by `symbol_id` + `ts_local_us`; rebuilds should upsert scoped to `(exchange, date, symbol_id)`.
 
 #### 5.1.1 Build Recipes (Data Infra)
 
@@ -189,7 +190,7 @@ from pointline import research
 
 lake_root = os.getenv("LAKE_ROOT", "./data/lake")
 
-checkpoint_every_us = 60_000_000
+checkpoint_every_us = 10_000_000
 checkpoint_every_updates = 10_000
 
 updates = (

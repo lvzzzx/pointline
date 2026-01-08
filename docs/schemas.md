@@ -425,7 +425,8 @@ Same schema as `silver.quotes`.
 Full-depth book checkpoints to accelerate incremental replay over long ranges.
 
 **Source:** Derived from `silver.l2_updates`  
-**Partitioned by:** `["exchange", "date"]`
+**Partitioned by:** `["exchange", "date"]`  
+**Cluster/Z-order (recommended):** `["symbol_id", "ts_local_us"]`
 
 | Column | Type | Notes |
 |---|---:|---|
@@ -444,6 +445,7 @@ Full-depth book checkpoints to accelerate incremental replay over long ranges.
 **Semantics:**
 - Checkpoints store **full depth** state plus the exact stream position used to create them.
 - Safe replay start point for long-range queries (replay forward from checkpoint).
+- Checkpoint build jobs should upsert by `(exchange, date, symbol_id)` to avoid deleting other symbols.
 
 ---
 
