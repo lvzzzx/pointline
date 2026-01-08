@@ -25,7 +25,7 @@ from pointline.services.trades_service import TradesIngestionService
 from pointline.services.quotes_service import QuotesIngestionService
 from pointline.services.book_snapshots_service import BookSnapshotsIngestionService
 from pointline.services.l2_updates_service import L2UpdatesIngestionService
-from pointline.registry import find_symbol
+from pointline.registry import find_symbol, resolve_symbol
 
 
 def _sorted_files(files: Iterable[BronzeFileMetadata]) -> list[BronzeFileMetadata]:
@@ -403,36 +403,6 @@ def _parse_symbol_id_single(value: str | None) -> int | None:
 
 
 def _cmd_l2_state_checkpoint_build(args: argparse.Namespace) -> int:
-    exchange = args.exchange
-    exchange_id = args.exchange_id
-
-    if exchange and exchange_id is not None:
-        try:
-            expected_id = get_exchange_id(exchange)
-        except ValueError as exc:
-            print(f"Error: {exc}")
-            return 2
-        if expected_id != exchange_id:
-            print(
-                f"Error: exchange_id {exchange_id} does not match exchange "
-                f"{exchange} (expected {expected_id})"
-            )
-            return 2
-
-    if exchange and exchange_id is None:
-        try:
-            exchange_id = get_exchange_id(exchange)
-        except ValueError as exc:
-            print(f"Error: {exc}")
-            return 2
-
-    if exchange is None and exchange_id is not None:
-        try:
-            exchange = get_exchange_name(exchange_id)
-        except ValueError as exc:
-            print(f"Error: {exc}")
-            return 2
-
     try:
         symbol_id = _parse_symbol_id_single(args.symbol_id)
     except ValueError as exc:
@@ -442,6 +412,8 @@ def _cmd_l2_state_checkpoint_build(args: argparse.Namespace) -> int:
     if symbol_id is None:
         print("Error: symbol_id is required for l2-state-checkpoint")
         return 2
+
+    exchange, exchange_id, _ = resolve_symbol(symbol_id)
 
     rows_written = build_state_checkpoints_delta(
         updates_path=get_table_path("l2_updates"),
@@ -715,15 +687,6 @@ def _build_parser() -> argparse.ArgumentParser:
     l2_state_checkpoint = gold_sub.add_parser(
         "l2-state-checkpoint",
         help="Build gold.l2_state_checkpoint from silver.l2_updates",
-    )
-    l2_state_checkpoint.add_argument(
-        "--exchange",
-        help="Exchange name (e.g., deribit). Optional if using --exchange-id",
-    )
-    l2_state_checkpoint.add_argument(
-        "--exchange-id",
-        type=int,
-        help="Exchange ID (optional if using --exchange)",
     )
     l2_state_checkpoint.add_argument(
         "--symbol-id",
