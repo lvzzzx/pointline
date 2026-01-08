@@ -12,11 +12,8 @@ use deltalake::open_table;
 use deltalake::schema::partitions::{PartitionFilter, PartitionValue};
 use futures::StreamExt;
 
-use crate::arrow_utils::{
-    checkpoint_update_columns, checkpoint_update_from_columns, get_i32, get_i64, get_levels,
-    update_columns, update_from_columns,
-};
-use crate::types::{Checkpoint, CheckpointMeta, L2Update, StreamPos};
+use crate::arrow_utils::{get_i32, get_i64, get_levels, update_columns, update_from_columns};
+use crate::types::{Checkpoint, L2Update, StreamPos};
 use crate::utils::ts_to_date;
 
 pub fn delta_table_exists(path: &str) -> bool {
@@ -357,24 +354,6 @@ where
         let cols = update_columns(&batch)?;
         for row in 0..batch.num_rows() {
             f(update_from_columns(&cols, row)?)?;
-        }
-    }
-    Ok(())
-}
-
-pub async fn for_each_checkpoint_update<F>(
-    mut stream: SendableRecordBatchStream,
-    mut f: F,
-) -> Result<()>
-where
-    F: FnMut(CheckpointMeta, L2Update) -> Result<()>,
-{
-    while let Some(batch) = stream.next().await {
-        let batch = batch?;
-        let cols = checkpoint_update_columns(&batch)?;
-        for row in 0..batch.num_rows() {
-            let (meta, update) = checkpoint_update_from_columns(&cols, row)?;
-            f(meta, update)?;
         }
     }
     Ok(())
