@@ -1,5 +1,6 @@
 use std::collections::HashSet;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, Context, Result};
 use chrono::NaiveDate;
@@ -25,6 +26,31 @@ use crate::io::{
 use crate::replay::{CadenceState, SnapshotReset};
 use crate::types::{CheckpointMeta, CheckpointRow, OrderBook, Snapshot, StreamPos};
 use crate::utils::{date_to_days, date_to_ts_local_us, days_to_date, escape_sql_string, parse_date_opt, ts_to_date};
+
+fn timing_enabled() -> bool {
+    std::env::var("POINTLINE_L2_TIMING").is_ok()
+}
+
+fn log_timing(label: &str, start: Instant) {
+    if timing_enabled() {
+        eprintln!("timing/replay {}: {:?}", label, start.elapsed());
+    }
+}
+
+fn build_order_book(
+    dense_price_min: Option<i64>,
+    dense_price_max: Option<i64>,
+    dense_tick_size: Option<i64>,
+) -> Result<OrderBook> {
+    match (dense_price_min, dense_price_max, dense_tick_size) {
+        (Some(min), Some(max), Some(tick)) => OrderBook::new_dense(min, max, tick)
+            .map_err(|err| anyhow!(err)),
+        (None, None, None) => Ok(OrderBook::default()),
+        _ => Err(anyhow!(
+            "dense_price_min, dense_price_max, dense_tick_size must be all set or all None"
+        )),
+    }
+}
 
 pub async fn snapshot_at_delta(
     updates_path: &str,
@@ -61,8 +87,7 @@ pub async fn snapshot_at_delta(
     let mut book = OrderBook::default();
     let mut min_pos = None;
     if let Some(checkpoint) = &checkpoint {
-        book.bids = checkpoint.bids.iter().cloned().collect();
-        book.asks = checkpoint.asks.iter().cloned().collect();
+        book.seed_from_levels(&checkpoint.bids, &checkpoint.asks);
         min_pos = Some(StreamPos {
             ts_local_us: checkpoint.ts_local_us,
             ingest_seq: checkpoint.ingest_seq,
@@ -111,6 +136,9 @@ pub async fn replay_between_delta(
     end_ts_local_us: i64,
     every_us: Option<i64>,
     every_updates: Option<u64>,
+    dense_price_min: Option<i64>,
+    dense_price_max: Option<i64>,
+    dense_tick_size: Option<i64>,
 ) -> Result<RecordBatch> {
     if every_us.unwrap_or(0) <= 0 && every_updates.unwrap_or(0) == 0 {
         return Err(anyhow!(
@@ -130,11 +158,11 @@ pub async fn replay_between_delta(
     )
     .await?;
 
-    let mut book = OrderBook::default();
+    let mut book =
+        build_order_book(dense_price_min, dense_price_max, dense_tick_size)?;
     let mut min_pos = None;
     if let Some(checkpoint) = &checkpoint {
-        book.bids = checkpoint.bids.iter().cloned().collect();
-        book.asks = checkpoint.asks.iter().cloned().collect();
+        book.seed_from_levels(&checkpoint.bids, &checkpoint.asks);
         min_pos = Some(StreamPos {
             ts_local_us: checkpoint.ts_local_us,
             ingest_seq: checkpoint.ingest_seq,
@@ -196,13 +224,38 @@ pub async fn replay_between_delta(
     // State for atomic processing
     let mut last_pos: Option<StreamPos> = None;
 
+    let total_start = Instant::now();
+    let timing = timing_enabled();
+    let mut decode_time = Duration::from_secs(0);
+    let mut apply_time = Duration::from_secs(0);
+    let mut emit_time = Duration::from_secs(0);
+    let t_stream = Instant::now();
     let mut stream = df.execute_stream().await?;
+    log_timing("replay_between execute_stream", t_stream);
+    let mut batches: u64 = 0;
+    let mut rows: u64 = 0;
 
-    while let Some(batch) = stream.next().await {
+    while let Some(batch) = {
+        let t_next = Instant::now();
+        let next = stream.next().await;
+        log_timing("replay_between stream_next", t_next);
+        next
+    } {
         let batch = batch?;
+        let num_rows = batch.num_rows();
+        let t_cols = Instant::now();
         let cols = update_columns(&batch)?;
+        log_timing("replay_between update_columns", t_cols);
+        let t_rows = Instant::now();
         for row in 0..batch.num_rows() {
-            let update = update_from_columns(&cols, row)?;
+            let update = if timing {
+                let t_decode = Instant::now();
+                let update = update_from_columns(&cols, row)?;
+                decode_time += t_decode.elapsed();
+                update
+            } else {
+                update_from_columns(&cols, row)?
+            };
 
             // Check for timestamp boundary
             if let Some(pos) = last_pos {
@@ -212,6 +265,7 @@ pub async fn replay_between_delta(
                         let emit =
                             cadence.should_emit(pos.ts_local_us, every_us, every_updates);
                         if emit {
+                            let t_emit = Instant::now();
                             let (bids, asks) = book_levels(&book);
 
                             // Append to builders
@@ -223,14 +277,22 @@ pub async fn replay_between_delta(
                             file_id_builder.append_value(pos.file_id);
                             append_levels(&mut bids_builder, &bids);
                             append_levels(&mut asks_builder, &asks);
-
+                            if timing {
+                                emit_time += t_emit.elapsed();
+                            }
                         }
                     }
                 }
             }
 
             // Apply current update
-            reset.apply(&mut book, &update);
+            if timing {
+                let t_apply = Instant::now();
+                reset.apply(&mut book, &update);
+                apply_time += t_apply.elapsed();
+            } else {
+                reset.apply(&mut book, &update);
+            }
 
             cadence.record_update(update.ts_local_us >= start_ts_local_us);
 
@@ -241,6 +303,9 @@ pub async fn replay_between_delta(
                 file_id: update.file_id,
             });
         }
+        log_timing("replay_between process_rows(batch)", t_rows);
+        batches = batches.saturating_add(1);
+        rows = rows.saturating_add(num_rows as u64);
     }
 
     // Handle final group after stream ends
@@ -248,6 +313,7 @@ pub async fn replay_between_delta(
         if pos.ts_local_us >= start_ts_local_us {
             let emit = cadence.should_emit(pos.ts_local_us, every_us, every_updates);
             if emit {
+                let t_emit = Instant::now();
                 let (bids, asks) = book_levels(&book);
 
                 // Append to builders
@@ -259,7 +325,34 @@ pub async fn replay_between_delta(
                 file_id_builder.append_value(pos.file_id);
                 append_levels(&mut bids_builder, &bids);
                 append_levels(&mut asks_builder, &asks);
+                if timing {
+                    emit_time += t_emit.elapsed();
+                }
             }
+        }
+    }
+    if timing_enabled() {
+        eprintln!(
+            "timing/replay replay_between done batches={} rows={} total={:?}",
+            batches,
+            rows,
+            total_start.elapsed()
+        );
+        if rows > 0 {
+            let rows_f = rows as f64;
+            eprintln!(
+                "timing/replay replay_between breakdown decode={:?} ({:.3} ns/row) apply={:?} ({:.3} ns/row) emit={:?}",
+                decode_time,
+                (decode_time.as_secs_f64() * 1e9) / rows_f,
+                apply_time,
+                (apply_time.as_secs_f64() * 1e9) / rows_f,
+                emit_time
+            );
+        } else {
+            eprintln!(
+                "timing/replay replay_between breakdown decode={:?} apply={:?} emit={:?}",
+                decode_time, apply_time, emit_time
+            );
         }
     }
 

@@ -59,10 +59,10 @@ mod tests {
 
         assert_eq!(snapshots.len(), 1);
         let (book, _pos) = &snapshots[0];
-        assert_eq!(book.bids.len(), 1);
-        assert_eq!(book.asks.len(), 1);
-        assert_eq!(book.bids.get(&99), Some(&1));
-        assert_eq!(book.asks.get(&102), Some(&2));
+        assert_eq!(book.bids_len(), 1);
+        assert_eq!(book.asks_len(), 1);
+        assert_eq!(book.bid_at(99), Some(1));
+        assert_eq!(book.ask_at(102), Some(2));
     }
 
     #[test]

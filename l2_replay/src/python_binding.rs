@@ -126,7 +126,10 @@ fn to_pyarrow(py: Python, batch: RecordBatch) -> PyResult<PyObject> {
         checkpoint_path=None,
         exchange=None,
         every_us=None,
-        every_updates=None
+        every_updates=None,
+        dense_price_min=None,
+        dense_price_max=None,
+        dense_tick_size=None
     )
 )]
 fn replay_between(
@@ -140,6 +143,9 @@ fn replay_between(
     exchange: Option<String>,
     every_us: Option<i64>,
     every_updates: Option<u64>,
+    dense_price_min: Option<i64>,
+    dense_price_max: Option<i64>,
+    dense_tick_size: Option<i64>,
 ) -> PyResult<PyObject> {
     let result = py.allow_threads(|| {
         runtime().block_on(replay_between_delta(
@@ -152,6 +158,9 @@ fn replay_between(
             end_ts_local_us,
             every_us,
             every_updates,
+            dense_price_min,
+            dense_price_max,
+            dense_tick_size,
         ))
     });
 
@@ -261,14 +270,7 @@ impl Engine {
     }
 
     fn _seed_book(&mut self, bids: Vec<(i64, i64)>, asks: Vec<(i64, i64)>) {
-        self.book.bids.clear();
-        self.book.asks.clear();
-        for (price, size) in bids {
-            self.book.bids.insert(price, size);
-        }
-        for (price, size) in asks {
-            self.book.asks.insert(price, size);
-        }
+        self.book.seed_from_levels(&bids, &asks);
         self.snapshot_key = None;
     }
 
@@ -290,19 +292,7 @@ impl Engine {
     }
 
     fn snapshot(&self, py: Python<'_>) -> PyObject {
-        let bids: Vec<(i64, i64)> = self
-            .book
-            .bids
-            .iter()
-            .rev()
-            .map(|(price, size)| (*price, *size))
-            .collect();
-        let asks: Vec<(i64, i64)> = self
-            .book
-            .asks
-            .iter()
-            .map(|(price, size)| (*price, *size))
-            .collect();
+        let (bids, asks) = self.book.levels();
 
         let snapshot = PyDict::new(py);
         snapshot.set_item("exchange_id", self.exchange_id).ok();

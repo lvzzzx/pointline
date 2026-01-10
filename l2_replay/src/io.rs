@@ -16,6 +16,16 @@ use crate::arrow_utils::{get_i32, get_i64, get_levels, update_columns, update_fr
 use crate::types::{Checkpoint, L2Update, StreamPos};
 use crate::utils::ts_to_date;
 
+fn timing_enabled() -> bool {
+    std::env::var("POINTLINE_L2_TIMING").is_ok()
+}
+
+fn log_timing(label: &str, start: std::time::Instant) {
+    if timing_enabled() {
+        eprintln!("timing/io {}: {:?}", label, start.elapsed());
+    }
+}
+
 pub fn delta_table_exists(path: &str) -> bool {
     Path::new(path).join("_delta_log").exists()
 }
@@ -65,8 +75,12 @@ pub async fn latest_checkpoint(
     };
 
     let target_date = ts_to_date(ts_local_us)?;
+    let t0 = std::time::Instant::now();
     let table = open_table(checkpoint_path).await?;
+    log_timing("latest_checkpoint open_table", t0);
+    let t1 = std::time::Instant::now();
     let metadata = table.metadata()?;
+    log_timing("latest_checkpoint metadata", t1);
     let partition_cols: HashSet<&String> = metadata.partition_columns.iter().collect();
 
     let mut partition_filters = Vec::new();
@@ -85,16 +99,20 @@ pub async fn latest_checkpoint(
         });
     }
 
+    let t2 = std::time::Instant::now();
     let file_uris = table
         .get_file_uris_by_partitions(&partition_filters)
         .context("fetch checkpoint files for partition filters")?;
+    log_timing("latest_checkpoint get_file_uris", t2);
     if file_uris.is_empty() {
         return Ok(None);
     }
 
     let ctx = SessionContext::new_with_config(parquet_read_session_config());
     let read_options = ParquetReadOptions::default().parquet_pruning(true);
+    let t3 = std::time::Instant::now();
     let mut df = ctx.read_parquet(file_uris, read_options).await?;
+    log_timing("latest_checkpoint read_parquet_df", t3);
     let df_schema = df.schema().clone();
     if let Some(exchange) = exchange {
         if df_schema.field_with_unqualified_name("exchange").is_ok() {
@@ -110,6 +128,7 @@ pub async fn latest_checkpoint(
     df = df.filter(col("symbol_id").eq(lit(symbol_id)))?;
     df = df.filter(col("ts_local_us").lt_eq(lit(ts_local_us)))?;
 
+    let t4 = std::time::Instant::now();
     df = df.select(vec![
         col("ts_local_us"),
         col("bids"),
@@ -125,8 +144,11 @@ pub async fn latest_checkpoint(
         col("file_line_number").sort(false, true),
     ])?;
     df = df.limit(0, Some(1))?;
+    log_timing("latest_checkpoint plan_filters_select", t4);
 
+    let t5 = std::time::Instant::now();
     let batches = df.collect().await?;
+    log_timing("latest_checkpoint collect", t5);
     if batches.is_empty() || batches[0].num_rows() == 0 {
         return Ok(None);
     }
@@ -161,8 +183,12 @@ pub async fn build_updates_df(
     max_ts_inclusive: i64,
     min_pos_exclusive: Option<StreamPos>,
 ) -> Result<DataFrame> {
+    let t0 = std::time::Instant::now();
     let table = open_table(updates_path).await?;
+    log_timing("build_updates_df open_table", t0);
+    let t1 = std::time::Instant::now();
     let metadata = table.metadata()?;
+    log_timing("build_updates_df metadata", t1);
     let partition_cols: HashSet<&String> = metadata.partition_columns.iter().collect();
 
     let mut partition_filters = Vec::new();
@@ -191,9 +217,11 @@ pub async fn build_updates_df(
         });
     }
 
+    let t2 = std::time::Instant::now();
     let file_uris = table
         .get_file_uris_by_partitions(&partition_filters)
         .context("fetch delta files for partition filters")?;
+    log_timing("build_updates_df get_file_uris", t2);
 
     let ctx = SessionContext::new_with_config(parquet_read_session_config());
     if file_uris.is_empty() {
@@ -201,7 +229,9 @@ pub async fn build_updates_df(
     }
 
     let read_options = ParquetReadOptions::default().parquet_pruning(true);
+    let t3 = std::time::Instant::now();
     let mut df = ctx.read_parquet(file_uris, read_options).await?;
+    log_timing("build_updates_df read_parquet_df", t3);
     let df_schema = df.schema().clone();
     if let Some(exchange) = exchange {
         if df_schema.field_with_unqualified_name("exchange").is_ok() {
@@ -218,6 +248,7 @@ pub async fn build_updates_df(
         println!("l2_updates schema: {:?}", df.schema());
     }
 
+    let t4 = std::time::Instant::now();
     df = df.filter(col("exchange_id").eq(lit(exchange_id)))?;
     // symbol_id is a partition column, not stored in Parquet files
     // Partition filtering above already ensures we only read files for this symbol_id
@@ -240,6 +271,7 @@ pub async fn build_updates_df(
         col("size_int"),
         col("file_id"),
     ])?;
+    log_timing("build_updates_df plan_filters_select", t4);
     Ok(df)
 }
 
@@ -252,8 +284,12 @@ pub async fn build_checkpoint_updates_df(
     end_date: NaiveDate,
     assume_sorted: bool,
 ) -> Result<DataFrame> {
+    let t0 = std::time::Instant::now();
     let table = open_table(updates_path).await?;
+    log_timing("build_checkpoint_updates_df open_table", t0);
+    let t1 = std::time::Instant::now();
     let metadata = table.metadata()?;
+    log_timing("build_checkpoint_updates_df metadata", t1);
     let partition_cols: HashSet<&String> = metadata.partition_columns.iter().collect();
 
     let mut partition_filters = Vec::new();
@@ -282,9 +318,11 @@ pub async fn build_checkpoint_updates_df(
         });
     }
 
+    let t2 = std::time::Instant::now();
     let file_uris = table
         .get_file_uris_by_partitions(&partition_filters)
         .context("fetch delta files for partition filters")?;
+    log_timing("build_checkpoint_updates_df get_file_uris", t2);
 
     let ctx = SessionContext::new_with_config(parquet_read_session_config());
     if file_uris.is_empty() {
@@ -293,7 +331,9 @@ pub async fn build_checkpoint_updates_df(
             .context("create empty checkpoint updates dataframe");
     }
     let read_options = ParquetReadOptions::default().parquet_pruning(true);
+    let t3 = std::time::Instant::now();
     let mut df = ctx.read_parquet(file_uris, read_options).await?;
+    log_timing("build_checkpoint_updates_df read_parquet_df", t3);
     let df_schema = df.schema().clone();
     if let Some(exchange) = exchange {
         if df_schema.field_with_unqualified_name("exchange").is_ok() {
@@ -317,6 +357,7 @@ pub async fn build_checkpoint_updates_df(
         df = df.filter(symbol_expr.eq(lit(symbol_id)))?;
     }
 
+    let t4 = std::time::Instant::now();
     df = df.select(vec![
         col("exchange_id"),
         if symbol_in_schema {
@@ -341,6 +382,7 @@ pub async fn build_checkpoint_updates_df(
             col("file_line_number").sort(true, true),
         ])?;
     }
+    log_timing("build_checkpoint_updates_df plan_filters_select", t4);
 
     Ok(df)
 }
@@ -349,12 +391,25 @@ pub async fn for_each_update<F>(mut stream: SendableRecordBatchStream, mut f: F)
 where
     F: FnMut(L2Update) -> Result<()>,
 {
+    let mut batches: u64 = 0;
+    let mut rows: u64 = 0;
     while let Some(batch) = stream.next().await {
+        let t0 = std::time::Instant::now();
         let batch = batch?;
+        log_timing("for_each_update stream_next", t0);
+        let t1 = std::time::Instant::now();
         let cols = update_columns(&batch)?;
+        log_timing("for_each_update update_columns", t1);
+        let t2 = std::time::Instant::now();
         for row in 0..batch.num_rows() {
             f(update_from_columns(&cols, row)?)?;
         }
+        log_timing("for_each_update update_from_columns(batch)", t2);
+        batches = batches.saturating_add(1);
+        rows = rows.saturating_add(batch.num_rows() as u64);
+    }
+    if timing_enabled() {
+        eprintln!("timing/io for_each_update done batches={} rows={}", batches, rows);
     }
     Ok(())
 }

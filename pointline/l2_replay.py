@@ -63,8 +63,15 @@ def replay_between(
     end_ts_local_us: int,
     every_us: int | None = None,
     every_updates: int | None = None,
+    dense_price_min: int | None = None,
+    dense_price_max: int | None = None,
+    dense_tick_size: int | None = None,
 ) -> pl.DataFrame:
-    """Yield snapshots between timestamps on a cadence."""
+    """Yield snapshots between timestamps on a cadence.
+
+    If dense_price_min/max/tick_size are provided (price_int units),
+    a dense vector order book is used for faster updates.
+    """
     exchange, exchange_id, _ = resolve_symbol(symbol_id)
 
     batch = _rust_l2_replay.replay_between(
@@ -77,6 +84,9 @@ def replay_between(
         end_ts_local_us=end_ts_local_us,
         every_us=every_us,
         every_updates=every_updates,
+        dense_price_min=dense_price_min,
+        dense_price_max=dense_price_max,
+        dense_tick_size=dense_tick_size,
     )
     return pl.from_arrow(batch)
 

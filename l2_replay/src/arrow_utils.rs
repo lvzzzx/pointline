@@ -129,18 +129,7 @@ pub fn struct_levels(struct_array: &StructArray) -> Result<Vec<(i64, i64)>> {
 }
 
 pub fn book_levels(book: &OrderBook) -> (Vec<(i64, i64)>, Vec<(i64, i64)>) {
-    let bids = book
-        .bids
-        .iter()
-        .rev()
-        .map(|(price, size)| (*price, *size))
-        .collect();
-    let asks = book
-        .asks
-        .iter()
-        .map(|(price, size)| (*price, *size))
-        .collect();
-    (bids, asks)
+    book.levels()
 }
 
 pub fn append_levels(builder: &mut ListBuilder<StructBuilder>, levels: &[(i64, i64)]) {
