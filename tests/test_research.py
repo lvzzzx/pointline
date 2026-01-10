@@ -1,8 +1,12 @@
-import pytest
 import polars as pl
 from datetime import date
 from unittest.mock import patch, MagicMock
-from pointline.research import scan_table, load_trades, list_tables
+from pointline.research import (
+    _resolve_symbol_ids_by_name,
+    load_trades,
+    list_tables,
+    scan_table,
+)
 
 @patch("pointline.research.pl.scan_delta")
 @patch("pointline.research.get_table_path")
@@ -20,7 +24,6 @@ def test_scan_table_filters(mock_get_path, mock_scan_delta):
     scan_table(
         "trades",
         exchange="binance",
-        exchange_id=1,
         symbol_id=[100, 200],
         start_date="2025-01-01",
         end_date=date(2025, 1, 2),
@@ -32,7 +35,7 @@ def test_scan_table_filters(mock_get_path, mock_scan_delta):
     
     # Verify filters were applied
     # Note: The order of filters depends on the implementation of _apply_filters
-    assert mock_lf.filter.call_count == 4 # exchange, exchange_id, symbol_id, date range
+    assert mock_lf.filter.call_count == 3 # exchange, symbol_id, date range
     mock_lf.select.assert_called_once_with(["ts_local_us", "price_int"])
 
 def test_list_tables():
@@ -52,9 +55,36 @@ def test_load_trades_lazy(mock_scan_table):
     mock_scan_table.assert_called_once_with(
         "trades",
         exchange="binance",
-        exchange_id=None,
         symbol_id=None,
+        symbol=None,
         start_date=None,
         end_date=None,
         columns=None
     )
+
+
+def test_resolve_symbol_ids_by_name_union(monkeypatch):
+    dim_symbol = pl.DataFrame(
+        {
+            "symbol_id": [101, 102, 201],
+            "exchange": ["binance", "binance", "kraken"],
+            "exchange_symbol": ["BTCUSDT", "BTCUSDT", "BTCUSDT"],
+            "valid_from_ts": [1, 2, 3],
+            "valid_until_ts": [2, 3, 2**63 - 1],
+        }
+    )
+
+    monkeypatch.setattr(
+        "pointline.research._read_dim_symbol",
+        lambda: dim_symbol,
+    )
+
+    symbol_ids, exchanges = _resolve_symbol_ids_by_name(
+        "BTCUSDT",
+        exchange="binance",
+        start_date=None,
+        end_date=None,
+    )
+
+    assert set(symbol_ids) == {101, 102}
+    assert set(exchanges) == {"binance"}

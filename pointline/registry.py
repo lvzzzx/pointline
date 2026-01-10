@@ -6,44 +6,41 @@ from __future__ import annotations
 
 import logging
 import polars as pl
-from pointline.config import get_table_path, get_exchange_name
+from pointline.config import get_table_path
 
 logger = logging.getLogger(__name__)
 
-_SYMBOL_CACHE: pl.DataFrame | None = None
-
-def _get_symbol_cache(force_refresh: bool = False) -> pl.DataFrame:
+def _read_dim_symbol() -> pl.DataFrame:
     """
-    Lazy loads the dim_symbol table into memory.
+    Read dim_symbol from Delta each call to avoid stale metadata.
     """
-    global _SYMBOL_CACHE
-    if _SYMBOL_CACHE is None or force_refresh:
-        path = get_table_path("dim_symbol")
-        try:
-            # We select descriptive columns for search capability
-            # We assume these are globally unique and stable across time for a given symbol_id
-            _SYMBOL_CACHE = pl.read_delta(str(path)).select(
-                [
-                    "symbol_id", 
-                    "exchange_id", 
-                    "exchange", 
-                    "exchange_symbol",
-                    "base_asset",
-                    "quote_asset",
-                    "asset_type",
-                    "tick_size",
-                    "lot_size",
-                    "price_increment",
-                    "amount_increment",
-                    "contract_size",
-                    "valid_from_ts",
-                    "valid_until_ts"
-                ]
-            ).unique(subset=["symbol_id"])
-        except Exception as e:
-            logger.warning(f"Failed to load dim_symbol registry: {e}")
-            # Return empty schema if table doesn't exist
-            _SYMBOL_CACHE = pl.DataFrame(schema={
+    path = get_table_path("dim_symbol")
+    try:
+        # We select descriptive columns for search capability
+        # We assume these are globally unique and stable across time for a given symbol_id
+        return pl.read_delta(str(path)).select(
+            [
+                "symbol_id",
+                "exchange_id",
+                "exchange",
+                "exchange_symbol",
+                "base_asset",
+                "quote_asset",
+                "asset_type",
+                "tick_size",
+                "lot_size",
+                "price_increment",
+                "amount_increment",
+                "contract_size",
+                "valid_from_ts",
+                "valid_until_ts",
+            ]
+        ).unique(subset=["symbol_id"])
+    except Exception as exc:
+        logger.warning(f"Failed to load dim_symbol registry: {exc}")
+        # Return empty schema if table doesn't exist
+        return pl.DataFrame(
+            schema={
                 "symbol_id": pl.Int64,
                 "exchange_id": pl.Int16,
                 "exchange": pl.Utf8,
@@ -57,10 +54,9 @@ def _get_symbol_cache(force_refresh: bool = False) -> pl.DataFrame:
                 "amount_increment": pl.Float64,
                 "contract_size": pl.Float64,
                 "valid_from_ts": pl.Int64,
-                "valid_until_ts": pl.Int64
-            })
-            
-    return _SYMBOL_CACHE
+                "valid_until_ts": pl.Int64,
+            }
+        )
 
 def resolve_symbol(symbol_id: int) -> tuple[str, int, str]:
     """
@@ -75,17 +71,11 @@ def resolve_symbol(symbol_id: int) -> tuple[str, int, str]:
     Raises:
         ValueError: If symbol_id is not found.
     """
-    df = _get_symbol_cache()
+    df = _read_dim_symbol()
     row = df.filter(pl.col("symbol_id") == symbol_id)
     
     if row.height == 0:
-        # Retry once with refresh
-        logger.info(f"Symbol {symbol_id} not in cache, refreshing registry...")
-        df = _get_symbol_cache(force_refresh=True)
-        row = df.filter(pl.col("symbol_id") == symbol_id)
-        
-        if row.height == 0:
-            raise ValueError(f"Symbol ID {symbol_id} not found in dim_symbol registry.")
+        raise ValueError(f"Symbol ID {symbol_id} not found in dim_symbol registry.")
 
     exchange_id = row["exchange_id"][0]
     exchange_name = row["exchange"][0]
@@ -98,15 +88,10 @@ def resolve_symbols(symbol_ids: Iterable[int]) -> list[str]:
     Resolves a list of symbol_ids to a unique list of exchange names.
     Useful for partition pruning across multiple symbols.
     """
-    df = _get_symbol_cache()
+    df = _read_dim_symbol()
     ids = list(symbol_ids)
     
     matches = df.filter(pl.col("symbol_id").is_in(ids))
-    
-    # If some IDs missing, try one refresh
-    if matches.height < len(set(ids)):
-        df = _get_symbol_cache(force_refresh=True)
-        matches = df.filter(pl.col("symbol_id").is_in(ids))
         
     return matches.select("exchange").unique()["exchange"].to_list()
 
@@ -129,7 +114,7 @@ def find_symbol(
     Returns:
         pl.DataFrame: DataFrame containing matching symbols with their IDs and metadata.
     """
-    df = _get_symbol_cache()
+    df = _read_dim_symbol()
     
     if exchange:
         df = df.filter(pl.col("exchange").str.to_lowercase() == exchange.lower())

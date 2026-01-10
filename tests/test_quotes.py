@@ -13,6 +13,7 @@ from pointline.io.protocols import BronzeFileMetadata, IngestionResult
 from pointline.services.quotes_service import QuotesIngestionService
 from pointline.quotes import (
     QUOTES_SCHEMA,
+    decode_fixed_point,
     encode_fixed_point,
     normalize_quotes_schema,
     parse_tardis_quotes_csv,
@@ -386,6 +387,33 @@ def test_encode_fixed_point_missing_symbol():
     
     with pytest.raises(ValueError, match="symbol_ids not found"):
         encode_fixed_point(df, dim_symbol)
+
+
+def test_decode_fixed_point():
+    """Decode fixed-point integers back to float bid/ask columns."""
+    dim_symbol = _sample_dim_symbol()
+    symbol_id = dim_symbol["symbol_id"][0]
+
+    df = pl.DataFrame(
+        {
+            "symbol_id": [symbol_id],
+            "bid_px_int": [5000000],
+            "bid_sz_int": [10000],
+            "ask_px_int": [5000050],
+            "ask_sz_int": [15000],
+        }
+    )
+
+    decoded = decode_fixed_point(df, dim_symbol)
+
+    assert "bid_px_int" not in decoded.columns
+    assert "ask_px_int" not in decoded.columns
+    assert decoded["bid_price"].dtype == pl.Float64
+    assert decoded["ask_price"].dtype == pl.Float64
+    assert decoded["bid_price"][0] == 50000.0
+    assert decoded["ask_price"][0] == 50000.5
+    assert decoded["bid_amount"][0] == 0.1
+    assert decoded["ask_amount"][0] == 0.15
 
 
 def test_resolve_symbol_ids():

@@ -16,6 +16,7 @@ from pointline.trades import (
     SIDE_BUY,
     SIDE_SELL,
     SIDE_UNKNOWN,
+    decode_fixed_point,
     encode_fixed_point,
     normalize_trades_schema,
     parse_tardis_trades_csv,
@@ -266,6 +267,29 @@ def test_encode_fixed_point_missing_symbol():
     
     with pytest.raises(ValueError, match="symbol_ids not found"):
         encode_fixed_point(df, dim_symbol)
+
+
+def test_decode_fixed_point():
+    """Decode fixed-point integers back to float price/qty columns."""
+    dim_symbol = _sample_dim_symbol()
+    symbol_id = dim_symbol["symbol_id"][0]
+
+    df = pl.DataFrame(
+        {
+            "symbol_id": [symbol_id],
+            "price_int": [5000000],
+            "qty_int": [10000],
+        }
+    )
+
+    decoded = decode_fixed_point(df, dim_symbol)
+
+    assert "price_int" not in decoded.columns
+    assert "qty_int" not in decoded.columns
+    assert decoded["price"].dtype == pl.Float64
+    assert decoded["qty"].dtype == pl.Float64
+    assert decoded["price"][0] == 50000.0
+    assert decoded["qty"][0] == 0.1
 
 
 def test_resolve_symbol_ids():

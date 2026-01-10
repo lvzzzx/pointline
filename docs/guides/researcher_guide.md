@@ -125,6 +125,25 @@ To save space and ensure precision, prices and quantities are stored as integers
 
 **For detailed encoding explanation, see [Schema Reference - Fixed-Point Encoding](../schemas.md#fixed-point-encoding).**
 
+#### 5.3.1 Decoding to Floats (Explicit)
+Decoding is **explicit** to avoid silently changing semantics. Use the domain helpers:
+
+```python
+from pointline import research
+from pointline.trades import decode_fixed_point as decode_trades
+from pointline.quotes import decode_fixed_point as decode_quotes
+from pointline.book_snapshots import decode_fixed_point as decode_books
+from pointline.config import get_table_path
+import polars as pl
+
+dim_symbol = pl.read_delta(str(get_table_path("dim_symbol"))).select(
+    ["symbol_id", "price_increment", "amount_increment"]
+)
+
+trades = research.load_trades(symbol_id=101, start_date="2025-12-28")
+trades = decode_trades(trades, dim_symbol)  # drops *_int, outputs Float64
+```
+
 ## 6. Common Workflows
 
 ### 6.1 Join Trades with Quotes (As-Of Join)
@@ -177,6 +196,10 @@ df = l2_replay.replay_between(
 - **symbol_id (i64):** The **Primary Key** for research. It uniquely identifies a specific version of a symbol (with specific tick size, etc.) valid for a specific time range. Use `pointline.registry` or CLI `symbol search` to find it.
 - **exchange (string):** vendor name, used for partitioning. Auto-resolved by APIs when `symbol_id` is provided.
 - **exchange_id (i16):** stable numeric mapping used for joins.
+
+**Symbol name convenience:** you can provide `exchange` + `symbol` to `pointline.research` loaders.  
+If the symbol changed over time, the loader returns the **union of all matching `symbol_id` values** in the date range.
+If `exchange` is omitted, the lookup spans all exchanges and may return multiple IDs.
 
 ### 7.2 Safe query template (DuckDB)
 ```sql

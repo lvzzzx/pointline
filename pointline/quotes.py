@@ -200,9 +200,53 @@ def validate_quotes(df: pl.DataFrame) -> pl.DataFrame:
     # Warn if rows were filtered
     if valid.height < df.height:
         import warnings
+        line_col = "file_line_number" if "file_line_number" in df.columns else "__row_nr"
+        df_with_line = df
+        if line_col == "__row_nr":
+            df_with_line = (
+                df.with_row_index("__row_nr")
+                if hasattr(df, "with_row_index")
+                else df.with_row_count("__row_nr")
+            )
+
+        rules = [
+            ("no_bid_or_ask", ~(has_bid | has_ask)),
+            ("bid_vals", has_bid & ((pl.col("bid_px_int") <= 0) | (pl.col("bid_sz_int") <= 0))),
+            ("ask_vals", has_ask & ((pl.col("ask_px_int") <= 0) | (pl.col("ask_sz_int") <= 0))),
+            (
+                "crossed",
+                has_bid & has_ask & (pl.col("bid_px_int") >= pl.col("ask_px_int")),
+            ),
+            (
+                "ts_local_us",
+                pl.col("ts_local_us").is_null()
+                | (pl.col("ts_local_us") <= 0)
+                | (pl.col("ts_local_us") >= 2**63),
+            ),
+            ("exchange", pl.col("exchange").is_null()),
+            ("exchange_id", pl.col("exchange_id").is_null()),
+            ("symbol_id", pl.col("symbol_id").is_null()),
+        ]
+
+        counts = df_with_line.select(
+            [rule.sum().alias(name) for name, rule in rules]
+        ).row(0)
+        breakdown = []
+        for (name, rule), count in zip(rules, counts):
+            if count:
+                sample = (
+                    df_with_line.filter(rule)
+                    .select(line_col)
+                    .head(5)
+                    .to_series()
+                    .to_list()
+                )
+                breakdown.append(f"{name}={count} lines={sample}")
+
+        detail = "; ".join(breakdown) if breakdown else "no rule breakdown available"
         warnings.warn(
-            f"validate_quotes: filtered {df.height - valid.height} invalid rows",
-            UserWarning
+            f"validate_quotes: filtered {df.height - valid.height} invalid rows; {detail}",
+            UserWarning,
         )
     
     return valid
@@ -277,6 +321,75 @@ def encode_fixed_point(
     
     # Drop intermediate columns
     return result.drop(["price_increment", "amount_increment"])
+
+
+def decode_fixed_point(
+    df: pl.DataFrame,
+    dim_symbol: pl.DataFrame,
+    *,
+    keep_ints: bool = False,
+) -> pl.DataFrame:
+    """Decode fixed-point integers into float bid/ask columns using dim_symbol metadata.
+
+    Requires:
+    - df must have 'symbol_id' column
+    - df must have 'bid_px_int', 'bid_sz_int', 'ask_px_int', 'ask_sz_int' columns
+    - dim_symbol must have 'symbol_id', 'price_increment', 'amount_increment' columns
+
+    Returns DataFrame with bid_price, bid_amount, ask_price, ask_amount added (Float64).
+    By default, drops the *_int columns.
+    """
+    if "symbol_id" not in df.columns:
+        raise ValueError("decode_fixed_point: df must have 'symbol_id' column")
+
+    required_cols = ["bid_px_int", "bid_sz_int", "ask_px_int", "ask_sz_int"]
+    missing = [c for c in required_cols if c not in df.columns]
+    if missing:
+        raise ValueError(f"decode_fixed_point: df missing columns: {missing}")
+
+    required_dims = ["symbol_id", "price_increment", "amount_increment"]
+    missing_dims = [c for c in required_dims if c not in dim_symbol.columns]
+    if missing_dims:
+        raise ValueError(f"decode_fixed_point: dim_symbol missing columns: {missing_dims}")
+
+    joined = df.join(
+        dim_symbol.select(["symbol_id", "price_increment", "amount_increment"]),
+        on="symbol_id",
+        how="left",
+    )
+
+    missing_ids = joined.filter(pl.col("price_increment").is_null())
+    if not missing_ids.is_empty():
+        missing_symbols = missing_ids.select("symbol_id").unique()
+        raise ValueError(
+            f"decode_fixed_point: {missing_symbols.height} symbol_ids not found in dim_symbol"
+        )
+
+    result = joined.with_columns(
+        [
+            pl.when(pl.col("bid_px_int").is_not_null())
+            .then((pl.col("bid_px_int") * pl.col("price_increment")).cast(pl.Float64))
+            .otherwise(None)
+            .alias("bid_price"),
+            pl.when(pl.col("bid_sz_int").is_not_null())
+            .then((pl.col("bid_sz_int") * pl.col("amount_increment")).cast(pl.Float64))
+            .otherwise(None)
+            .alias("bid_amount"),
+            pl.when(pl.col("ask_px_int").is_not_null())
+            .then((pl.col("ask_px_int") * pl.col("price_increment")).cast(pl.Float64))
+            .otherwise(None)
+            .alias("ask_price"),
+            pl.when(pl.col("ask_sz_int").is_not_null())
+            .then((pl.col("ask_sz_int") * pl.col("amount_increment")).cast(pl.Float64))
+            .otherwise(None)
+            .alias("ask_amount"),
+        ]
+    )
+
+    drop_cols = ["price_increment", "amount_increment"]
+    if not keep_ints:
+        drop_cols += required_cols
+    return result.drop(drop_cols)
 
 
 def resolve_symbol_ids(
