@@ -1,4 +1,5 @@
 import polars as pl
+from datetime import date
 from pathlib import Path
 from typing import Optional
 from pointline.config import STORAGE_OPTIONS
@@ -133,6 +134,55 @@ class BaseDeltaRepository:
             target_file_size=target_file_size,
             writer_properties=writer_properties,
         )
+
+    def optimize_partition(
+        self,
+        *,
+        filters: dict[str, object],
+        target_file_size: int | None = None,
+        z_order: list[str] | None = None,
+    ) -> dict[str, object]:
+        """Compact or Z-order a single partition using delta-rs optimize."""
+        if not filters:
+            raise ValueError("optimize_partition: filters must be non-empty")
+
+        predicate_parts = []
+        for key, value in filters.items():
+            if isinstance(value, date):
+                predicate_parts.append(f"{key} = '{value.isoformat()}'")
+            elif isinstance(value, str):
+                predicate_parts.append(f"{key} = '{value}'")
+            else:
+                predicate_parts.append(f"{key} = {value}")
+        partition_filters = []
+        for key, value in filters.items():
+            if isinstance(value, date):
+                partition_filters.append((key, "=", value.isoformat()))
+            else:
+                partition_filters.append((key, "=", str(value)))
+
+        from deltalake import DeltaTable
+
+        dt = DeltaTable(self.table_path)
+        if z_order is None:
+            try:
+                schema_fields = dt.schema().to_pyarrow().names
+                if "symbol_id" in schema_fields and "ts_local_us" in schema_fields:
+                    z_order = ["symbol_id", "ts_local_us"]
+            except Exception:
+                z_order = None
+
+        if z_order:
+            return dt.optimize.z_order(
+                z_order,
+                partition_filters=partition_filters,
+                target_size=target_file_size,
+            )
+
+        return dt.optimize.compact(
+            partition_filters=partition_filters,
+            target_size=target_file_size,
+        )
         
     def merge(self, df: pl.DataFrame, keys: list[str]) -> None:
         """
@@ -155,3 +205,24 @@ class BaseDeltaRepository:
         except Exception:
             # If table doesn't exist, perform a full write
             self.write_full(df)
+
+    def vacuum(
+        self,
+        *,
+        retention_hours: int,
+        dry_run: bool = True,
+        enforce_retention_duration: bool = True,
+        full: bool = False,
+        keep_versions: list[int] | None = None,
+    ) -> list[str]:
+        """Remove files no longer referenced by the Delta table."""
+        from deltalake import DeltaTable
+
+        dt = DeltaTable(self.table_path)
+        return dt.vacuum(
+            retention_hours=retention_hours,
+            dry_run=dry_run,
+            enforce_retention_duration=enforce_retention_duration,
+            full=full,
+            keep_versions=keep_versions,
+        )

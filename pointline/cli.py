@@ -12,7 +12,7 @@ from typing import Iterable, Sequence
 
 import polars as pl
 
-from pointline.config import LAKE_ROOT, get_exchange_id, get_exchange_name, get_table_path
+from pointline.config import LAKE_ROOT, get_exchange_id, get_exchange_name, get_table_path, TABLE_PATHS
 from pointline.io.delta_manifest_repo import DeltaManifestRepository
 from pointline.io.local_source import LocalBronzeSource
 from pointline.io.protocols import BronzeFileMetadata, IngestionResult
@@ -33,6 +33,15 @@ def _sorted_files(files: Iterable[BronzeFileMetadata]) -> list[BronzeFileMetadat
         files,
         key=lambda f: (f.exchange, f.data_type, f.symbol, f.date.isoformat(), f.bronze_file_path),
     )
+
+
+TABLE_PARTITIONS = {
+    "trades": ["exchange", "date"],
+    "quotes": ["exchange", "date"],
+    "book_snapshot_25": ["exchange", "date"],
+    "l2_updates": ["exchange", "date", "symbol_id"],
+    "l2_state_checkpoint": ["exchange", "date", "symbol_id"],
+}
 
 
 def _print_files(files: Sequence[BronzeFileMetadata]) -> None:
@@ -102,6 +111,88 @@ def _create_ingestion_service(data_type: str, manifest_repo):
         return L2UpdatesIngestionService(repo, dim_symbol_repo, manifest_repo)
     else:
         raise ValueError(f"Unsupported data type: {data_type}")
+
+
+def _parse_partition_filters(items: Sequence[str]) -> dict[str, object]:
+    filters: dict[str, object] = {}
+    for item in items:
+        if "=" not in item:
+            raise ValueError(f"Invalid partition filter: {item}")
+        key, value = item.split("=", 1)
+        key = key.strip()
+        value = value.strip().strip("\"'")
+        if key == "date":
+            from datetime import datetime
+
+            try:
+                filters[key] = datetime.strptime(value, "%Y-%m-%d").date()
+                continue
+            except ValueError as exc:
+                raise ValueError(f"Invalid date format for {key}: {value}") from exc
+        if value.lstrip("-").isdigit():
+            filters[key] = int(value)
+        else:
+            filters[key] = value
+    return filters
+
+
+def _cmd_delta_optimize(args: argparse.Namespace) -> int:
+    try:
+        filters = _parse_partition_filters(args.partition)
+    except ValueError as exc:
+        print(f"Error: {exc}")
+        return 2
+
+    if not filters:
+        print("Error: at least one --partition KEY=VALUE is required")
+        return 2
+
+    partition_by = TABLE_PARTITIONS.get(args.table)
+    repo = BaseDeltaRepository(get_table_path(args.table), partition_by=partition_by)
+    z_order = [s.strip() for s in args.zorder.split(",")] if args.zorder else None
+    try:
+        metrics = repo.optimize_partition(
+            filters=filters,
+            target_file_size=args.target_file_size,
+            z_order=z_order,
+        )
+    except Exception as exc:
+        print(f"Error: {exc}")
+        return 1
+
+    if not metrics or metrics.get("totalConsideredFiles", 0) == 0:
+        print("No rows matched the partition filters; nothing to optimize.")
+        return 0
+
+    predicate = " AND ".join(f"{k}={v}" for k, v in filters.items())
+    print(f"Optimized {args.table} where {predicate}")
+    print(
+        f"filesRemoved={metrics.get('numFilesRemoved')}, "
+        f"filesAdded={metrics.get('numFilesAdded')}, "
+        f"totalConsideredFiles={metrics.get('totalConsideredFiles')}"
+    )
+    return 0
+
+
+def _cmd_delta_vacuum(args: argparse.Namespace) -> int:
+    partition_by = TABLE_PARTITIONS.get(args.table)
+    repo = BaseDeltaRepository(get_table_path(args.table), partition_by=partition_by)
+    dry_run = not args.execute
+    try:
+        removed = repo.vacuum(
+            retention_hours=args.retention_hours,
+            dry_run=dry_run,
+            enforce_retention_duration=not args.no_retention_check,
+        )
+    except Exception as exc:
+        print(f"Error: {exc}")
+        return 1
+
+    if dry_run:
+        print(f"Vacuum dry run: {len(removed)} files would be removed.")
+    else:
+        print(f"Vacuum complete: {len(removed)} files removed.")
+    return 0
 
 
 def _cmd_ingest_run(args: argparse.Namespace) -> int:
@@ -627,6 +718,60 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Random seed for validation sampling (default: 0)",
     )
     ingest_run.set_defaults(func=_cmd_ingest_run)
+
+    delta = subparsers.add_parser("delta", help="Delta Lake maintenance utilities")
+    delta_sub = delta.add_subparsers(dest="delta_command")
+
+    delta_optimize = delta_sub.add_parser("optimize", help="Compact files for a partition")
+    delta_optimize.add_argument(
+        "--table",
+        required=True,
+        choices=sorted(TABLE_PATHS.keys()),
+        help="Table name to optimize",
+    )
+    delta_optimize.add_argument(
+        "--partition",
+        action="append",
+        default=[],
+        help="Partition filter in KEY=VALUE form (repeatable)",
+    )
+    delta_optimize.add_argument(
+        "--target-file-size",
+        type=int,
+        default=None,
+        help="Target file size in bytes (optional)",
+    )
+    delta_optimize.add_argument(
+        "--zorder",
+        default=None,
+        help="Comma-separated columns to Z-order (default: symbol_id,ts_local_us when present)",
+    )
+    delta_optimize.set_defaults(func=_cmd_delta_optimize)
+
+    delta_vacuum = delta_sub.add_parser("vacuum", help="Remove unreferenced files")
+    delta_vacuum.add_argument(
+        "--table",
+        required=True,
+        choices=sorted(TABLE_PATHS.keys()),
+        help="Table name to vacuum",
+    )
+    delta_vacuum.add_argument(
+        "--retention-hours",
+        type=int,
+        required=True,
+        help="Retention window in hours",
+    )
+    delta_vacuum.add_argument(
+        "--execute",
+        action="store_true",
+        help="Actually remove files (default is dry-run)",
+    )
+    delta_vacuum.add_argument(
+        "--no-retention-check",
+        action="store_true",
+        help="Disable retention duration enforcement",
+    )
+    delta_vacuum.set_defaults(func=_cmd_delta_vacuum)
 
     manifest = subparsers.add_parser("manifest", help="Ingestion manifest utilities")
     manifest_sub = manifest.add_subparsers(dest="manifest_command")
