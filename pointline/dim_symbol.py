@@ -138,7 +138,13 @@ def _as_boolean_change_mask(joined: pl.DataFrame) -> pl.Expr:
     """Return an expression for whether a row differs from its current version."""
     diffs: list[pl.Expr] = []
     for col in TRACKED_COLS:
-        diffs.append(pl.col(col) != pl.col(f"{col}_cur"))
+        col_new = pl.col(col)
+        col_cur = pl.col(f"{col}_cur")
+        diffs.append(
+            (col_new.is_null() & col_cur.is_not_null())
+            | (col_new.is_not_null() & col_cur.is_null())
+            | (col_new.is_not_null() & col_cur.is_not_null() & (col_new != col_cur))
+        )
     return pl.any_horizontal(diffs)
 
 
@@ -216,7 +222,7 @@ def scd2_upsert(
         .with_columns(
             pl.col("valid_from_ts_upd").cast(pl.Int64).alias("_close_at_ts"),
         )
-        .select(dim_symbol.columns + ["_close_at_ts"])
+        .select(current.columns + ["_close_at_ts"])
         .with_columns(
             pl.col("_close_at_ts").alias("valid_until_ts"),
             pl.lit(False).alias("is_current"),
@@ -237,8 +243,17 @@ def scd2_upsert(
     history = dim_symbol.filter(pl.col("is_current") == False)  # noqa: E712
     current_kept = current.join(changed_keys, on=list(NATURAL_KEY_COLS), how="anti")
     dim_symbol_kept = pl.concat([history, current_kept], how="vertical")
+    dim_symbol_kept = normalize_dim_symbol_schema(dim_symbol_kept)
 
     closed_rows = normalize_dim_symbol_schema(closed_rows)
+    new_rows = normalize_dim_symbol_schema(new_rows)
+    
+    # Ensure all DataFrames have columns in the same order (SCHEMA order)
+    schema_cols = list(SCHEMA.keys())
+    dim_symbol_kept = dim_symbol_kept.select(schema_cols)
+    closed_rows = closed_rows.select(schema_cols)
+    new_rows = new_rows.select(schema_cols)
+    
     result = pl.concat([dim_symbol_kept, closed_rows, new_rows], how="vertical")
     return normalize_dim_symbol_schema(result)
 
@@ -395,12 +410,18 @@ def resolve_symbol_ids(
             if col in data.columns and col not in sort_cols:
                 sort_cols.append(col)
 
+    sort_cols = [*NATURAL_KEY_COLS, *sort_cols]
+    join_kwargs: dict[str, object] = {}
+    if "check_sortedness" in pl.DataFrame.join_asof.__code__.co_varnames:
+        join_kwargs["check_sortedness"] = False
+
     return data.sort(sort_cols).join_asof(
-        dim_symbol.sort("valid_from_ts"),
+        dim_symbol.sort([*NATURAL_KEY_COLS, "valid_from_ts"]),
         left_on=ts_col,
         right_on="valid_from_ts",
         by=list(NATURAL_KEY_COLS),
         strategy="backward",
+        **join_kwargs,
     )
 
 

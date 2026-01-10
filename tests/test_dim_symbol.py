@@ -64,6 +64,36 @@ def test_upsert_change_closes_current_and_adds_new():
     assert current.select("valid_from_ts").item() == 200
 
 
+def test_upsert_detects_null_to_value_change():
+    updates_null = pl.DataFrame(
+        {
+            "exchange_id": [1],
+            "exchange_symbol": ["BTC-PERPETUAL"],
+            "base_asset": ["BTC"],
+            "quote_asset": ["USD"],
+            "asset_type": [1],
+            "tick_size": [None],
+            "lot_size": [1.0],
+            "price_increment": [None],
+            "amount_increment": [0.1],
+            "contract_size": [1.0],
+            "valid_from_ts": [100],
+        }
+    )
+    dim = scd2_bootstrap(updates_null)
+
+    updates = _base_updates(200, tick_size=0.5)
+    dim2 = scd2_upsert(dim, updates)
+
+    assert dim2.height == 2
+    current = dim2.filter(pl.col("is_current"))  # noqa: E712
+    history = dim2.filter(pl.col("is_current") == False)  # noqa: E712
+
+    assert current["tick_size"][0] == 0.5
+    assert history["tick_size"][0] is None
+    assert history["valid_until_ts"][0] == 200
+
+
 def test_required_update_columns_contract():
     cols = required_update_columns()
     assert "exchange_id" in cols
@@ -96,6 +126,56 @@ def test_resolve_symbol_ids_asof():
     assert resolved.filter(pl.col("ts_local_us") == 250)["tick_size"][0] == 1.0
     # ts=50 should have null symbol_id (or no match)
     assert resolved.filter(pl.col("ts_local_us") == 50)["symbol_id"][0] is None
+
+
+def test_resolve_symbol_ids_sorts_by_keys():
+    from pointline.dim_symbol import resolve_symbol_ids
+
+    btc = _base_updates(100, tick_size=0.5)
+    eth = _base_updates(100, tick_size=0.2).with_columns(
+        pl.lit("ETH-PERPETUAL").alias("exchange_symbol"),
+        pl.lit("ETH").alias("base_asset"),
+    )
+    dim = scd2_bootstrap(pl.concat([btc, eth]))
+
+    updates = pl.concat(
+        [
+            _base_updates(200, tick_size=1.0),
+            _base_updates(150, tick_size=2.0).with_columns(
+                pl.lit("ETH-PERPETUAL").alias("exchange_symbol"),
+                pl.lit("ETH").alias("base_asset"),
+            ),
+        ]
+    )
+    dim = scd2_upsert(dim, updates)
+
+    data = pl.DataFrame(
+        {
+            "exchange_id": [1, 1, 1, 1],
+            "exchange_symbol": [
+                "ETH-PERPETUAL",
+                "BTC-PERPETUAL",
+                "ETH-PERPETUAL",
+                "BTC-PERPETUAL",
+            ],
+            "ts_local_us": [160, 210, 120, 50],
+        }
+    )
+
+    resolved = resolve_symbol_ids(data, dim)
+
+    assert resolved.filter(
+        (pl.col("exchange_symbol") == "ETH-PERPETUAL") & (pl.col("ts_local_us") == 160)
+    )["tick_size"][0] == 2.0
+    assert resolved.filter(
+        (pl.col("exchange_symbol") == "BTC-PERPETUAL") & (pl.col("ts_local_us") == 210)
+    )["tick_size"][0] == 1.0
+    assert resolved.filter(
+        (pl.col("exchange_symbol") == "ETH-PERPETUAL") & (pl.col("ts_local_us") == 120)
+    )["tick_size"][0] == 0.2
+    assert resolved.filter(
+        (pl.col("exchange_symbol") == "BTC-PERPETUAL") & (pl.col("ts_local_us") == 50)
+    )["symbol_id"][0] is None
 
 
 def test_assign_symbol_id_hash_determinism():
