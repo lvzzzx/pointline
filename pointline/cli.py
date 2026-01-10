@@ -15,7 +15,7 @@ import polars as pl
 from pointline.config import LAKE_ROOT, get_exchange_id, get_exchange_name, get_table_path
 from pointline.io.delta_manifest_repo import DeltaManifestRepository
 from pointline.io.local_source import LocalBronzeSource
-from pointline.io.protocols import BronzeFileMetadata
+from pointline.io.protocols import BronzeFileMetadata, IngestionResult
 from pointline.io.base_repository import BaseDeltaRepository
 from pointline.io.vendor.tardis import build_updates_from_instruments, TardisClient, download_tardis_datasets
 from pointline import research
@@ -170,6 +170,27 @@ def _cmd_ingest_run(args: argparse.Namespace) -> int:
             
             # Ingest file
             result = service.ingest_file(file_meta, file_id, bronze_root=bronze_root)
+
+            # Optional post-ingest validation (sampled)
+            if (
+                args.validate
+                and result.error_message is None
+                and hasattr(service, "validate_ingested")
+            ):
+                ok, message = service.validate_ingested(
+                    file_meta,
+                    file_id,
+                    bronze_root=bronze_root,
+                    sample_size=args.validate_sample_size,
+                    seed=args.validate_seed,
+                )
+                if not ok:
+                    result = IngestionResult(
+                        row_count=result.row_count,
+                        ts_local_min_us=result.ts_local_min_us,
+                        ts_local_max_us=result.ts_local_max_us,
+                        error_message=message,
+                    )
             
             # Update manifest
             if result.error_message:
@@ -587,6 +608,23 @@ def _build_parser() -> argparse.ArgumentParser:
         "--retry-quarantined",
         action="store_true",
         help="Retry ingestion for quarantined files",
+    )
+    ingest_run.add_argument(
+        "--validate",
+        action="store_true",
+        help="Validate ingested rows against raw file (sampled)",
+    )
+    ingest_run.add_argument(
+        "--validate-sample-size",
+        type=int,
+        default=2000,
+        help="Number of rows to sample for post-ingest validation (default: 2000)",
+    )
+    ingest_run.add_argument(
+        "--validate-seed",
+        type=int,
+        default=0,
+        help="Random seed for validation sampling (default: 0)",
     )
     ingest_run.set_defaults(func=_cmd_ingest_run)
 

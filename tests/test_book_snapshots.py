@@ -13,6 +13,7 @@ from pointline.io.protocols import BronzeFileMetadata, IngestionResult
 from pointline.services.book_snapshots_service import BookSnapshotsIngestionService
 from pointline.book_snapshots import (
     BOOK_SNAPSHOTS_SCHEMA,
+    decode_fixed_point,
     encode_fixed_point,
     normalize_book_snapshots_schema,
     parse_tardis_book_snapshots_csv,
@@ -102,31 +103,21 @@ def test_parse_tardis_book_snapshots_csv_basic():
     assert parsed.height == 2
     assert "ts_local_us" in parsed.columns
     assert "ts_exch_us" in parsed.columns
-    assert "bids_px" in parsed.columns
-    assert "bids_sz" in parsed.columns
-    assert "asks_px" in parsed.columns
-    assert "asks_sz" in parsed.columns
+    assert "bids[0].price" in parsed.columns
+    assert "bids[0].amount" in parsed.columns
+    assert "asks[0].price" in parsed.columns
+    assert "asks[0].amount" in parsed.columns
 
     # Check timestamps are parsed correctly
     assert parsed["ts_local_us"].dtype == pl.Int64
     assert parsed["ts_exch_us"].dtype == pl.Int64
     assert parsed["ts_local_us"].min() > 0
 
-    # Check lists are created
-    assert parsed["bids_px"].dtype == pl.List(pl.Float64)
-    assert parsed["bids_sz"].dtype == pl.List(pl.Float64)
-    assert parsed["asks_px"].dtype == pl.List(pl.Float64)
-    assert parsed["asks_sz"].dtype == pl.List(pl.Float64)
-
-    # Check list lengths (should be padded to 25)
-    first_row_bids = parsed["bids_px"][0]
-    assert len(first_row_bids) == 25
-    # First 3 should have values, rest should be null
-    assert first_row_bids[0] == 50000.0
-    assert first_row_bids[1] == 49999.9
-    assert first_row_bids[2] == 49999.8
-    # Rest should be null
-    assert all(v is None for v in first_row_bids[3:])
+    # Check raw columns are cast to float
+    assert parsed["bids[0].price"].dtype == pl.Float64
+    assert parsed["bids[0].amount"].dtype == pl.Float64
+    assert parsed["asks[0].price"].dtype == pl.Float64
+    assert parsed["asks[0].amount"].dtype == pl.Float64
 
 
 def test_parse_tardis_book_snapshots_csv_full_25():
@@ -135,15 +126,13 @@ def test_parse_tardis_book_snapshots_csv_full_25():
     parsed = parse_tardis_book_snapshots_csv(raw_df)
 
     assert parsed.height == 1
-    first_row_bids = parsed["bids_px"][0]
-    first_row_asks = parsed["asks_px"][0]
-
-    # All 25 levels should be present
-    assert len(first_row_bids) == 25
-    assert len(first_row_asks) == 25
-    # All should have values (no nulls)
-    assert all(v is not None for v in first_row_bids)
-    assert all(v is not None for v in first_row_asks)
+    for i in range(25):
+        assert f"asks[{i}].price" in parsed.columns
+        assert f"asks[{i}].amount" in parsed.columns
+        assert f"bids[{i}].price" in parsed.columns
+        assert f"bids[{i}].amount" in parsed.columns
+        assert parsed[f"asks[{i}].price"].dtype == pl.Float64
+        assert parsed[f"bids[{i}].price"].dtype == pl.Float64
 
 
 def test_parse_tardis_book_snapshots_csv_missing_required():
@@ -268,30 +257,22 @@ def test_validate_book_snapshots_invalid_ordering():
 
 
 def test_encode_fixed_point():
-    """Test fixed-point encoding for list columns."""
+    """Test fixed-point encoding from raw level columns."""
     dim_symbol = _sample_dim_symbol()
     base_ts = 1714557600000000
 
-    # Create DataFrame with symbol_id and float lists
+    # Create DataFrame with symbol_id and raw float columns
     df = pl.DataFrame({
         "symbol_id": [100, 100],
         "ts_local_us": [base_ts, base_ts + 1_000_000],
-        "bids_px": [
-            [50000.0, 49999.9, None] + [None] * 22,
-            [50001.0, 50000.9, None] + [None] * 22,
-        ],
-        "bids_sz": [
-            [0.1, 0.15, None] + [None] * 22,
-            [0.2, 0.25, None] + [None] * 22,
-        ],
-        "asks_px": [
-            [50000.5, 50000.6, None] + [None] * 22,
-            [50001.5, 50001.6, None] + [None] * 22,
-        ],
-        "asks_sz": [
-            [0.15, 0.2, None] + [None] * 22,
-            [0.25, 0.3, None] + [None] * 22,
-        ],
+        "bids[0].price": [50000.0, 50001.0],
+        "bids[0].amount": [0.1, 0.2],
+        "bids[1].price": [49999.9, 50000.9],
+        "bids[1].amount": [0.15, 0.25],
+        "asks[0].price": [50000.5, 50001.5],
+        "asks[0].amount": [0.15, 0.25],
+        "asks[1].price": [50000.6, 50001.6],
+        "asks[1].amount": [0.2, 0.3],
     })
 
     # Add symbol_id to dim_symbol for join
@@ -307,6 +288,7 @@ def test_encode_fixed_point():
 
     # Check encoding: 50000.0 / 0.01 = 5000000
     first_bid_px = encoded["bids_px"][0]
+    assert len(first_bid_px) == 25
     assert first_bid_px[0] == 5000000  # 50000.0 / 0.01
     assert first_bid_px[1] == 4999990  # 49999.9 / 0.01
     assert first_bid_px[2] is None  # Null preserved
@@ -314,6 +296,34 @@ def test_encode_fixed_point():
     # Check sizes: 0.1 / 0.00001 = 10000
     first_bid_sz = encoded["bids_sz"][0]
     assert first_bid_sz[0] == 10000  # 0.1 / 0.00001
+
+
+def test_decode_fixed_point():
+    """Test decoding fixed-point list columns back to floats."""
+    dim_symbol = _sample_dim_symbol()
+    base_ts = 1714557600000000
+
+    df = pl.DataFrame({
+        "symbol_id": [100],
+        "ts_local_us": [base_ts],
+        "bids_px": [[5000000, 4999990, None] + [None] * 22],
+        "bids_sz": [[10000, 15000, None] + [None] * 22],
+        "asks_px": [[5000050, 5000060, None] + [None] * 22],
+        "asks_sz": [[15000, 20000, None] + [None] * 22],
+    })
+
+    dim_symbol = dim_symbol.with_columns(pl.lit(100, dtype=pl.Int64).alias("symbol_id"))
+    decoded = decode_fixed_point(df, dim_symbol)
+
+    assert decoded["bids_px"].dtype == pl.List(pl.Float64)
+    assert decoded["bids_sz"].dtype == pl.List(pl.Float64)
+    assert decoded["asks_px"].dtype == pl.List(pl.Float64)
+    assert decoded["asks_sz"].dtype == pl.List(pl.Float64)
+
+    first_bid_px = decoded["bids_px"][0]
+    assert first_bid_px[0] == 50000.0
+    assert first_bid_px[1] == 49999.9
+    assert first_bid_px[2] is None
 
 
 def test_resolve_symbol_ids():
@@ -400,7 +410,7 @@ def test_book_snapshots_ingestion_service_ingest_file(
     )
 
     # Register file in manifest
-    file_id = sample_manifest_repo.register_file(meta)
+    file_id = sample_manifest_repo.resolve_file_id(meta)
 
     # Ingest
     result = service.ingest_file(meta, file_id, bronze_root=tmp_path / "bronze")
@@ -446,7 +456,7 @@ def test_book_snapshots_ingestion_service_empty_file(
         last_modified_ts=1714557600,
     )
 
-    file_id = sample_manifest_repo.register_file(meta)
+    file_id = sample_manifest_repo.resolve_file_id(meta)
     result = service.ingest_file(meta, file_id, bronze_root=tmp_path / "bronze")
 
     assert result.row_count == 0
@@ -479,7 +489,7 @@ def test_book_snapshots_ingestion_service_quarantine(
         last_modified_ts=1714557600,
     )
 
-    file_id = sample_manifest_repo.register_file(meta)
+    file_id = sample_manifest_repo.resolve_file_id(meta)
     result = service.ingest_file(meta, file_id, bronze_root=tmp_path / "bronze")
 
     # Should be quarantined

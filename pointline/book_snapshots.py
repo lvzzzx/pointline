@@ -4,11 +4,23 @@ This module keeps the implementation storage-agnostic; it operates on Polars Dat
 
 Example:
     import polars as pl
-    from pointline.book_snapshots import parse_tardis_book_snapshots_csv, normalize_book_snapshots_schema
+    from pointline.book_snapshots import (
+        encode_fixed_point,
+        normalize_book_snapshots_schema,
+        parse_tardis_book_snapshots_csv,
+        resolve_symbol_ids,
+    )
 
     raw_df = pl.read_csv("book_snapshots.csv")
     parsed = parse_tardis_book_snapshots_csv(raw_df)
-    normalized = normalize_book_snapshots_schema(parsed)
+    resolved = resolve_symbol_ids(
+        parsed,
+        dim_symbol,
+        exchange_id=1,
+        exchange_symbol="BTCUSDT",
+    )
+    encoded = encode_fixed_point(resolved, dim_symbol)
+    normalized = normalize_book_snapshots_schema(encoded)
 """
 
 from __future__ import annotations
@@ -59,10 +71,10 @@ def parse_tardis_book_snapshots_csv(df: pl.DataFrame) -> pl.DataFrame:
     Returns DataFrame with columns:
     - ts_local_us (i64): local timestamp in microseconds since epoch
     - ts_exch_us (i64): exchange timestamp in microseconds since epoch
-    - bids_px (list<f64>): list of 25 bid prices (nulls for missing levels)
-    - bids_sz (list<f64>): list of 25 bid sizes (nulls for missing levels)
-    - asks_px (list<f64>): list of 25 ask prices (nulls for missing levels)
-    - asks_sz (list<f64>): list of 25 ask sizes (nulls for missing levels)
+    - asks[0..24].price (f64): ask prices (nullable)
+    - asks[0..24].amount (f64): ask sizes (nullable)
+    - bids[0..24].price (f64): bid prices (nullable)
+    - bids[0..24].amount (f64): bid sizes (nullable)
     """
     # Check for required columns
     required_cols = ["exchange", "symbol", "timestamp", "local_timestamp"]
@@ -78,7 +90,8 @@ def parse_tardis_book_snapshots_csv(df: pl.DataFrame) -> pl.DataFrame:
         pl.col("timestamp").cast(pl.Int64).alias("ts_exch_us"),
     ])
     
-    # Find array columns: asks[0..24].price, asks[0..24].amount, bids[0..24].price, bids[0..24].amount
+    # Find array columns: asks[0..24].price, asks[0..24].amount, bids[0..24].price,
+    # bids[0..24].amount
     # Tardis uses exact naming: asks[0].price, asks[1].price, ..., asks[24].price
     asks_price_cols = [f"asks[{i}].price" for i in range(25)]
     asks_amount_cols = [f"asks[{i}].amount" for i in range(25)]
@@ -97,54 +110,23 @@ def parse_tardis_book_snapshots_csv(df: pl.DataFrame) -> pl.DataFrame:
             "Expected asks[0].price, asks[1].price, ... or bids[0].price, bids[1].price, ..."
         )
     
-    # Build lists from array columns using pl.concat_list (fully vectorized)
-    # For each row, collect values from asks[0].price, asks[1].price, ..., asks[24].price
-    # Handle missing columns and empty strings as nulls
-    # pl.concat_list automatically casts scalars to single-element lists, then concatenates
-    # Reference: https://docs.pola.rs/api/python/dev/reference/expressions/api/polars.concat_list.html
-    def build_list(cols: list[str], existing_cols: list[str]) -> pl.Expr:
-        """Build a list column from individual array columns using pl.concat_list (vectorized)."""
-        if not existing_cols:
-            # No columns exist, return list of 25 nulls
-            return pl.lit([None] * 25, dtype=pl.List(pl.Float64))
-        
-        # Build list of expressions - pl.concat_list will handle scalar-to-list conversion
-        list_exprs = []
-        for col in cols:
-            if col in existing_cols:
-                # Cast to float64, handling empty strings as null
-                # pl.concat_list will automatically wrap this scalar in a single-element list
-                val_expr = pl.col(col).cast(pl.Float64, strict=False)
-                list_exprs.append(val_expr)
-            else:
-                # Column doesn't exist, use null
-                # pl.concat_list will cast this to a single-element list containing null
-                list_exprs.append(pl.lit(None, dtype=pl.Float64))
-        
-        # Use pl.concat_list which is fully vectorized and operates in linear time
-        # According to Polars docs: "Horizontally concatenate columns into a single list column"
-        # "Operates in linear time" and "Non-list columns are cast to a list before concatenation"
-        # This automatically converts each scalar column to a single-element list, then concatenates
-        # Reference: https://docs.pola.rs/api/python/dev/reference/expressions/api/polars.concat_list.html
-        return pl.concat_list(list_exprs)
-    
-    # Build the four list columns
-    result = result.with_columns([
-        build_list(asks_price_cols, existing_asks_price).alias("asks_px"),
-        build_list(asks_amount_cols, existing_asks_amount).alias("asks_sz"),
-        build_list(bids_price_cols, existing_bids_price).alias("bids_px"),
-        build_list(bids_amount_cols, existing_bids_amount).alias("bids_sz"),
-    ])
-    
-    # Select only the columns we need
-    return result.select([
-        "ts_local_us",
-        "ts_exch_us",
-        "bids_px",
-        "bids_sz",
-        "asks_px",
-        "asks_sz",
-    ])
+    # Cast existing level columns to float64, handling empty strings as null.
+    level_cols = (
+        existing_asks_price
+        + existing_asks_amount
+        + existing_bids_price
+        + existing_bids_amount
+    )
+    if level_cols:
+        result = result.with_columns(
+            [pl.col(col).cast(pl.Float64, strict=False) for col in level_cols]
+        )
+
+    # Select only the columns we need (preserve file_line_number if present).
+    keep_cols = ["ts_local_us", "ts_exch_us", *level_cols]
+    if "file_line_number" in result.columns:
+        keep_cols.append("file_line_number")
+    return result.select(keep_cols)
 
 
 def normalize_book_snapshots_schema(df: pl.DataFrame) -> pl.DataFrame:
@@ -321,24 +303,31 @@ def encode_fixed_point(
     
     Requires:
     - df must have 'symbol_id' column (from resolve_symbol_ids)
-    - df must have 'bids_px', 'bids_sz', 'asks_px', 'asks_sz' columns (lists of floats)
+    - df must have raw level columns: asks[0..24].price/amount, bids[0..24].price/amount
     - dim_symbol must have 'symbol_id', 'price_increment', 'amount_increment' columns
     
     Computes:
-    - bids_px_int = [round(price / price_increment) for price in bids_px]
+    - bids_px_int = [floor(price / price_increment) for price in bids_px]
     - bids_sz_int = [round(size / amount_increment) for size in bids_sz]
-    - asks_px_int = [round(price / price_increment) for price in asks_px]
+    - asks_px_int = [ceil(price / price_increment) for price in asks_px]
     - asks_sz_int = [round(size / amount_increment) for size in asks_sz]
     
-    Returns DataFrame with bids_px, bids_sz, asks_px, asks_sz replaced with Int64 lists.
+    Returns DataFrame with bids_px, bids_sz, asks_px, asks_sz as Int64 lists.
     """
     if "symbol_id" not in df.columns:
         raise ValueError("encode_fixed_point: df must have 'symbol_id' column")
     
-    required_cols = ["bids_px", "bids_sz", "asks_px", "asks_sz"]
-    missing = [c for c in required_cols if c not in df.columns]
-    if missing:
-        raise ValueError(f"encode_fixed_point: df missing columns: {missing}")
+    asks_price_cols = [f"asks[{i}].price" for i in range(25)]
+    asks_amount_cols = [f"asks[{i}].amount" for i in range(25)]
+    bids_price_cols = [f"bids[{i}].price" for i in range(25)]
+    bids_amount_cols = [f"bids[{i}].amount" for i in range(25)]
+    raw_cols = asks_price_cols + asks_amount_cols + bids_price_cols + bids_amount_cols
+    has_raw_cols = any(col in df.columns for col in raw_cols)
+
+    if not has_raw_cols:
+        raise ValueError(
+            "encode_fixed_point: df must contain raw level columns"
+        )
     
     required_dims = ["symbol_id", "price_increment", "amount_increment"]
     missing = [c for c in required_dims if c not in dim_symbol.columns]
@@ -360,7 +349,6 @@ def encode_fixed_point(
             f"encode_fixed_point: {missing_symbols.height} symbol_ids not found in dim_symbol"
         )
     
-    # Encode to fixed-point (handle nulls in lists - preserve null positions).
     # Assumes batches are single-symbol; enforce that to avoid mixed-symbol mis-encoding.
     unique_symbols = joined.select("symbol_id").unique().height
     if unique_symbols > 1:
@@ -377,35 +365,150 @@ def encode_fixed_point(
     price_inc = first_row["price_increment"][0]
     amount_inc = first_row["amount_increment"][0]
 
-    result = joined.with_columns([
-        # Encode bid prices: round(price / price_increment) for each element
-        # Use list.eval() for vectorized element-wise division
-        pl.col("bids_px").list.eval(
-            pl.when(pl.element().is_not_null())
-            .then((pl.element() / pl.lit(price_inc)).round().cast(pl.Int64))
-            .otherwise(None)
-        ).alias("bids_px"),
-        # Encode bid sizes: round(size / amount_increment) for each element
-        pl.col("bids_sz").list.eval(
-            pl.when(pl.element().is_not_null())
-            .then((pl.element() / pl.lit(amount_inc)).round().cast(pl.Int64))
-            .otherwise(None)
-        ).alias("bids_sz"),
-        # Encode ask prices: round(price / price_increment) for each element
-        pl.col("asks_px").list.eval(
-            pl.when(pl.element().is_not_null())
-            .then((pl.element() / pl.lit(price_inc)).round().cast(pl.Int64))
-            .otherwise(None)
-        ).alias("asks_px"),
-        # Encode ask sizes: round(size / amount_increment) for each element
-        pl.col("asks_sz").list.eval(
-            pl.when(pl.element().is_not_null())
-            .then((pl.element() / pl.lit(amount_inc)).round().cast(pl.Int64))
-            .otherwise(None)
-        ).alias("asks_sz"),
-    ])
-    
-    # Drop intermediate columns
+    def encode_list(
+        cols: list[str],
+        existing_cols: list[str],
+        increment: float,
+        *,
+        mode: str,
+    ) -> pl.Expr:
+        list_exprs: list[pl.Expr] = []
+        inc = pl.lit(increment)
+        for col in cols:
+            if col in existing_cols:
+                scaled = pl.col(col) / inc
+                if mode == "floor":
+                    scaled = scaled.floor()
+                elif mode == "ceil":
+                    scaled = scaled.ceil()
+                else:
+                    scaled = scaled.round()
+
+                list_exprs.append(
+                    pl.when(pl.col(col).is_not_null())
+                    .then(scaled.cast(pl.Int64))
+                    .otherwise(None)
+                )
+            else:
+                list_exprs.append(pl.lit(None, dtype=pl.Int64))
+        return pl.concat_list(list_exprs)
+
+    existing_asks_price = [c for c in asks_price_cols if c in joined.columns]
+    existing_asks_amount = [c for c in asks_amount_cols if c in joined.columns]
+    existing_bids_price = [c for c in bids_price_cols if c in joined.columns]
+    existing_bids_amount = [c for c in bids_amount_cols if c in joined.columns]
+
+    result = joined.with_columns(
+        [
+            encode_list(
+                asks_price_cols,
+                existing_asks_price,
+                price_inc,
+                mode="ceil",
+            ).alias("asks_px"),
+            encode_list(
+                asks_amount_cols,
+                existing_asks_amount,
+                amount_inc,
+                mode="round",
+            ).alias("asks_sz"),
+            encode_list(
+                bids_price_cols,
+                existing_bids_price,
+                price_inc,
+                mode="floor",
+            ).alias("bids_px"),
+            encode_list(
+                bids_amount_cols,
+                existing_bids_amount,
+                amount_inc,
+                mode="round",
+            ).alias("bids_sz"),
+        ]
+    )
+
+    drop_cols = [c for c in raw_cols if c in result.columns]
+    return result.drop(drop_cols + ["price_increment", "amount_increment"])
+
+
+def decode_fixed_point(
+    df: pl.DataFrame,
+    dim_symbol: pl.DataFrame,
+) -> pl.DataFrame:
+    """Decode fixed-point list columns into float lists using dim_symbol metadata.
+
+    Requires:
+    - df must have 'symbol_id' column
+    - df must have 'bids_px', 'bids_sz', 'asks_px', 'asks_sz' columns (lists of ints)
+    - dim_symbol must have 'symbol_id', 'price_increment', 'amount_increment' columns
+
+    Returns DataFrame with bids_px, bids_sz, asks_px, asks_sz replaced with Float64 lists.
+    """
+    if "symbol_id" not in df.columns:
+        raise ValueError("decode_fixed_point: df must have 'symbol_id' column")
+
+    list_cols = ["bids_px", "bids_sz", "asks_px", "asks_sz"]
+    missing = [c for c in list_cols if c not in df.columns]
+    if missing:
+        raise ValueError(f"decode_fixed_point: df missing columns: {missing}")
+
+    required_dims = ["symbol_id", "price_increment", "amount_increment"]
+    missing_dims = [c for c in required_dims if c not in dim_symbol.columns]
+    if missing_dims:
+        raise ValueError(f"decode_fixed_point: dim_symbol missing columns: {missing_dims}")
+
+    joined = df.join(
+        dim_symbol.select(["symbol_id", "price_increment", "amount_increment"]),
+        on="symbol_id",
+        how="left",
+    )
+
+    missing_ids = joined.filter(pl.col("price_increment").is_null())
+    if not missing_ids.is_empty():
+        missing_symbols = missing_ids.select("symbol_id").unique()
+        raise ValueError(
+            f"decode_fixed_point: {missing_symbols.height} symbol_ids not found in dim_symbol"
+        )
+
+    unique_symbols = joined.select("symbol_id").unique().height
+    if unique_symbols > 1:
+        raise ValueError(
+            "decode_fixed_point: multiple symbol_id values found in batch; "
+            "split by symbol_id or use a per-symbol decoding path"
+        )
+
+    first_row = joined.head(1)
+    if first_row.is_empty():
+        return joined.drop(["price_increment", "amount_increment"])
+
+    price_inc = first_row["price_increment"][0]
+    amount_inc = first_row["amount_increment"][0]
+
+    result = joined.with_columns(
+        [
+            pl.col("bids_px").list.eval(
+                pl.when(pl.element().is_not_null())
+                .then((pl.element() * pl.lit(price_inc)).cast(pl.Float64))
+                .otherwise(None)
+            ).alias("bids_px"),
+            pl.col("bids_sz").list.eval(
+                pl.when(pl.element().is_not_null())
+                .then((pl.element() * pl.lit(amount_inc)).cast(pl.Float64))
+                .otherwise(None)
+            ).alias("bids_sz"),
+            pl.col("asks_px").list.eval(
+                pl.when(pl.element().is_not_null())
+                .then((pl.element() * pl.lit(price_inc)).cast(pl.Float64))
+                .otherwise(None)
+            ).alias("asks_px"),
+            pl.col("asks_sz").list.eval(
+                pl.when(pl.element().is_not_null())
+                .then((pl.element() * pl.lit(amount_inc)).cast(pl.Float64))
+                .otherwise(None)
+            ).alias("asks_sz"),
+        ]
+    )
+
     return result.drop(["price_increment", "amount_increment"])
 
 
