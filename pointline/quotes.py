@@ -155,46 +155,7 @@ def validate_quotes(df: pl.DataFrame) -> pl.DataFrame:
     if missing:
         raise ValueError(f"validate_quotes: missing required columns: {missing}")
     
-    # Build validation filters
-    filters = [
-        (pl.col("ts_local_us") > 0) &
-        (pl.col("ts_local_us") < 2**63) &
-        (pl.col("exchange").is_not_null()) &
-        (pl.col("exchange_id").is_not_null()) &
-        (pl.col("symbol_id").is_not_null())
-    ]
-    
-    # At least one of bid or ask must be present
-    has_bid = (pl.col("bid_px_int").is_not_null()) & (pl.col("bid_sz_int").is_not_null())
-    has_ask = (pl.col("ask_px_int").is_not_null()) & (pl.col("ask_sz_int").is_not_null())
-    filters.append(has_bid | has_ask)
-    
-    # When bid is present, must be non-negative
-    filters.append(
-        pl.when(has_bid)
-        .then((pl.col("bid_px_int") > 0) & (pl.col("bid_sz_int") > 0))
-        .otherwise(True)
-    )
-    
-    # When ask is present, must be non-negative
-    filters.append(
-        pl.when(has_ask)
-        .then((pl.col("ask_px_int") > 0) & (pl.col("ask_sz_int") > 0))
-        .otherwise(True)
-    )
-    
-    # Crossed book check: when both are present, bid_px < ask_px
-    filters.append(
-        pl.when(has_bid & has_ask)
-        .then(pl.col("bid_px_int") < pl.col("ask_px_int"))
-        .otherwise(True)
-    )
-    
-    # Combine all filters
-    combined_filter = filters[0]
-    for f in filters[1:]:
-        combined_filter = combined_filter & f
-    
+    combined_filter, rules = _quote_validation_rules(df)
     valid = df.filter(combined_filter)
     
     # Warn if rows were filtered
@@ -208,25 +169,6 @@ def validate_quotes(df: pl.DataFrame) -> pl.DataFrame:
                 if hasattr(df, "with_row_index")
                 else df.with_row_count("__row_nr")
             )
-
-        rules = [
-            ("no_bid_or_ask", ~(has_bid | has_ask)),
-            ("bid_vals", has_bid & ((pl.col("bid_px_int") <= 0) | (pl.col("bid_sz_int") <= 0))),
-            ("ask_vals", has_ask & ((pl.col("ask_px_int") <= 0) | (pl.col("ask_sz_int") <= 0))),
-            (
-                "crossed",
-                has_bid & has_ask & (pl.col("bid_px_int") >= pl.col("ask_px_int")),
-            ),
-            (
-                "ts_local_us",
-                pl.col("ts_local_us").is_null()
-                | (pl.col("ts_local_us") <= 0)
-                | (pl.col("ts_local_us") >= 2**63),
-            ),
-            ("exchange", pl.col("exchange").is_null()),
-            ("exchange_id", pl.col("exchange_id").is_null()),
-            ("symbol_id", pl.col("symbol_id").is_null()),
-        ]
 
         counts = df_with_line.select(
             [rule.sum().alias(name) for name, rule in rules]
@@ -250,6 +192,51 @@ def validate_quotes(df: pl.DataFrame) -> pl.DataFrame:
         )
     
     return valid
+
+
+def _quote_validation_rules(df: pl.DataFrame) -> tuple[pl.Expr, list[tuple[str, pl.Expr]]]:
+    has_bid = (pl.col("bid_px_int").is_not_null()) & (pl.col("bid_sz_int").is_not_null())
+    has_ask = (pl.col("ask_px_int").is_not_null()) & (pl.col("ask_sz_int").is_not_null())
+
+    filters = [
+        (pl.col("ts_local_us") > 0)
+        & (pl.col("ts_local_us") < 2**63)
+        & (pl.col("exchange").is_not_null())
+        & (pl.col("exchange_id").is_not_null())
+        & (pl.col("symbol_id").is_not_null()),
+        has_bid | has_ask,
+        pl.when(has_bid)
+        .then((pl.col("bid_px_int") > 0) & (pl.col("bid_sz_int") > 0))
+        .otherwise(True),
+        pl.when(has_ask)
+        .then((pl.col("ask_px_int") > 0) & (pl.col("ask_sz_int") > 0))
+        .otherwise(True),
+        pl.when(has_bid & has_ask)
+        .then(pl.col("bid_px_int") < pl.col("ask_px_int"))
+        .otherwise(True),
+    ]
+
+    combined_filter = filters[0]
+    for f in filters[1:]:
+        combined_filter = combined_filter & f
+
+    rules = [
+        ("no_bid_or_ask", ~(has_bid | has_ask)),
+        ("bid_vals", has_bid & ((pl.col("bid_px_int") <= 0) | (pl.col("bid_sz_int") <= 0))),
+        ("ask_vals", has_ask & ((pl.col("ask_px_int") <= 0) | (pl.col("ask_sz_int") <= 0))),
+        ("crossed", has_bid & has_ask & (pl.col("bid_px_int") >= pl.col("ask_px_int"))),
+        (
+            "ts_local_us",
+            pl.col("ts_local_us").is_null()
+            | (pl.col("ts_local_us") <= 0)
+            | (pl.col("ts_local_us") >= 2**63),
+        ),
+        ("exchange", pl.col("exchange").is_null()),
+        ("exchange_id", pl.col("exchange_id").is_null()),
+        ("symbol_id", pl.col("symbol_id").is_null()),
+    ]
+
+    return combined_filter, rules
 
 
 def encode_fixed_point(

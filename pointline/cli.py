@@ -4,15 +4,18 @@ from __future__ import annotations
 
 import argparse
 import gc
+import gzip
+import inspect
 import json
 import os
+import re
 import time
 from pathlib import Path
 from typing import Iterable, Sequence
 
 import polars as pl
 
-from pointline.config import LAKE_ROOT, get_exchange_id, get_exchange_name, get_table_path, TABLE_PATHS
+from pointline.config import LAKE_ROOT, get_exchange_id, get_table_path, normalize_exchange, TABLE_PATHS
 from pointline.io.delta_manifest_repo import DeltaManifestRepository
 from pointline.io.local_source import LocalBronzeSource
 from pointline.io.protocols import BronzeFileMetadata, IngestionResult
@@ -26,6 +29,12 @@ from pointline.services.quotes_service import QuotesIngestionService
 from pointline.services.book_snapshots_service import BookSnapshotsIngestionService
 from pointline.services.l2_updates_service import L2UpdatesIngestionService
 from pointline.registry import find_symbol, resolve_symbol
+from pointline.quotes import (
+    _quote_validation_rules,
+    encode_fixed_point as encode_quotes_fixed_point,
+    parse_tardis_quotes_csv,
+    resolve_symbol_ids as resolve_quotes_symbol_ids,
+)
 
 
 def _sorted_files(files: Iterable[BronzeFileMetadata]) -> list[BronzeFileMetadata]:
@@ -77,6 +86,71 @@ def _cmd_ingest_discover(args: argparse.Namespace) -> int:
     print(f"{label}: {len(files)}")
     _print_files(files)
     return 0
+
+
+def _cmd_validate_quotes(args: argparse.Namespace) -> int:
+    path = Path(args.file)
+    if not path.exists():
+        raise ValueError(f"File not found: {path}")
+
+    inferred = _infer_bronze_metadata(path)
+    exchange = args.exchange or inferred.get("exchange")
+    symbol = args.symbol or inferred.get("symbol")
+    if not exchange or not symbol:
+        raise ValueError("validate quotes: --exchange and --symbol required (or inferable from path)")
+
+    exchange = normalize_exchange(exchange)
+    exchange_id = get_exchange_id(exchange)
+
+    raw_df = _read_bronze_csv(path)
+    if raw_df.is_empty():
+        print(f"Empty CSV file: {path}")
+        return 0
+
+    parsed_df = parse_tardis_quotes_csv(raw_df)
+    dim_symbol = pl.read_delta(str(get_table_path("dim_symbol")))
+    resolved_df = resolve_quotes_symbol_ids(parsed_df, dim_symbol, exchange_id, symbol)
+    encoded_df = encode_quotes_fixed_point(resolved_df, dim_symbol).with_columns(
+        pl.lit(exchange).alias("exchange")
+    )
+
+    combined_filter, rules = _quote_validation_rules(encoded_df)
+    invalid = encoded_df.filter(~combined_filter)
+    if invalid.is_empty():
+        print("No invalid rows detected.")
+        return 0
+
+    if "file_line_number" not in invalid.columns:
+        invalid = (
+            invalid.with_row_index("file_line_number")
+            if hasattr(invalid, "with_row_index")
+            else invalid.with_row_count("file_line_number")
+        )
+
+    reason_exprs = [pl.when(rule).then(pl.lit(name)).otherwise(None) for name, rule in rules]
+    invalid = invalid.with_columns(
+        pl.concat_list(reason_exprs).list.drop_nulls().list.join(",").alias("invalid_reason")
+    )
+
+    display_cols = [
+        "file_line_number",
+        "ts_local_us",
+        "bid_px_int",
+        "bid_sz_int",
+        "ask_px_int",
+        "ask_sz_int",
+        "invalid_reason",
+    ]
+    display_cols = [col for col in display_cols if col in invalid.columns]
+
+    print(f"Invalid rows: {invalid.height}")
+    output = invalid.select(display_cols)
+    if args.show_all:
+        print(output)
+    else:
+        print(output.head(args.limit))
+
+    return 1 if args.exit_nonzero else 0
 
 
 def _create_ingestion_service(data_type: str, manifest_repo):
@@ -134,6 +208,44 @@ def _parse_partition_filters(items: Sequence[str]) -> dict[str, object]:
         else:
             filters[key] = value
     return filters
+
+
+def _read_bronze_csv(path: Path) -> pl.DataFrame:
+    """Read a bronze CSV file with line numbers preserved."""
+    read_options = {
+        "infer_schema_length": 10000,
+        "try_parse_dates": False,
+    }
+    if "row_index_name" in inspect.signature(pl.read_csv).parameters:
+        read_options["row_index_name"] = "file_line_number"
+        read_options["row_index_offset"] = 2
+    else:
+        read_options["row_count_name"] = "file_line_number"
+        read_options["row_count_offset"] = 2
+
+    try:
+        if path.suffix == ".gz" or str(path).endswith(".csv.gz"):
+            with gzip.open(path, "rt", encoding="utf-8") as handle:
+                return pl.read_csv(handle, **read_options)
+        return pl.read_csv(path, **read_options)
+    except pl.exceptions.NoDataError:
+        return pl.DataFrame()
+
+
+def _infer_bronze_metadata(path: Path) -> dict[str, str]:
+    match = re.search(
+        r"exchange=([^/]+)/type=([^/]+)/date=([^/]+)/symbol=([^/]+)/",
+        path.as_posix(),
+    )
+    if not match:
+        return {}
+    exchange, data_type, date_str, symbol = match.groups()
+    return {
+        "exchange": exchange,
+        "data_type": data_type,
+        "date": date_str,
+        "symbol": symbol,
+    }
 
 
 def _cmd_delta_optimize(args: argparse.Namespace) -> int:
@@ -718,6 +830,41 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Random seed for validation sampling (default: 0)",
     )
     ingest_run.set_defaults(func=_cmd_ingest_run)
+
+    validate = subparsers.add_parser("validate", help="Validate raw files")
+    validate_sub = validate.add_subparsers(dest="validate_command")
+
+    validate_quotes = validate_sub.add_parser(
+        "quotes", help="Validate raw quotes file and show invalid rows"
+    )
+    validate_quotes.add_argument("--file", required=True, help="Path to the raw quotes CSV file")
+    validate_quotes.add_argument(
+        "--exchange",
+        default=None,
+        help="Exchange name (defaults to value inferred from path)",
+    )
+    validate_quotes.add_argument(
+        "--symbol",
+        default=None,
+        help="Exchange symbol (defaults to value inferred from path)",
+    )
+    validate_quotes.add_argument(
+        "--limit",
+        type=int,
+        default=20,
+        help="Max invalid rows to print (default: 20)",
+    )
+    validate_quotes.add_argument(
+        "--show-all",
+        action="store_true",
+        help="Print all invalid rows",
+    )
+    validate_quotes.add_argument(
+        "--exit-nonzero",
+        action="store_true",
+        help="Exit with status 1 if invalid rows are found",
+    )
+    validate_quotes.set_defaults(func=_cmd_validate_quotes)
 
     delta = subparsers.add_parser("delta", help="Delta Lake maintenance utilities")
     delta_sub = delta.add_subparsers(dest="delta_command")
