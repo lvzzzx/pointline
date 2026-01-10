@@ -92,15 +92,18 @@ def parse_tardis_quotes_csv(df: pl.DataFrame) -> pl.DataFrame:
         pl.col("ask_amount").cast(pl.Float64, strict=False),
     ])
     
-    # Select only the columns we need
-    return result.select([
+    # Select only the columns we need (preserve file_line_number if provided)
+    select_cols = [
         "ts_local_us",
         "ts_exch_us",
         "bid_price",
         "bid_amount",
         "ask_price",
         "ask_amount",
-    ])
+    ]
+    if "file_line_number" in result.columns:
+        select_cols = ["file_line_number"] + select_cols
+    return result.select(select_cols)
 
 
 def normalize_quotes_schema(df: pl.DataFrame) -> pl.DataFrame:
@@ -217,9 +220,9 @@ def encode_fixed_point(
     - dim_symbol must have 'symbol_id', 'price_increment', 'amount_increment' columns
     
     Computes:
-    - bid_px_int = round(bid_price / price_increment)
+    - bid_px_int = floor(bid_price / price_increment)
     - bid_sz_int = round(bid_amount / amount_increment)
-    - ask_px_int = round(ask_price / price_increment)
+    - ask_px_int = ceil(ask_price / price_increment)
     - ask_sz_int = round(ask_amount / amount_increment)
     
     Returns DataFrame with bid_px_int, bid_sz_int, ask_px_int, ask_sz_int columns added.
@@ -255,7 +258,7 @@ def encode_fixed_point(
     # Encode to fixed-point (handle nulls - preserve null for empty bid/ask)
     result = joined.with_columns([
         pl.when(pl.col("bid_price").is_not_null())
-        .then((pl.col("bid_price") / pl.col("price_increment")).round().cast(pl.Int64))
+        .then((pl.col("bid_price") / pl.col("price_increment")).floor().cast(pl.Int64))
         .otherwise(None)
         .alias("bid_px_int"),
         pl.when(pl.col("bid_amount").is_not_null())
@@ -263,7 +266,7 @@ def encode_fixed_point(
         .otherwise(None)
         .alias("bid_sz_int"),
         pl.when(pl.col("ask_price").is_not_null())
-        .then((pl.col("ask_price") / pl.col("price_increment")).round().cast(pl.Int64))
+        .then((pl.col("ask_price") / pl.col("price_increment")).ceil().cast(pl.Int64))
         .otherwise(None)
         .alias("ask_px_int"),
         pl.when(pl.col("ask_amount").is_not_null())

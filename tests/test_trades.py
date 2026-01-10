@@ -91,6 +91,17 @@ def test_parse_tardis_trades_csv_basic():
     assert set(parsed["side"].unique().to_list()) == {SIDE_BUY, SIDE_SELL}
 
 
+def test_parse_tardis_trades_csv_preserves_file_line_number():
+    """Ensure file_line_number is preserved when present."""
+    raw_df = _sample_tardis_trades_csv().with_columns(
+        pl.Series("file_line_number", [2, 3, 4], dtype=pl.Int32)
+    )
+    parsed = parse_tardis_trades_csv(raw_df)
+
+    assert "file_line_number" in parsed.columns
+    assert parsed["file_line_number"].to_list() == [2, 3, 4]
+
+
 def test_parse_tardis_trades_csv_alternative_columns():
     """Test parsing with alternative column name variations."""
     base_ts = 1714557600000000  # 2024-05-01T10:00:00.000000Z
@@ -389,7 +400,7 @@ def test_trades_service_ingest_file_quarantine():
     try:
         # Mock the bronze path
         from pointline.config import LAKE_ROOT
-        bronze_path = LAKE_ROOT / meta.bronze_file_path
+        bronze_path = LAKE_ROOT / "tardis" / meta.bronze_file_path
         bronze_path.parent.mkdir(parents=True, exist_ok=True)
         import shutil
         shutil.copy(temp_path, bronze_path)
@@ -442,7 +453,7 @@ def test_trades_service_ingest_file_success():
     try:
         # Mock the bronze path
         from pointline.config import LAKE_ROOT
-        bronze_path = LAKE_ROOT / meta.bronze_file_path
+        bronze_path = LAKE_ROOT / "tardis" / meta.bronze_file_path
         bronze_path.parent.mkdir(parents=True, exist_ok=True)
         import shutil
         shutil.copy(temp_path, bronze_path)

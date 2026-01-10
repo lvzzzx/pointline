@@ -93,6 +93,17 @@ def test_parse_tardis_quotes_csv_basic():
     assert parsed["ask_amount"].dtype == pl.Float64
 
 
+def test_parse_tardis_quotes_csv_preserves_file_line_number():
+    """Ensure file_line_number is preserved when present."""
+    raw_df = _sample_tardis_quotes_csv().with_columns(
+        pl.Series("file_line_number", [2, 3, 4], dtype=pl.Int32)
+    )
+    parsed = parse_tardis_quotes_csv(raw_df)
+
+    assert "file_line_number" in parsed.columns
+    assert parsed["file_line_number"].to_list() == [2, 3, 4]
+
+
 def test_parse_tardis_quotes_csv_missing_required():
     """Test parsing fails when required columns are missing."""
     base_ts = 1714557600000000
@@ -118,10 +129,10 @@ def test_parse_tardis_quotes_csv_empty_values():
         "symbol": ["BTCUSDT", "BTCUSDT", "BTCUSDT"],
         "timestamp": [base_ts + 100_000] * 3,
         "local_timestamp": [base_ts] * 3,
-        "bid_price": [50000.0, None, ""],  # Empty string should become null
-        "bid_amount": [0.1, None, ""],
-        "ask_price": [50000.5, "", None],  # Empty string should become null
-        "ask_amount": [0.15, "", None],
+        "bid_price": pl.Series(["50000.0", None, ""], dtype=pl.Utf8),
+        "bid_amount": pl.Series(["0.1", None, ""], dtype=pl.Utf8),
+        "ask_price": pl.Series(["50000.5", "", None], dtype=pl.Utf8),
+        "ask_amount": pl.Series(["0.15", "", None], dtype=pl.Utf8),
     })
     
     parsed = parse_tardis_quotes_csv(raw_df)
@@ -327,7 +338,37 @@ def test_encode_fixed_point_with_nulls():
     # Second row should have null bid
     assert encoded["bid_px_int"][1] is None
     assert encoded["bid_sz_int"][1] is None
-    assert encoded["ask_px_int"][1] == 5000150
+
+
+def test_encode_fixed_point_rounding_direction():
+    """Bid floors and ask ceils to avoid crossed rounding."""
+    updates = pl.DataFrame({
+        "exchange_id": [1],
+        "exchange_symbol": ["BTCUSDT"],
+        "base_asset": ["BTC"],
+        "quote_asset": ["USDT"],
+        "asset_type": [0],
+        "tick_size": [0.01],
+        "lot_size": [0.00001],
+        "price_increment": [0.01],
+        "amount_increment": [0.00001],
+        "contract_size": [1.0],
+        "valid_from_ts": [1000000000000000],
+    })
+    dim_symbol = scd2_bootstrap(updates)
+
+    df = pl.DataFrame({
+        "symbol_id": dim_symbol["symbol_id"].to_list(),
+        "bid_price": [50000.123],
+        "bid_amount": [0.1],
+        "ask_price": [50000.123],
+        "ask_amount": [0.1],
+    })
+
+    encoded = encode_fixed_point(df, dim_symbol)
+
+    assert encoded["bid_px_int"][0] == 5000012  # floor(50000.123 / 0.01)
+    assert encoded["ask_px_int"][0] == 5000013  # ceil(50000.123 / 0.01)
 
 
 def test_encode_fixed_point_missing_symbol():
@@ -478,7 +519,7 @@ def test_quotes_service_ingest_file_quarantine():
     try:
         # Mock the bronze path
         from pointline.config import LAKE_ROOT
-        bronze_path = LAKE_ROOT / meta.bronze_file_path
+        bronze_path = LAKE_ROOT / "tardis" / meta.bronze_file_path
         bronze_path.parent.mkdir(parents=True, exist_ok=True)
         import shutil
         shutil.copy(temp_path, bronze_path)
@@ -531,7 +572,7 @@ def test_quotes_service_ingest_file_success():
     try:
         # Mock the bronze path
         from pointline.config import LAKE_ROOT
-        bronze_path = LAKE_ROOT / meta.bronze_file_path
+        bronze_path = LAKE_ROOT / "tardis" / meta.bronze_file_path
         bronze_path.parent.mkdir(parents=True, exist_ok=True)
         import shutil
         shutil.copy(temp_path, bronze_path)

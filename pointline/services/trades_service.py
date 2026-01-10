@@ -218,11 +218,127 @@ class TradesIngestionService(BaseService):
 
     def _read_bronze_csv(self, path: Path) -> pl.DataFrame:
         """Read a bronze CSV file, handling gzip compression."""
-        if path.suffix == ".gz" or str(path).endswith(".csv.gz"):
-            with gzip.open(path, "rt", encoding="utf-8") as f:
-                return pl.read_csv(f)
+        read_options = {
+            "infer_schema_length": 10000,
+            "try_parse_dates": False,
+        }
+        # Preserve raw CSV line numbers (1-based data rows + header).
+        import inspect
+
+        if "row_index_name" in inspect.signature(pl.read_csv).parameters:
+            read_options["row_index_name"] = "file_line_number"
+            read_options["row_index_offset"] = 2
         else:
-            return pl.read_csv(path)
+            read_options["row_count_name"] = "file_line_number"
+            read_options["row_count_offset"] = 2
+        try:
+            if path.suffix == ".gz" or str(path).endswith(".csv.gz"):
+                with gzip.open(path, "rt", encoding="utf-8") as f:
+                    return pl.read_csv(f, **read_options)
+            else:
+                return pl.read_csv(path, **read_options)
+        except pl.exceptions.NoDataError:
+            return pl.DataFrame()
+
+    def validate_ingested(
+        self,
+        meta: BronzeFileMetadata,
+        file_id: int,
+        *,
+        bronze_root: Path | None = None,
+        sample_size: int = 2000,
+        seed: int = 0,
+    ) -> tuple[bool, str]:
+        """Validate ingested rows against raw file (sampled).
+
+        Compares encoded columns for a sample of rows joined by file_line_number.
+        Returns (ok, message). Message is empty if ok.
+        """
+        if bronze_root is None:
+            bronze_root = LAKE_ROOT / "tardis"
+        bronze_path = bronze_root / meta.bronze_file_path
+
+        raw_df = self._read_bronze_csv(bronze_path)
+        if raw_df.is_empty():
+            return True, ""
+
+        parsed_df = parse_tardis_trades_csv(raw_df)
+        dim_symbol = self.dim_symbol_repo.read_all()
+        exchange_id = self._resolve_exchange_id(meta.exchange)
+
+        resolved_df = resolve_symbol_ids(
+            parsed_df,
+            dim_symbol,
+            exchange_id,
+            meta.symbol,
+            ts_col="ts_local_us",
+        )
+        encoded_df = encode_fixed_point(resolved_df, dim_symbol)
+
+        raw_encoded = encoded_df.select(
+            [
+                "file_line_number",
+                "price_int",
+                "qty_int",
+                "side",
+            ]
+        ).with_columns(pl.col("file_line_number").cast(pl.Int32))
+
+        if raw_encoded.is_empty():
+            return True, ""
+
+        if sample_size > 0 and raw_encoded.height > sample_size:
+            raw_sample = raw_encoded.sample(n=sample_size, seed=seed)
+        else:
+            raw_sample = raw_encoded
+
+        ingested = (
+            pl.scan_delta(self.repo.table_path)
+            .filter(pl.col("file_id") == file_id)
+            .select(
+                [
+                    "file_line_number",
+                    "price_int",
+                    "qty_int",
+                    "side",
+                ]
+            )
+            .collect()
+            .with_columns(pl.col("file_line_number").cast(pl.Int32))
+        )
+
+        if ingested.is_empty():
+            return False, "post_ingest_validation_failed: no rows found for file_id"
+
+        missing = raw_sample.join(ingested, on="file_line_number", how="anti")
+        joined = raw_sample.join(ingested, on="file_line_number", how="inner", suffix="_ing")
+        match_expr = pl.all_horizontal(
+            [
+                pl.col("price_int") == pl.col("price_int_ing"),
+                pl.col("qty_int") == pl.col("qty_int_ing"),
+                pl.col("side") == pl.col("side_ing"),
+            ]
+        ).alias("_row_match")
+        matched_by_line = (
+            joined.with_columns(match_expr)
+            .group_by("file_line_number")
+            .agg(pl.col("_row_match").any().alias("_any_match"))
+        )
+        mismatched_lines = matched_by_line.filter(~pl.col("_any_match"))
+
+        if missing.is_empty() and mismatched_lines.is_empty():
+            return True, ""
+
+        missing_lines = missing.select("file_line_number").head(5).to_series().to_list()
+        mismatch_lines = (
+            mismatched_lines.select("file_line_number").head(5).to_series().to_list()
+        )
+        return (
+            False,
+            "post_ingest_validation_failed: "
+            f"missing={missing.height}, mismatched={mismatched_lines.height}, "
+            f"missing_lines={missing_lines}, mismatched_lines={mismatch_lines}",
+        )
 
     def _resolve_exchange_id(self, exchange: str) -> int:
         """Resolve exchange name to exchange_id using canonical mapping."""
@@ -286,11 +402,15 @@ class TradesIngestionService(BaseService):
         within the source file.
         """
         # Use Int32 to match Delta Lake storage (Delta Lake doesn't support UInt32)
-        file_line_number = pl.int_range(1, df.height + 1, dtype=pl.Int32)
+        if "file_line_number" in df.columns:
+            file_line_number = pl.col("file_line_number").cast(pl.Int32)
+        else:
+            file_line_number = pl.int_range(1, df.height + 1, dtype=pl.Int32)
+        ingest_seq = pl.int_range(1, df.height + 1, dtype=pl.Int32)
         return df.with_columns([
             pl.lit(file_id, dtype=pl.Int32).alias("file_id"),
             file_line_number.alias("file_line_number"),
-            file_line_number.alias("ingest_seq"),  # Use line number as ingest sequence
+            ingest_seq.alias("ingest_seq"),  # Deterministic order within file
         ])
 
     def _add_metadata(self, df: pl.DataFrame, exchange: str, exchange_id: int) -> pl.DataFrame:

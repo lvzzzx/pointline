@@ -183,15 +183,18 @@ def parse_tardis_trades_csv(df: pl.DataFrame) -> pl.DataFrame:
     else:
         raise ValueError("Could not find quantity/amount column in CSV")
     
-    # Select only the columns we need
-    return result.select([
+    # Select only the columns we need (preserve file_line_number if provided)
+    select_cols = [
         "ts_local_us",
         "ts_exch_us",
         "trade_id",
         "side",
         "price",
         "qty",
-    ])
+    ]
+    if "file_line_number" in result.columns:
+        select_cols = ["file_line_number"] + select_cols
+    return result.select(select_cols)
 
 
 def normalize_trades_schema(df: pl.DataFrame) -> pl.DataFrame:

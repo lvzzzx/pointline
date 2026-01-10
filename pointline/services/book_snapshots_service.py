@@ -79,13 +79,9 @@ class BookSnapshotsIngestionService(BaseService):
             logger.warning("write: skipping empty DataFrame")
             return
 
-        # Use append for immutable event data
-        if hasattr(self.repo, "append"):
-            self.repo.append(result)
-        else:
-            # Fallback to merge if append not available
-            # For book snapshots, we could use a composite key, but append is preferred
+        if not hasattr(self.repo, "append"):
             raise NotImplementedError("Repository must support append() for book_snapshot_25")
+        self.repo.append(result)
 
     def ingest_file(
         self,
