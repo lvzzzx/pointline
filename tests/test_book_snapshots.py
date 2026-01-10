@@ -298,6 +298,43 @@ def test_encode_fixed_point():
     assert first_bid_sz[0] == 10000  # 0.1 / 0.00001
 
 
+def test_encode_fixed_point_multi_symbol():
+    """Encode with multiple symbol_id values using per-symbol increments."""
+    updates = pl.DataFrame({
+        "exchange_id": [1, 1],
+        "exchange_symbol": ["BTCUSDT", "ETHUSDT"],
+        "base_asset": ["BTC", "ETH"],
+        "quote_asset": ["USDT", "USDT"],
+        "asset_type": [0, 0],
+        "tick_size": [0.01, 0.1],
+        "lot_size": [0.00001, 0.001],
+        "price_increment": [0.01, 0.1],
+        "amount_increment": [0.00001, 0.001],
+        "contract_size": [1.0, 1.0],
+        "valid_from_ts": [1000000000000000, 1000000000000000],
+    })
+    dim_symbol = scd2_bootstrap(updates)
+
+    btc_id = dim_symbol.filter(pl.col("exchange_symbol") == "BTCUSDT")["symbol_id"][0]
+    eth_id = dim_symbol.filter(pl.col("exchange_symbol") == "ETHUSDT")["symbol_id"][0]
+
+    df = pl.DataFrame({
+        "symbol_id": [btc_id, eth_id],
+        "ts_local_us": [1714557600000000, 1714557600000001],
+        "asks[0].price": [50000.01, 250.01],
+        "asks[0].amount": [0.15, 1.6],
+        "bids[0].price": [50000.00, 249.99],
+        "bids[0].amount": [0.10, 1.5],
+    })
+
+    encoded = encode_fixed_point(df, dim_symbol)
+
+    assert encoded["asks_px"][0][0] == 5000001
+    assert encoded["bids_px"][0][0] == 5000000
+    assert encoded["asks_px"][1][0] == 2501
+    assert encoded["bids_px"][1][0] == 2499
+
+
 def test_decode_fixed_point():
     """Test decoding fixed-point list columns back to floats."""
     dim_symbol = _sample_dim_symbol()
@@ -324,6 +361,44 @@ def test_decode_fixed_point():
     assert first_bid_px[0] == 50000.0
     assert first_bid_px[1] == 49999.9
     assert first_bid_px[2] is None
+
+
+def test_decode_fixed_point_multi_symbol():
+    """Decode with multiple symbol_id values using per-row increments."""
+    updates = pl.DataFrame({
+        "exchange_id": [1, 1],
+        "exchange_symbol": ["BTCUSDT", "ETHUSDT"],
+        "base_asset": ["BTC", "ETH"],
+        "quote_asset": ["USDT", "USDT"],
+        "asset_type": [0, 0],
+        "tick_size": [0.01, 0.1],
+        "lot_size": [0.00001, 0.001],
+        "price_increment": [0.01, 0.1],
+        "amount_increment": [0.00001, 0.001],
+        "contract_size": [1.0, 1.0],
+        "valid_from_ts": [1000000000000000, 1000000000000000],
+    })
+    dim_symbol = scd2_bootstrap(updates)
+    base_ts = 1714557600000000
+
+    btc_id = dim_symbol.filter(pl.col("exchange_symbol") == "BTCUSDT")["symbol_id"][0]
+    eth_id = dim_symbol.filter(pl.col("exchange_symbol") == "ETHUSDT")["symbol_id"][0]
+
+    df = pl.DataFrame({
+        "symbol_id": [btc_id, eth_id],
+        "ts_local_us": [base_ts, base_ts + 1],
+        "bids_px": [[5000000, None], [2500, None]],
+        "bids_sz": [[10000, None], [1500, None]],
+        "asks_px": [[5000050, None], [2501, None]],
+        "asks_sz": [[15000, None], [1600, None]],
+    })
+
+    decoded = decode_fixed_point(df, dim_symbol)
+
+    assert decoded["bids_px"][0][0] == 50000.0
+    assert decoded["asks_px"][0][0] == 50000.5
+    assert decoded["bids_px"][1][0] == 250.0
+    assert decoded["asks_px"][1][0] == pytest.approx(250.1)
 
 
 def test_resolve_symbol_ids():

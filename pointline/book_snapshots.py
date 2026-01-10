@@ -313,6 +313,7 @@ def encode_fixed_point(
     - asks_sz_int = [round(size / amount_increment) for size in asks_sz]
     
     Returns DataFrame with bids_px, bids_sz, asks_px, asks_sz as Int64 lists.
+    Supports multiple symbol_id values by encoding per symbol and restoring row order.
     """
     if "symbol_id" not in df.columns:
         raise ValueError("encode_fixed_point: df must have 'symbol_id' column")
@@ -335,7 +336,12 @@ def encode_fixed_point(
         raise ValueError(f"encode_fixed_point: dim_symbol missing columns: {missing}")
     
     # Join to get increments
-    joined = df.join(
+    df_with_index = (
+        df.with_row_index("__row_nr")
+        if hasattr(df, "with_row_index")
+        else df.with_row_count("__row_nr")
+    )
+    joined = df_with_index.join(
         dim_symbol.select(["symbol_id", "price_increment", "amount_increment"]),
         on="symbol_id",
         how="left",
@@ -349,22 +355,6 @@ def encode_fixed_point(
             f"encode_fixed_point: {missing_symbols.height} symbol_ids not found in dim_symbol"
         )
     
-    # Assumes batches are single-symbol; enforce that to avoid mixed-symbol mis-encoding.
-    unique_symbols = joined.select("symbol_id").unique().height
-    if unique_symbols > 1:
-        raise ValueError(
-            "encode_fixed_point: multiple symbol_id values found in batch; "
-            "split by symbol_id or use a per-symbol encoding path"
-        )
-
-    # Extract increment values once (valid because batch is single-symbol).
-    first_row = joined.head(1)
-    if first_row.is_empty():
-        return joined.drop(["price_increment", "amount_increment"])
-
-    price_inc = first_row["price_increment"][0]
-    amount_inc = first_row["amount_increment"][0]
-
     def encode_list(
         cols: list[str],
         existing_cols: list[str],
@@ -393,42 +383,62 @@ def encode_fixed_point(
                 list_exprs.append(pl.lit(None, dtype=pl.Int64))
         return pl.concat_list(list_exprs)
 
+    if joined.is_empty():
+        drop_cols = [c for c in raw_cols if c in joined.columns]
+        return joined.drop(drop_cols + ["price_increment", "amount_increment", "__row_nr"])
+
     existing_asks_price = [c for c in asks_price_cols if c in joined.columns]
     existing_asks_amount = [c for c in asks_amount_cols if c in joined.columns]
     existing_bids_price = [c for c in bids_price_cols if c in joined.columns]
     existing_bids_amount = [c for c in bids_amount_cols if c in joined.columns]
 
-    result = joined.with_columns(
-        [
-            encode_list(
-                asks_price_cols,
-                existing_asks_price,
-                price_inc,
-                mode="ceil",
-            ).alias("asks_px"),
-            encode_list(
-                asks_amount_cols,
-                existing_asks_amount,
-                amount_inc,
-                mode="round",
-            ).alias("asks_sz"),
-            encode_list(
-                bids_price_cols,
-                existing_bids_price,
-                price_inc,
-                mode="floor",
-            ).alias("bids_px"),
-            encode_list(
-                bids_amount_cols,
-                existing_bids_amount,
-                amount_inc,
-                mode="round",
-            ).alias("bids_sz"),
+    def _encode_group(group: pl.DataFrame) -> pl.DataFrame:
+        if group.is_empty():
+            return group
+        price_inc = group["price_increment"][0]
+        amount_inc = group["amount_increment"][0]
+        return group.with_columns(
+            [
+                encode_list(
+                    asks_price_cols,
+                    existing_asks_price,
+                    price_inc,
+                    mode="ceil",
+                ).alias("asks_px"),
+                encode_list(
+                    asks_amount_cols,
+                    existing_asks_amount,
+                    amount_inc,
+                    mode="round",
+                ).alias("asks_sz"),
+                encode_list(
+                    bids_price_cols,
+                    existing_bids_price,
+                    price_inc,
+                    mode="floor",
+                ).alias("bids_px"),
+                encode_list(
+                    bids_amount_cols,
+                    existing_bids_amount,
+                    amount_inc,
+                    mode="round",
+                ).alias("bids_sz"),
+            ]
+        )
+
+    unique_symbols = joined.select("symbol_id").unique(maintain_order=True)
+    symbol_ids = unique_symbols["symbol_id"].to_list()
+    if len(symbol_ids) == 1:
+        result = _encode_group(joined)
+    else:
+        groups = [
+            _encode_group(joined.filter(pl.col("symbol_id") == symbol_id))
+            for symbol_id in symbol_ids
         ]
-    )
+        result = pl.concat(groups, how="vertical").sort("__row_nr")
 
     drop_cols = [c for c in raw_cols if c in result.columns]
-    return result.drop(drop_cols + ["price_increment", "amount_increment"])
+    return result.drop(drop_cols + ["price_increment", "amount_increment", "__row_nr"])
 
 
 def decode_fixed_point(
@@ -443,6 +453,7 @@ def decode_fixed_point(
     - dim_symbol must have 'symbol_id', 'price_increment', 'amount_increment' columns
 
     Returns DataFrame with bids_px, bids_sz, asks_px, asks_sz replaced with Float64 lists.
+    Supports multiple symbol_id values by decoding per row using each symbol's increments.
     """
     if "symbol_id" not in df.columns:
         raise ValueError("decode_fixed_point: df must have 'symbol_id' column")
@@ -457,7 +468,12 @@ def decode_fixed_point(
     if missing_dims:
         raise ValueError(f"decode_fixed_point: dim_symbol missing columns: {missing_dims}")
 
-    joined = df.join(
+    df_with_index = (
+        df.with_row_index("__row_nr")
+        if hasattr(df, "with_row_index")
+        else df.with_row_count("__row_nr")
+    )
+    joined = df_with_index.join(
         dim_symbol.select(["symbol_id", "price_increment", "amount_increment"]),
         on="symbol_id",
         how="left",
@@ -470,46 +486,51 @@ def decode_fixed_point(
             f"decode_fixed_point: {missing_symbols.height} symbol_ids not found in dim_symbol"
         )
 
-    unique_symbols = joined.select("symbol_id").unique().height
-    if unique_symbols > 1:
-        raise ValueError(
-            "decode_fixed_point: multiple symbol_id values found in batch; "
-            "split by symbol_id or use a per-symbol decoding path"
+    if joined.is_empty():
+        return joined.drop(["price_increment", "amount_increment", "__row_nr"])
+
+    def _decode_group(group: pl.DataFrame) -> pl.DataFrame:
+        if group.is_empty():
+            return group
+        price_inc = group["price_increment"][0]
+        amount_inc = group["amount_increment"][0]
+        return group.with_columns(
+            [
+                pl.col("bids_px").list.eval(
+                    pl.when(pl.element().is_not_null())
+                    .then((pl.element() * pl.lit(price_inc)).cast(pl.Float64))
+                    .otherwise(None)
+                ).alias("bids_px"),
+                pl.col("bids_sz").list.eval(
+                    pl.when(pl.element().is_not_null())
+                    .then((pl.element() * pl.lit(amount_inc)).cast(pl.Float64))
+                    .otherwise(None)
+                ).alias("bids_sz"),
+                pl.col("asks_px").list.eval(
+                    pl.when(pl.element().is_not_null())
+                    .then((pl.element() * pl.lit(price_inc)).cast(pl.Float64))
+                    .otherwise(None)
+                ).alias("asks_px"),
+                pl.col("asks_sz").list.eval(
+                    pl.when(pl.element().is_not_null())
+                    .then((pl.element() * pl.lit(amount_inc)).cast(pl.Float64))
+                    .otherwise(None)
+                ).alias("asks_sz"),
+            ]
         )
 
-    first_row = joined.head(1)
-    if first_row.is_empty():
-        return joined.drop(["price_increment", "amount_increment"])
-
-    price_inc = first_row["price_increment"][0]
-    amount_inc = first_row["amount_increment"][0]
-
-    result = joined.with_columns(
-        [
-            pl.col("bids_px").list.eval(
-                pl.when(pl.element().is_not_null())
-                .then((pl.element() * pl.lit(price_inc)).cast(pl.Float64))
-                .otherwise(None)
-            ).alias("bids_px"),
-            pl.col("bids_sz").list.eval(
-                pl.when(pl.element().is_not_null())
-                .then((pl.element() * pl.lit(amount_inc)).cast(pl.Float64))
-                .otherwise(None)
-            ).alias("bids_sz"),
-            pl.col("asks_px").list.eval(
-                pl.when(pl.element().is_not_null())
-                .then((pl.element() * pl.lit(price_inc)).cast(pl.Float64))
-                .otherwise(None)
-            ).alias("asks_px"),
-            pl.col("asks_sz").list.eval(
-                pl.when(pl.element().is_not_null())
-                .then((pl.element() * pl.lit(amount_inc)).cast(pl.Float64))
-                .otherwise(None)
-            ).alias("asks_sz"),
+    unique_symbols = joined.select("symbol_id").unique(maintain_order=True)
+    symbol_ids = unique_symbols["symbol_id"].to_list()
+    if len(symbol_ids) == 1:
+        result = _decode_group(joined)
+    else:
+        groups = [
+            _decode_group(joined.filter(pl.col("symbol_id") == symbol_id))
+            for symbol_id in symbol_ids
         ]
-    )
+        result = pl.concat(groups, how="vertical").sort("__row_nr")
 
-    return result.drop(["price_increment", "amount_increment"])
+    return result.drop(["price_increment", "amount_increment", "__row_nr"])
 
 
 def resolve_symbol_ids(
