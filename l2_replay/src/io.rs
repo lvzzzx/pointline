@@ -31,6 +31,9 @@ pub fn delta_table_exists(path: &str) -> bool {
 }
 
 pub fn parquet_read_session_config() -> SessionConfig {
+    // Replaying an L2 order book is a strictly serial operation where state N depends on state N-1.
+    // We force target_partitions to 1 and disable repartitioning to ensure DataFusion processes
+    // the stream in a single thread, maintaining the natural time-ordering of the source files.
     let mut config = SessionConfig::new()
         .with_target_partitions(1)
         .with_repartition_file_scans(false)
@@ -43,6 +46,9 @@ pub fn parquet_read_session_config() -> SessionConfig {
     config
 }
 
+/// Constructs a lexicographical comparison expression to resume replay strictly after a given position.
+/// This handles cases where multiple updates have the same timestamp by checking ingest_seq,
+/// file_id, and file_line_number in order.
 pub fn after_pos_expr(pos: &StreamPos) -> Expr {
     let ts = lit(pos.ts_local_us);
     let ingest = lit(pos.ingest_seq);
@@ -173,6 +179,10 @@ pub async fn latest_checkpoint(
     }))
 }
 
+/// Builds a DataFrame for L2 updates within a time range.
+/// Note: This relies on the Delta table files being naturally ordered by time (ingestion order).
+/// We avoid an explicit sort here for performance, as the single-threaded session config
+/// processes files sequentially.
 pub async fn build_updates_df(
     updates_path: &str,
     exchange: Option<&str>,
