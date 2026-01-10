@@ -115,7 +115,10 @@ class DimSymbolService(BaseService):
                 if preserved_data.is_empty():
                     final_table = new_symbol_history
                 else:
-                    # align schemas just in case
+                    # Normalize schemas to ensure compatibility before concatenating
+                    from pointline.dim_symbol import normalize_dim_symbol_schema
+                    preserved_data = normalize_dim_symbol_schema(preserved_data)
+                    new_symbol_history = normalize_dim_symbol_schema(new_symbol_history)
                     final_table = pl.concat([preserved_data, new_symbol_history], how="vertical")
                 
                 # 5. Write atomically
