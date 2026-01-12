@@ -293,15 +293,18 @@ Derivative market data including mark/index, funding, open interest, etc.
 | ts_local_us | i64 | |
 | ts_exch_us | i64 | |
 | ingest_seq | i32 | |
-| mark_px_int | i64 | optional fixed-point |
-| index_px_int | i64 | optional fixed-point |
-| last_px_int | i64 | optional fixed-point |
+| mark_px | f64 | keep float to preserve precision |
+| index_px | f64 | keep float to preserve precision |
+| last_px | f64 | keep float to preserve precision |
 | funding_rate | f64 | funding often fine as float |
-| funding_ts_us | i64 | next/last funding time |
-| open_interest | f64/i64 | depends on venue |
-| volume_24h | f64/i64 | depends on venue |
+| predicted_funding_rate | f64 | optional; venue-provided estimate |
+| funding_ts_us | i64 | next funding event timestamp |
+| open_interest | f64 | keep float; source often fractional |
 | file_id | i32 | lineage tracking |
 | file_line_number | i32 | lineage tracking |
+
+**Note:** Use float columns for mark/index/last because some venues publish these with finer
+precision than trade tick size; fixed-point at `price_increment` would truncate.
 
 ---
 
@@ -571,7 +574,7 @@ Delta Lake (via Parquet) does not support unsigned integer types `UInt16` and `U
 | `trades` | Silver | `exchange`, `date` | `ts_local_us`, `symbol_id`, `price_int`, `qty_int` |
 | `quotes` | Silver | `exchange`, `date` | `ts_local_us`, `symbol_id`, `bid_px_int`, `ask_px_int` |
 | `book_ticker` | Silver | `exchange`, `date` | `ts_local_us`, `symbol_id`, `bid_px_int`, `ask_px_int` |
-| `derivative_ticker` | Silver | `exchange`, `date` | `ts_local_us`, `symbol_id`, `mark_px_int`, `funding_rate` |
+| `derivative_ticker` | Silver | `exchange`, `date` | `ts_local_us`, `symbol_id`, `mark_px`, `funding_rate` |
 | `liquidations` | Silver | `exchange`, `date` | `ts_local_us`, `symbol_id`, `price_int`, `qty_int` |
 | `options_chain` | Silver | `exchange`, `date` | `ts_local_us`, `underlying_symbol_id`, `option_symbol_id` |
 | `bars_1m` | Gold | `exchange`, `date` | `ts_bucket_start_us`, `symbol_id`, OHLCV |
