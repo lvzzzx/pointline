@@ -17,7 +17,7 @@ def with_expected_exchange_id(df: pl.DataFrame) -> pl.DataFrame:
             pl.col("exchange")
             .cast(pl.Utf8)
             .str.to_lowercase()
-            .str.strip()
+            .str.strip_chars()
             .alias("_exchange_norm")
         )
         .join(_EXCHANGE_MAP_DF, left_on="_exchange_norm", right_on="exchange_norm", how="left")
