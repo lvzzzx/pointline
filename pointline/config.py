@@ -11,6 +11,7 @@ TABLE_PATHS = {
     "trades": "silver/trades",
     "quotes": "silver/quotes",
     "book_snapshot_25": "silver/book_snapshot_25",
+    "derivative_ticker": "silver/derivative_ticker",
     "l2_updates": "silver/l2_updates",
     "l2_state_checkpoint": "gold/l2_state_checkpoint",
 }
