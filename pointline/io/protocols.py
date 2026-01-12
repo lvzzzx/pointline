@@ -41,6 +41,7 @@ class BronzeFileMetadata:
     bronze_file_path: str  # The full relative path or key
     file_size_bytes: int
     last_modified_ts: int
+    sha256: str
 
 @runtime_checkable
 class BronzeSource(Protocol):

@@ -482,6 +482,7 @@ def test_book_snapshots_ingestion_service_ingest_file(
         bronze_file_path=str(bronze_path.relative_to(tmp_path / "bronze")),
         file_size_bytes=1000,
         last_modified_ts=1714557600,
+        sha256="a" * 64,
     )
 
     # Register file in manifest
@@ -529,6 +530,7 @@ def test_book_snapshots_ingestion_service_empty_file(
         bronze_file_path=str(bronze_path.relative_to(tmp_path / "bronze")),
         file_size_bytes=0,
         last_modified_ts=1714557600,
+        sha256="b" * 64,
     )
 
     file_id = sample_manifest_repo.resolve_file_id(meta)
@@ -562,6 +564,7 @@ def test_book_snapshots_ingestion_service_quarantine(
         bronze_file_path=str(bronze_path.relative_to(tmp_path / "bronze")),
         file_size_bytes=1000,
         last_modified_ts=1714557600,
+        sha256="c" * 64,
     )
 
     file_id = sample_manifest_repo.resolve_file_id(meta)

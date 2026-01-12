@@ -39,19 +39,20 @@ def test_local_source_scanning(temp_bronze_dir):
     assert f1.exchange == "binance"
     assert f1.symbol == "BTCUSDT"
     assert "file1.csv.gz" in f1.bronze_file_path
+    assert len(f1.sha256) == 64
 
 def test_manifest_workflow(manifest_repo):
     # Setup Dummy Metadata
     meta1 = BronzeFileMetadata(
         exchange="binance", data_type="quotes", symbol="BTC", 
         date=date(2024, 1, 1), bronze_file_path="path/to/1",
-        file_size_bytes=100, last_modified_ts=1000
+        file_size_bytes=100, last_modified_ts=1000, sha256="a" * 64
     )
     
     meta2 = BronzeFileMetadata(
         exchange="binance", data_type="quotes", symbol="BTC", 
         date=date(2024, 1, 2), bronze_file_path="path/to/2",
-        file_size_bytes=200, last_modified_ts=2000
+        file_size_bytes=200, last_modified_ts=2000, sha256="b" * 64
     )
     
     # 1. Resolve IDs (should mint new ones)
@@ -84,11 +85,11 @@ def test_manifest_workflow(manifest_repo):
     assert id1_retry == 1
 
 def test_skip_logic_modified_file(manifest_repo):
-    """If file size changes, it should NOT be skipped."""
+    """If content hash changes, it should NOT be skipped."""
     meta = BronzeFileMetadata(
         exchange="binance", data_type="quotes", symbol="BTC", 
         date=date(2024, 1, 1), bronze_file_path="path/to/1",
-        file_size_bytes=100, last_modified_ts=1000
+        file_size_bytes=100, last_modified_ts=1000, sha256="c" * 64
     )
     
     # Initial Success
@@ -98,25 +99,17 @@ def test_skip_logic_modified_file(manifest_repo):
     # Verify skipped
     assert len(manifest_repo.filter_pending([meta])) == 0
     
-    # Modified file (size change)
+    # Modified file (content hash change)
     meta_mod = BronzeFileMetadata(
         exchange="binance", data_type="quotes", symbol="BTC", 
         date=date(2024, 1, 1), bronze_file_path="path/to/1",
-        file_size_bytes=150, # CHANGED
-        last_modified_ts=1000
+        file_size_bytes=150,
+        last_modified_ts=1000,
+        sha256="d" * 64,
     )
     
     # Should NOT skip
     assert len(manifest_repo.filter_pending([meta_mod])) == 1
     
-    # And resolving ID should probably return the SAME ID?
-    # Wait, if we re-ingest the SAME file path but different content, 
-    # do we want a NEW ID or reuse the OLD ID?
-    # Design doc says: "Silver tables must include file_id".
-    # If we overwrite the manifest row, we lose the history of the old ingestion?
-    # Or maybe we just update the manifest row with new stats?
-    # Current implementation uses primary key (exchange... file_name).
-    # So it will reuse the ID.
-    
     fid_mod = manifest_repo.resolve_file_id(meta_mod)
-    assert fid_mod == fid
+    assert fid_mod != fid

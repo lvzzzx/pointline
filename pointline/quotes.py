@@ -17,6 +17,8 @@ from typing import Sequence
 
 import polars as pl
 
+from pointline.validation_utils import with_expected_exchange_id
+
 # Schema definition matching design.md Section 5.4
 # 
 # Delta Lake Integer Type Limitations:
@@ -137,9 +139,10 @@ def validate_quotes(df: pl.DataFrame) -> pl.DataFrame:
     
     Validates:
     - Non-negative prices and sizes (when present)
-    - Valid timestamp ranges (reasonable values)
+    - Valid timestamp ranges (reasonable values) for local and exchange times
     - Crossed book check: bid_px_int < ask_px_int when both are present
     - At least one of bid or ask must be present (filter rows with both missing)
+    - exchange_id matches normalized exchange
     
     Returns filtered DataFrame (invalid rows removed) or raises on critical errors.
     """
@@ -149,25 +152,26 @@ def validate_quotes(df: pl.DataFrame) -> pl.DataFrame:
     # Check required columns
     required = [
         "bid_px_int", "bid_sz_int", "ask_px_int", "ask_sz_int",
-        "ts_local_us", "exchange", "exchange_id", "symbol_id"
+        "ts_local_us", "ts_exch_us", "exchange", "exchange_id", "symbol_id"
     ]
     missing = [c for c in required if c not in df.columns]
     if missing:
         raise ValueError(f"validate_quotes: missing required columns: {missing}")
     
-    combined_filter, rules = _quote_validation_rules(df)
-    valid = df.filter(combined_filter)
+    df_with_expected = with_expected_exchange_id(df)
+    combined_filter, rules = _quote_validation_rules(df_with_expected)
+    valid = df_with_expected.filter(combined_filter).select(df.columns)
     
     # Warn if rows were filtered
     if valid.height < df.height:
         import warnings
         line_col = "file_line_number" if "file_line_number" in df.columns else "__row_nr"
-        df_with_line = df
+        df_with_line = df_with_expected
         if line_col == "__row_nr":
             df_with_line = (
-                df.with_row_index("__row_nr")
-                if hasattr(df, "with_row_index")
-                else df.with_row_count("__row_nr")
+                df_with_expected.with_row_index("__row_nr")
+                if hasattr(df_with_expected, "with_row_index")
+                else df_with_expected.with_row_count("__row_nr")
             )
 
         counts = df_with_line.select(
@@ -201,9 +205,12 @@ def _quote_validation_rules(df: pl.DataFrame) -> tuple[pl.Expr, list[tuple[str, 
     filters = [
         (pl.col("ts_local_us") > 0)
         & (pl.col("ts_local_us") < 2**63)
+        & (pl.col("ts_exch_us") > 0)
+        & (pl.col("ts_exch_us") < 2**63)
         & (pl.col("exchange").is_not_null())
         & (pl.col("exchange_id").is_not_null())
-        & (pl.col("symbol_id").is_not_null()),
+        & (pl.col("symbol_id").is_not_null())
+        & (pl.col("exchange_id") == pl.col("expected_exchange_id")),
         has_bid | has_ask,
         pl.when(has_bid)
         .then((pl.col("bid_px_int") > 0) & (pl.col("bid_sz_int") > 0))
@@ -231,9 +238,20 @@ def _quote_validation_rules(df: pl.DataFrame) -> tuple[pl.Expr, list[tuple[str, 
             | (pl.col("ts_local_us") <= 0)
             | (pl.col("ts_local_us") >= 2**63),
         ),
+        (
+            "ts_exch_us",
+            pl.col("ts_exch_us").is_null()
+            | (pl.col("ts_exch_us") <= 0)
+            | (pl.col("ts_exch_us") >= 2**63),
+        ),
         ("exchange", pl.col("exchange").is_null()),
         ("exchange_id", pl.col("exchange_id").is_null()),
         ("symbol_id", pl.col("symbol_id").is_null()),
+        (
+            "exchange_id_mismatch",
+            pl.col("expected_exchange_id").is_null()
+            | (pl.col("exchange_id") != pl.col("expected_exchange_id")),
+        ),
     ]
 
     return combined_filter, rules

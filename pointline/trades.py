@@ -17,6 +17,8 @@ from typing import Sequence
 
 import polars as pl
 
+from pointline.validation_utils import with_expected_exchange_id
+
 # Schema definition matching design.md Section 5.3
 # 
 # Delta Lake Integer Type Limitations:
@@ -236,11 +238,11 @@ def validate_trades(df: pl.DataFrame) -> pl.DataFrame:
     
     Validates:
     - Non-negative price_int and qty_int
-    - Valid timestamp ranges (reasonable values)
+    - Valid timestamp ranges (reasonable values) for local and exchange times
     - Valid side codes (0-2)
     - Non-null required fields
     - Exchange column exists and is non-null
-    - Exchange_id matches exchange via EXCHANGE_MAP
+    - exchange_id matches normalized exchange
     
     Returns filtered DataFrame (invalid rows removed) or raises on critical errors.
     """
@@ -248,34 +250,47 @@ def validate_trades(df: pl.DataFrame) -> pl.DataFrame:
         return df
     
     # Check required columns
-    required = ["price_int", "qty_int", "ts_local_us", "side", "exchange", "exchange_id", "symbol_id"]
+    required = [
+        "price_int",
+        "qty_int",
+        "ts_local_us",
+        "ts_exch_us",
+        "side",
+        "exchange",
+        "exchange_id",
+        "symbol_id",
+    ]
     missing = [c for c in required if c not in df.columns]
     if missing:
         raise ValueError(f"validate_trades: missing required columns: {missing}")
     
     # Filter invalid rows
-    valid = df.filter(
+    df_with_expected = with_expected_exchange_id(df)
+    valid = df_with_expected.filter(
         (pl.col("price_int") > 0) &
         (pl.col("qty_int") > 0) &
         (pl.col("ts_local_us") > 0) &
         (pl.col("ts_local_us") < 2**63) &
+        (pl.col("ts_exch_us") > 0) &
+        (pl.col("ts_exch_us") < 2**63) &
         (pl.col("side").is_in([0, 1, 2])) &
         (pl.col("exchange").is_not_null()) &
         (pl.col("exchange_id").is_not_null()) &
-        (pl.col("symbol_id").is_not_null())
-    )
+        (pl.col("symbol_id").is_not_null()) &
+        (pl.col("exchange_id") == pl.col("expected_exchange_id"))
+    ).select(df.columns)
     
     # Warn if rows were filtered
     if valid.height < df.height:
         import warnings
 
         line_col = "file_line_number" if "file_line_number" in df.columns else "__row_nr"
-        df_with_line = df
+        df_with_line = df_with_expected
         if line_col == "__row_nr":
             df_with_line = (
-                df.with_row_index("__row_nr")
-                if hasattr(df, "with_row_index")
-                else df.with_row_count("__row_nr")
+                df_with_expected.with_row_index("__row_nr")
+                if hasattr(df_with_expected, "with_row_index")
+                else df_with_expected.with_row_count("__row_nr")
             )
 
         rules = [
@@ -287,10 +302,21 @@ def validate_trades(df: pl.DataFrame) -> pl.DataFrame:
                 | (pl.col("ts_local_us") <= 0)
                 | (pl.col("ts_local_us") >= 2**63),
             ),
+            (
+                "ts_exch_us",
+                pl.col("ts_exch_us").is_null()
+                | (pl.col("ts_exch_us") <= 0)
+                | (pl.col("ts_exch_us") >= 2**63),
+            ),
             ("side", ~pl.col("side").is_in([0, 1, 2]) | pl.col("side").is_null()),
             ("exchange", pl.col("exchange").is_null()),
             ("exchange_id", pl.col("exchange_id").is_null()),
             ("symbol_id", pl.col("symbol_id").is_null()),
+            (
+                "exchange_id_mismatch",
+                pl.col("expected_exchange_id").is_null()
+                | (pl.col("exchange_id") != pl.col("expected_exchange_id")),
+            ),
         ]
 
         counts = df_with_line.select(

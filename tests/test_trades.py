@@ -411,6 +411,7 @@ def test_trades_service_ingest_file_quarantine():
         bronze_file_path="test.csv.gz",
         file_size_bytes=1000,
         last_modified_ts=1000000,
+        sha256="a" * 64,
     )
     
     # Create a temporary CSV file
@@ -463,6 +464,7 @@ def test_trades_service_ingest_file_success():
         bronze_file_path="test.csv.gz",
         file_size_bytes=1000,
         last_modified_ts=1000000,
+        sha256="b" * 64,
     )
     
     # Create a temporary CSV file

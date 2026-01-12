@@ -65,7 +65,8 @@ class DeltaManifestRepository(BaseDeltaRepository):
             (pl.col("data_type") == meta.data_type) &
             (pl.col("symbol") == meta.symbol) &
             (pl.col("date") == meta.date) &
-            (pl.col("bronze_file_name") == meta.bronze_file_path)
+            (pl.col("bronze_file_name") == meta.bronze_file_path) &
+            (pl.col("sha256") == meta.sha256)
         )
 
         if not existing.is_empty():
@@ -91,7 +92,7 @@ class DeltaManifestRepository(BaseDeltaRepository):
             "bronze_file_name": [meta.bronze_file_path],
             "file_size_bytes": [meta.file_size_bytes],
             "last_modified_ts": [meta.last_modified_ts],
-            "sha256": [None],
+            "sha256": [meta.sha256],
             "row_count": [0],
             "ts_local_min_us": [0],
             "ts_local_max_us": [0],
@@ -144,31 +145,29 @@ class DeltaManifestRepository(BaseDeltaRepository):
                 "date": c.date,
                 "bronze_file_name": c.bronze_file_path,
                 "file_size_bytes": c.file_size_bytes,
-                "last_modified_ts": c.last_modified_ts
+                "last_modified_ts": c.last_modified_ts,
+                "sha256": c.sha256,
             } for c in candidates
         ])
 
         # Filter criteria:
         # Status must be 'success'
-        # file_size_bytes matches
-        # last_modified_ts matches
+        # sha256 matches
         
         # We want to keep candidates that do NOT have a matching 'success' record
         
         success_manifest = manifest_df.filter(pl.col("status") == "success")
         
         # Join keys
-        join_keys = ["exchange", "data_type", "symbol", "date", "bronze_file_name", "file_size_bytes", "last_modified_ts"]
+        join_keys = ["exchange", "data_type", "symbol", "date", "bronze_file_name", "sha256"]
         
         # Anti-join: Keep candidates that don't match strict success criteria
         pending_df = cand_df.join(success_manifest, on=join_keys, how="anti")
         
         # Convert back to objects
-        # We need to map back to the original candidates
-        # A simple way is to build a set of paths from the pending_df
-        pending_paths = set(pending_df.select("bronze_file_name").to_series().to_list())
+        pending_keys = set(pending_df.select(["bronze_file_name", "sha256"]).iter_rows())
         
-        return [c for c in candidates if c.bronze_file_path in pending_paths]
+        return [c for c in candidates if (c.bronze_file_path, c.sha256) in pending_keys]
 
     def update_status(self, 
                       file_id: int, 
@@ -198,7 +197,7 @@ class DeltaManifestRepository(BaseDeltaRepository):
             "bronze_file_name": [meta.bronze_file_path],
             "file_size_bytes": [meta.file_size_bytes],
             "last_modified_ts": [meta.last_modified_ts],
-            "sha256": [None],
+            "sha256": [meta.sha256],
             "row_count": [row_count],
             "ts_local_min_us": [min_ts],
             "ts_local_max_us": [max_ts],

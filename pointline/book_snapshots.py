@@ -29,6 +29,8 @@ from typing import Sequence
 
 import polars as pl
 
+from pointline.validation_utils import with_expected_exchange_id
+
 # Schema definition matching design.md Section 5.2
 # 
 # Delta Lake Integer Type Limitations:
@@ -167,9 +169,10 @@ def validate_book_snapshots(df: pl.DataFrame) -> pl.DataFrame:
     - List lengths are 25 (or pad/truncate to 25)
     - Bid prices are descending (bids_px[0] >= bids_px[1] >= ...)
     - Ask prices are ascending (asks_px[0] <= asks_px[1] <= ...)
-    - Crossed book check: bids_px[i] < asks_px[i] at each level
+    - Crossed book check: best bid < best ask
     - Non-negative sizes when present
     - Valid timestamp ranges (reasonable values)
+    - exchange_id matches normalized exchange
     
     Returns filtered DataFrame (invalid rows removed) or raises on critical errors.
     """
@@ -185,13 +188,15 @@ def validate_book_snapshots(df: pl.DataFrame) -> pl.DataFrame:
     if missing:
         raise ValueError(f"validate_book_snapshots: missing required columns: {missing}")
     
+    df_with_expected = with_expected_exchange_id(df)
     # Build validation filters
     filters = [
         (pl.col("ts_local_us") > 0) &
         (pl.col("ts_local_us") < 2**63) &
         (pl.col("exchange").is_not_null()) &
         (pl.col("exchange_id").is_not_null()) &
-        (pl.col("symbol_id").is_not_null())
+        (pl.col("symbol_id").is_not_null()) &
+        (pl.col("exchange_id") == pl.col("expected_exchange_id"))
     ]
     
     # Ensure list lengths are 25 (pad with nulls if needed, truncate if longer)
@@ -215,7 +220,7 @@ def validate_book_snapshots(df: pl.DataFrame) -> pl.DataFrame:
         return pl.when(col_expr.is_null()).then(null_pad).otherwise(padded)
     
     # Normalize all list columns to length 25
-    result = df.with_columns([
+    result = df_with_expected.with_columns([
         normalize_list_length("bids_px").alias("bids_px"),
         normalize_list_length("bids_sz").alias("bids_sz"),
         normalize_list_length("asks_px").alias("asks_px"),
@@ -282,7 +287,7 @@ def validate_book_snapshots(df: pl.DataFrame) -> pl.DataFrame:
     for f in filters[1:]:
         combined_filter = combined_filter & f
     
-    valid = result.filter(combined_filter)
+    valid = result.filter(combined_filter).select(df.columns)
     
     # Warn if rows were filtered
     if valid.height < result.height:

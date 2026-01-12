@@ -17,6 +17,8 @@ from typing import Sequence
 
 import polars as pl
 
+from pointline.validation_utils import with_expected_exchange_id
+
 # Schema definition matching docs/schemas.md and design.md
 #
 # Delta Lake Integer Type Limitations:
@@ -125,27 +127,44 @@ def validate_l2_updates(df: pl.DataFrame) -> pl.DataFrame:
     - side is 0 or 1
     - price_int > 0
     - size_int >= 0 (0 means delete level)
+    - Valid timestamp ranges (reasonable values) for local and exchange times
+    - exchange_id matches normalized exchange
     """
     if df.is_empty():
         return df
         
-    required = ["price_int", "size_int", "side", "ts_local_us", "exchange_id", "symbol_id"]
+    required = [
+        "price_int",
+        "size_int",
+        "side",
+        "ts_local_us",
+        "ts_exch_us",
+        "exchange",
+        "exchange_id",
+        "symbol_id",
+    ]
     missing = [c for c in required if c not in df.columns]
     if missing:
         raise ValueError(f"validate_l2_updates: missing required columns: {missing}")
         
+    df_with_expected = with_expected_exchange_id(df)
     filters = [
-        (pl.col("ts_local_us") > 0),
+        (pl.col("ts_local_us") > 0) & (pl.col("ts_local_us") < 2**63),
+        (pl.col("ts_exch_us") > 0) & (pl.col("ts_exch_us") < 2**63),
         (pl.col("side").is_in([0, 1])),
         (pl.col("price_int") > 0),
         (pl.col("size_int") >= 0),
+        (pl.col("exchange").is_not_null()),
+        (pl.col("exchange_id").is_not_null()),
+        (pl.col("symbol_id").is_not_null()),
+        (pl.col("exchange_id") == pl.col("expected_exchange_id")),
     ]
     
     combined_filter = filters[0]
     for f in filters[1:]:
         combined_filter = combined_filter & f
         
-    valid = df.filter(combined_filter)
+    valid = df_with_expected.filter(combined_filter).select(df.columns)
     
     if valid.height < df.height:
         import warnings

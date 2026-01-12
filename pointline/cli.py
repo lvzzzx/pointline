@@ -6,6 +6,7 @@ import argparse
 import gc
 import gzip
 import inspect
+import hashlib
 import json
 import os
 import re
@@ -30,10 +31,18 @@ from pointline.services.book_snapshots_service import BookSnapshotsIngestionServ
 from pointline.services.l2_updates_service import L2UpdatesIngestionService
 from pointline.registry import find_symbol, resolve_symbol
 from pointline.quotes import (
-    _quote_validation_rules,
+    QUOTES_SCHEMA,
     encode_fixed_point as encode_quotes_fixed_point,
+    normalize_quotes_schema,
     parse_tardis_quotes_csv,
     resolve_symbol_ids as resolve_quotes_symbol_ids,
+)
+from pointline.trades import (
+    TRADES_SCHEMA,
+    encode_fixed_point as encode_trades_fixed_point,
+    normalize_trades_schema,
+    parse_tardis_trades_csv,
+    resolve_symbol_ids as resolve_trades_symbol_ids,
 )
 
 
@@ -65,7 +74,7 @@ def _print_files(files: Sequence[BronzeFileMetadata]) -> None:
                     f"path={f.bronze_file_path}",
                 ]
             )
-        )
+    )
 
 
 def _cmd_ingest_discover(args: argparse.Namespace) -> int:
@@ -88,6 +97,151 @@ def _cmd_ingest_discover(args: argparse.Namespace) -> int:
     return 0
 
 
+def _compute_sha256(path: Path, chunk_size: int = 1024 * 1024) -> str:
+    hasher = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(chunk_size), b""):
+            hasher.update(chunk)
+    return hasher.hexdigest()
+
+
+def _parse_date_arg(value: str | None) -> date | None:
+    if value is None:
+        return None
+    from datetime import datetime as _dt
+
+    try:
+        return _dt.strptime(value, "%Y-%m-%d").date()
+    except ValueError as exc:
+        raise ValueError(f"Invalid date format: {value} (expected YYYY-MM-DD)") from exc
+
+
+def _resolve_manifest_file_id(
+    *,
+    manifest_path: Path,
+    bronze_root: Path,
+    file_path: Path,
+    exchange: str,
+    data_type: str,
+    symbol: str,
+    file_date: date,
+) -> int:
+    manifest_repo = DeltaManifestRepository(manifest_path)
+    if not file_path.exists():
+        raise ValueError(f"File not found: {file_path}")
+
+    try:
+        bronze_rel = file_path.relative_to(bronze_root)
+    except ValueError as exc:
+        raise ValueError(
+            f"File is not under bronze root: {file_path} (bronze_root={bronze_root})"
+        ) from exc
+
+    sha256 = _compute_sha256(file_path)
+    manifest_df = manifest_repo.read_all()
+    if manifest_df.is_empty():
+        raise ValueError("manifest is empty; cannot resolve file_id")
+
+    matches = manifest_df.filter(
+        (pl.col("exchange") == exchange)
+        & (pl.col("data_type") == data_type)
+        & (pl.col("symbol") == symbol)
+        & (pl.col("date") == file_date)
+        & (pl.col("bronze_file_name") == str(bronze_rel))
+        & (pl.col("sha256") == sha256)
+    )
+    if matches.is_empty():
+        raise ValueError("No manifest record found for file path + sha256")
+
+    return matches.item(0, "file_id")
+
+
+def _add_lineage(df: pl.DataFrame, file_id: int) -> pl.DataFrame:
+    if "file_line_number" in df.columns:
+        file_line_number = pl.col("file_line_number").cast(pl.Int32)
+    else:
+        file_line_number = pl.int_range(1, df.height + 1, dtype=pl.Int32)
+    ingest_seq = pl.int_range(1, df.height + 1, dtype=pl.Int32)
+    return df.with_columns(
+        [
+            pl.lit(file_id, dtype=pl.Int32).alias("file_id"),
+            file_line_number.alias("file_line_number"),
+            ingest_seq.alias("ingest_seq"),
+        ]
+    )
+
+
+def _add_metadata(df: pl.DataFrame, exchange: str, exchange_id: int) -> pl.DataFrame:
+    result = df.with_columns(
+        [
+            pl.lit(exchange, dtype=pl.Utf8).alias("exchange"),
+            pl.lit(exchange_id, dtype=pl.Int16).alias("exchange_id"),
+        ]
+    )
+    return result.with_columns(
+        [
+            pl.from_epoch(pl.col("ts_local_us"), time_unit="us")
+            .cast(pl.Date)
+            .alias("date"),
+        ]
+    )
+
+
+def _compare_expected_vs_ingested(
+    *,
+    expected: pl.DataFrame,
+    ingested: pl.DataFrame,
+    key_cols: list[str],
+    compare_cols: list[str],
+    limit: int | None,
+) -> tuple[int, int, int, int, int, pl.DataFrame]:
+    expected_marked = expected.select(key_cols + compare_cols).with_columns(
+        pl.lit(True).alias("_present_exp")
+    )
+    ingested_marked = ingested.select(key_cols + compare_cols).with_columns(
+        pl.lit(True).alias("_present_ing")
+    )
+
+    exp_renames = {col: f"{col}_exp" for col in compare_cols}
+    ing_renames = {col: f"{col}_ing" for col in compare_cols}
+    expected_marked = expected_marked.rename(exp_renames)
+    ingested_marked = ingested_marked.rename(ing_renames)
+
+    joined = expected_marked.join(ingested_marked, on=key_cols, how="outer")
+
+    missing_in_ingested = joined.filter(
+        pl.col("_present_exp").is_not_null() & pl.col("_present_ing").is_null()
+    )
+    extra_in_ingested = joined.filter(
+        pl.col("_present_exp").is_null() & pl.col("_present_ing").is_not_null()
+    )
+
+    comparisons = [
+        pl.col(f"{col}_exp").eq_missing(pl.col(f"{col}_ing")) for col in compare_cols
+    ]
+    all_equal = pl.all_horizontal(comparisons)
+    mismatched = joined.filter(
+        pl.col("_present_exp").is_not_null()
+        & pl.col("_present_ing").is_not_null()
+        & ~all_equal
+    )
+
+    mismatch_sample = mismatched.select(
+        key_cols + [f"{col}_exp" for col in compare_cols] + [f"{col}_ing" for col in compare_cols]
+    )
+    if limit is not None:
+        mismatch_sample = mismatch_sample.head(limit)
+
+    return (
+        expected.height,
+        ingested.height,
+        missing_in_ingested.height,
+        extra_in_ingested.height,
+        mismatched.height,
+        mismatch_sample,
+    )
+
+
 def _cmd_validate_quotes(args: argparse.Namespace) -> int:
     path = Path(args.file)
     if not path.exists():
@@ -96,11 +250,30 @@ def _cmd_validate_quotes(args: argparse.Namespace) -> int:
     inferred = _infer_bronze_metadata(path)
     exchange = args.exchange or inferred.get("exchange")
     symbol = args.symbol or inferred.get("symbol")
-    if not exchange or not symbol:
-        raise ValueError("validate quotes: --exchange and --symbol required (or inferable from path)")
+    date_str = args.date or inferred.get("date")
+    if not exchange or not symbol or not date_str:
+        raise ValueError(
+            "validate quotes: --exchange, --symbol, and --date required (or inferable from path)"
+        )
 
     exchange = normalize_exchange(exchange)
     exchange_id = get_exchange_id(exchange)
+    file_date = _parse_date_arg(date_str)
+    if file_date is None:
+        raise ValueError("validate quotes: --date required")
+
+    if args.file_id is None:
+        file_id = _resolve_manifest_file_id(
+            manifest_path=Path(args.manifest_path),
+            bronze_root=Path(args.bronze_root),
+            file_path=path,
+            exchange=exchange,
+            data_type="quotes",
+            symbol=symbol,
+            file_date=file_date,
+        )
+    else:
+        file_id = args.file_id
 
     raw_df = _read_bronze_csv(path)
     if raw_df.is_empty():
@@ -110,47 +283,137 @@ def _cmd_validate_quotes(args: argparse.Namespace) -> int:
     parsed_df = parse_tardis_quotes_csv(raw_df)
     dim_symbol = pl.read_delta(str(get_table_path("dim_symbol")))
     resolved_df = resolve_quotes_symbol_ids(parsed_df, dim_symbol, exchange_id, symbol)
-    encoded_df = encode_quotes_fixed_point(resolved_df, dim_symbol).with_columns(
-        pl.lit(exchange).alias("exchange")
+    encoded_df = encode_quotes_fixed_point(resolved_df, dim_symbol)
+    expected_df = _add_metadata(
+        _add_lineage(encoded_df, file_id), exchange, exchange_id
+    )
+    expected_df = normalize_quotes_schema(expected_df)
+
+    ingested_lf = (
+        pl.scan_delta(str(get_table_path("quotes")))
+        .filter(pl.col("file_id") == file_id)
+        .select(list(QUOTES_SCHEMA.keys()))
+    )
+    ingested_count = ingested_lf.select(pl.len()).collect().item()
+    if ingested_count == 0:
+        raise ValueError("No ingested rows found for file_id")
+
+    key_cols = ["file_id", "file_line_number"]
+    compare_cols = [col for col in QUOTES_SCHEMA.keys() if col not in key_cols]
+    (
+        expected_count,
+        ingested_count,
+        missing_count,
+        extra_count,
+        mismatch_count,
+        mismatch_sample,
+    ) = _compare_expected_vs_ingested(
+        expected=expected_df,
+        ingested=ingested_lf.collect(streaming=True),
+        key_cols=key_cols,
+        compare_cols=compare_cols,
+        limit=None if args.show_all else args.limit,
     )
 
-    combined_filter, rules = _quote_validation_rules(encoded_df)
-    invalid = encoded_df.filter(~combined_filter)
-    if invalid.is_empty():
-        print("No invalid rows detected.")
-        return 0
+    print("Validation summary (quotes):")
+    print(f"  expected rows: {expected_count}")
+    print(f"  ingested rows: {ingested_count}")
+    print(f"  missing in ingested: {missing_count}")
+    print(f"  extra in ingested: {extra_count}")
+    print(f"  mismatched rows: {mismatch_count}")
 
-    if "file_line_number" not in invalid.columns:
-        invalid = (
-            invalid.with_row_index("file_line_number")
-            if hasattr(invalid, "with_row_index")
-            else invalid.with_row_count("file_line_number")
+    if mismatch_count > 0:
+        print("\nMismatch sample:")
+        print(mismatch_sample)
+
+    return 1 if (args.exit_nonzero and (missing_count or extra_count or mismatch_count)) else 0
+
+
+def _cmd_validate_trades(args: argparse.Namespace) -> int:
+    path = Path(args.file)
+    if not path.exists():
+        raise ValueError(f"File not found: {path}")
+
+    inferred = _infer_bronze_metadata(path)
+    exchange = args.exchange or inferred.get("exchange")
+    symbol = args.symbol or inferred.get("symbol")
+    date_str = args.date or inferred.get("date")
+    if not exchange or not symbol or not date_str:
+        raise ValueError(
+            "validate trades: --exchange, --symbol, and --date required (or inferable from path)"
         )
 
-    reason_exprs = [pl.when(rule).then(pl.lit(name)).otherwise(None) for name, rule in rules]
-    invalid = invalid.with_columns(
-        pl.concat_list(reason_exprs).list.drop_nulls().list.join(",").alias("invalid_reason")
+    exchange = normalize_exchange(exchange)
+    exchange_id = get_exchange_id(exchange)
+    file_date = _parse_date_arg(date_str)
+    if file_date is None:
+        raise ValueError("validate trades: --date required")
+
+    if args.file_id is None:
+        file_id = _resolve_manifest_file_id(
+            manifest_path=Path(args.manifest_path),
+            bronze_root=Path(args.bronze_root),
+            file_path=path,
+            exchange=exchange,
+            data_type="trades",
+            symbol=symbol,
+            file_date=file_date,
+        )
+    else:
+        file_id = args.file_id
+
+    raw_df = _read_bronze_csv(path)
+    if raw_df.is_empty():
+        print(f"Empty CSV file: {path}")
+        return 0
+
+    parsed_df = parse_tardis_trades_csv(raw_df)
+    dim_symbol = pl.read_delta(str(get_table_path("dim_symbol")))
+    resolved_df = resolve_trades_symbol_ids(parsed_df, dim_symbol, exchange_id, symbol)
+    encoded_df = encode_trades_fixed_point(resolved_df, dim_symbol)
+    expected_df = _add_metadata(
+        _add_lineage(encoded_df, file_id), exchange, exchange_id
+    )
+    expected_df = normalize_trades_schema(expected_df)
+
+    ingested_lf = (
+        pl.scan_delta(str(get_table_path("trades")))
+        .filter(pl.col("file_id") == file_id)
+        .select(list(TRADES_SCHEMA.keys()))
+    )
+    ingested_count = ingested_lf.select(pl.len()).collect().item()
+    if ingested_count == 0:
+        raise ValueError("No ingested rows found for file_id")
+
+    key_cols = ["file_id", "file_line_number"]
+    compare_cols = [col for col in TRADES_SCHEMA.keys() if col not in key_cols]
+    (
+        expected_count,
+        ingested_count,
+        missing_count,
+        extra_count,
+        mismatch_count,
+        mismatch_sample,
+    ) = _compare_expected_vs_ingested(
+        expected=expected_df,
+        ingested=ingested_lf.collect(streaming=True),
+        key_cols=key_cols,
+        compare_cols=compare_cols,
+        limit=None if args.show_all else args.limit,
     )
 
-    display_cols = [
-        "file_line_number",
-        "ts_local_us",
-        "bid_px_int",
-        "bid_sz_int",
-        "ask_px_int",
-        "ask_sz_int",
-        "invalid_reason",
-    ]
-    display_cols = [col for col in display_cols if col in invalid.columns]
+    print("Validation summary (trades):")
+    print(f"  expected rows: {expected_count}")
+    print(f"  ingested rows: {ingested_count}")
+    print(f"  missing in ingested: {missing_count}")
+    print(f"  extra in ingested: {extra_count}")
+    print(f"  mismatched rows: {mismatch_count}")
 
-    print(f"Invalid rows: {invalid.height}")
-    output = invalid.select(display_cols)
-    if args.show_all:
-        print(output)
-    else:
-        print(output.head(args.limit))
+    if mismatch_count > 0:
+        print("\nMismatch sample:")
+        print(mismatch_sample)
 
-    return 1 if args.exit_nonzero else 0
+    return 1 if (args.exit_nonzero and (missing_count or extra_count or mismatch_count)) else 0
 
 
 def _create_ingestion_service(data_type: str, manifest_repo):
@@ -499,6 +762,77 @@ def _cmd_manifest_show(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_manifest_backfill_sha256(args: argparse.Namespace) -> int:
+    manifest_path = Path(args.manifest_path)
+    bronze_root = Path(args.bronze_root)
+    manifest_repo = DeltaManifestRepository(manifest_path)
+    df = manifest_repo.read_all()
+
+    if df.is_empty():
+        print("manifest: empty")
+        return 0
+
+    if "sha256" not in df.columns:
+        df = df.with_columns(pl.lit(None, dtype=pl.Utf8).alias("sha256"))
+
+    candidates = df.filter(pl.col("sha256").is_null() | (pl.col("sha256") == ""))
+    if candidates.is_empty():
+        print("manifest: no rows missing sha256")
+        return 0
+
+    if args.limit:
+        candidates = candidates.head(args.limit)
+
+    total = candidates.height
+    updated_rows: list[dict[str, object]] = []
+    missing_files: list[str] = []
+
+    for row in candidates.iter_rows(named=True):
+        bronze_name = row.get("bronze_file_name")
+        if bronze_name is None:
+            missing_files.append("<missing bronze_file_name>")
+            continue
+
+        path = bronze_root / str(bronze_name)
+        if not path.exists():
+            missing_files.append(str(path))
+            continue
+
+        sha256 = _compute_sha256(path)
+        updated = dict(row)
+        updated["sha256"] = sha256
+        updated_rows.append(updated)
+
+    if args.dry_run:
+        print("manifest sha256 backfill dry-run:")
+        print(f"  candidates: {total}")
+        print(f"  would update: {len(updated_rows)}")
+        print(f"  missing files: {len(missing_files)}")
+        if missing_files:
+            sample = missing_files[: min(10, len(missing_files))]
+            print(f"  missing sample: {sample}")
+        return 0
+
+    if not updated_rows:
+        print("manifest: no rows updated (all missing files)")
+        return 0
+
+    batch_size = max(1, args.batch_size)
+    for start in range(0, len(updated_rows), batch_size):
+        batch = updated_rows[start : start + batch_size]
+        batch_df = pl.DataFrame(batch, schema=df.schema)
+        manifest_repo.merge(batch_df, keys=["file_id"])
+
+    print("manifest sha256 backfill complete:")
+    print(f"  candidates: {total}")
+    print(f"  updated: {len(updated_rows)}")
+    print(f"  missing files: {len(missing_files)}")
+    if missing_files:
+        sample = missing_files[: min(10, len(missing_files))]
+        print(f"  missing sample: {sample}")
+    return 0
+
+
 def _read_updates(path: Path) -> pl.DataFrame:
     suffix = path.suffix.lower()
     if suffix == ".csv":
@@ -835,9 +1169,20 @@ def _build_parser() -> argparse.ArgumentParser:
     validate_sub = validate.add_subparsers(dest="validate_command")
 
     validate_quotes = validate_sub.add_parser(
-        "quotes", help="Validate raw quotes file and show invalid rows"
+        "quotes", help="Validate raw quotes file against ingested table"
     )
     validate_quotes.add_argument("--file", required=True, help="Path to the raw quotes CSV file")
+    validate_quotes.add_argument(
+        "--file-id",
+        type=int,
+        default=None,
+        help="File ID to validate (if omitted, resolve via manifest)",
+    )
+    validate_quotes.add_argument(
+        "--date",
+        default=None,
+        help="File date (YYYY-MM-DD), inferred from path when possible",
+    )
     validate_quotes.add_argument(
         "--exchange",
         default=None,
@@ -849,6 +1194,16 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Exchange symbol (defaults to value inferred from path)",
     )
     validate_quotes.add_argument(
+        "--bronze-root",
+        default=str(LAKE_ROOT / "tardis"),
+        help="Bronze root used to resolve manifest paths (default: LAKE_ROOT/tardis)",
+    )
+    validate_quotes.add_argument(
+        "--manifest-path",
+        default=str(get_table_path("ingest_manifest")),
+        help="Path to ingest_manifest (default: LAKE_ROOT/silver/ingest_manifest)",
+    )
+    validate_quotes.add_argument(
         "--limit",
         type=int,
         default=20,
@@ -857,7 +1212,7 @@ def _build_parser() -> argparse.ArgumentParser:
     validate_quotes.add_argument(
         "--show-all",
         action="store_true",
-        help="Print all invalid rows",
+        help="Print all mismatched rows",
     )
     validate_quotes.add_argument(
         "--exit-nonzero",
@@ -865,6 +1220,59 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Exit with status 1 if invalid rows are found",
     )
     validate_quotes.set_defaults(func=_cmd_validate_quotes)
+
+    validate_trades = validate_sub.add_parser(
+        "trades", help="Validate raw trades file against ingested table"
+    )
+    validate_trades.add_argument("--file", required=True, help="Path to the raw trades CSV file")
+    validate_trades.add_argument(
+        "--file-id",
+        type=int,
+        default=None,
+        help="File ID to validate (if omitted, resolve via manifest)",
+    )
+    validate_trades.add_argument(
+        "--date",
+        default=None,
+        help="File date (YYYY-MM-DD), inferred from path when possible",
+    )
+    validate_trades.add_argument(
+        "--exchange",
+        default=None,
+        help="Exchange name (defaults to value inferred from path)",
+    )
+    validate_trades.add_argument(
+        "--symbol",
+        default=None,
+        help="Exchange symbol (defaults to value inferred from path)",
+    )
+    validate_trades.add_argument(
+        "--bronze-root",
+        default=str(LAKE_ROOT / "tardis"),
+        help="Bronze root used to resolve manifest paths (default: LAKE_ROOT/tardis)",
+    )
+    validate_trades.add_argument(
+        "--manifest-path",
+        default=str(get_table_path("ingest_manifest")),
+        help="Path to ingest_manifest (default: LAKE_ROOT/silver/ingest_manifest)",
+    )
+    validate_trades.add_argument(
+        "--limit",
+        type=int,
+        default=20,
+        help="Max mismatched rows to print (default: 20)",
+    )
+    validate_trades.add_argument(
+        "--show-all",
+        action="store_true",
+        help="Print all mismatched rows",
+    )
+    validate_trades.add_argument(
+        "--exit-nonzero",
+        action="store_true",
+        help="Exit with status 1 if mismatches are found",
+    )
+    validate_trades.set_defaults(func=_cmd_validate_trades)
 
     delta = subparsers.add_parser("delta", help="Delta Lake maintenance utilities")
     delta_sub = delta.add_subparsers(dest="delta_command")
@@ -961,6 +1369,38 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Include error messages in detailed output",
     )
     manifest_show.set_defaults(func=_cmd_manifest_show)
+
+    manifest_backfill = manifest_sub.add_parser(
+        "backfill-sha256", help="Backfill sha256 for manifest rows"
+    )
+    manifest_backfill.add_argument(
+        "--manifest-path",
+        default=str(get_table_path("ingest_manifest")),
+        help="Path to the ingest manifest table",
+    )
+    manifest_backfill.add_argument(
+        "--bronze-root",
+        default=str(LAKE_ROOT / "tardis"),
+        help="Bronze root containing raw files (default: LAKE_ROOT/tardis)",
+    )
+    manifest_backfill.add_argument(
+        "--batch-size",
+        type=int,
+        default=500,
+        help="Rows per merge batch (default: 500)",
+    )
+    manifest_backfill.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help="Limit number of rows to backfill (optional)",
+    )
+    manifest_backfill.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Report what would change without writing",
+    )
+    manifest_backfill.set_defaults(func=_cmd_manifest_backfill_sha256)
 
     dim_symbol = subparsers.add_parser("dim-symbol", help="dim_symbol operations")
     dim_symbol_sub = dim_symbol.add_subparsers(dest="dim_symbol_command")

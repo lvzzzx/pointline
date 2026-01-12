@@ -1,4 +1,4 @@
-import os
+import hashlib
 from pathlib import Path
 from typing import Iterator
 from datetime import datetime, date
@@ -29,6 +29,7 @@ class LocalBronzeSource:
             # Example: .../exchange=binance/type=quotes/date=2024-05-01/symbol=BTCUSDT/...
             meta = self._extract_metadata(p)
             
+            sha256 = self._compute_sha256(p)
             yield BronzeFileMetadata(
                 exchange=meta.get("exchange", "unknown"),
                 data_type=meta.get("type", "unknown"),
@@ -36,7 +37,8 @@ class LocalBronzeSource:
                 date=meta.get("date", date(1970, 1, 1)),
                 bronze_file_path=str(p.relative_to(self.root_path)),
                 file_size_bytes=stat.st_size,
-                last_modified_ts=int(stat.st_mtime * 1_000_000) # microseconds
+                last_modified_ts=int(stat.st_mtime * 1_000_000), # microseconds
+                sha256=sha256,
             )
 
     def _extract_metadata(self, path: Path) -> dict:
@@ -53,3 +55,10 @@ class LocalBronzeSource:
                 else:
                     meta[key] = val
         return meta
+
+    def _compute_sha256(self, path: Path, chunk_size: int = 1024 * 1024) -> str:
+        hasher = hashlib.sha256()
+        with path.open("rb") as handle:
+            for chunk in iter(lambda: handle.read(chunk_size), b""):
+                hasher.update(chunk)
+        return hasher.hexdigest()
