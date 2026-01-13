@@ -502,6 +502,42 @@ Full-depth book checkpoints to accelerate incremental replay over long ranges.
 
 ---
 
+### 3.5 `gold.reflexivity_bars`
+
+Dollar-Volume bars (Notional Bars) optimized for Regime Detection. These bars align the "Driver" (Perpetual Trades) with the "Truth Serum" (Spot Trades) and "Market State" (OI, Funding) into a single statistically synchronized timeline.
+
+**Source:** Derived from `silver.trades` (Perp & Spot) and `silver.derivative_ticker`.
+**Partitioned by:** `["exchange", "date"]` (Partitioned by the Perpetual's exchange)
+
+| Column | Type | Notes |
+|---|---:|---|
+| date | date | |
+| exchange | string | |
+| exchange_id | i16 | |
+| symbol_id | i64 | Perpetual Symbol ID |
+| spot_symbol_id | i64 | Associated Spot Symbol ID used for validation |
+| open_ts | i64 | Bar start timestamp (µs) |
+| close_ts | i64 | Bar end timestamp (µs) |
+| open | f64 | Perpetual Price |
+| high | f64 | Perpetual Price |
+| low | f64 | Perpetual Price |
+| close | f64 | Perpetual Price |
+| perp_volume | f64 | Total Notional USD traded on Perp |
+| spot_volume | f64 | Total Notional USD traded on Spot (during same interval) |
+| speculation_ratio | f64 | `perp_volume / (spot_volume + 1.0)` |
+| duration_sec | f64 | Bar duration in seconds |
+| oi_close | f64 | Open Interest at `close_ts` (from `derivative_ticker`) |
+| funding_rate | f64 | Funding Rate at `close_ts` (from `derivative_ticker`) |
+| bar_id | i64 | Cumulative Bar Index |
+| tick_count | i32 | Number of perp trades in bar |
+
+**Logic:**
+- Bars are generated based on **Perpetual Volume Threshold** (e.g., every $10M traded).
+- **Spot Volume** is aggregated via a "sidecar join" over the exact time window of the bar.
+- **State Variables** (OI, Funding) are as-of joined from `silver.derivative_ticker` at `close_ts`.
+
+---
+
 ### 3.6 `gold.options_surface_grid`
 
 Options surface snapshots on a time grid for efficient "entire surface at time t" queries.
@@ -630,6 +666,8 @@ Delta Lake (via Parquet) does not support unsigned integer types `UInt16` and `U
 | `bars_1m` | Gold | `exchange`, `date` | `ts_bucket_start_us`, `symbol_id`, OHLCV |
 | `book_snapshot_25_wide` | Gold | `exchange`, `date` | Wide format for legacy tools |
 | `tob_quotes` | Gold | `exchange`, `date` | Fast path for top-of-book |
+| `l2_state_checkpoint` | Gold | `exchange`, `date` | Checkpoints for replay |
+| `reflexivity_bars` | Gold | `exchange`, `date` | Dollar-bars with Spot/OI/Funding context |
 | `options_surface_grid` | Gold | `exchange`, `date` | Time-gridded options surface |
 
 ---
