@@ -47,6 +47,22 @@ print(df)
 symbol_id = df["symbol_id"][0]
 ```
 
+**Time-range selection (SCD-safe):**
+```python
+from datetime import datetime, timezone
+import polars as pl
+from pointline import registry
+
+as_of = datetime(2025, 12, 28, tzinfo=timezone.utc)
+as_of_us = int(as_of.timestamp() * 1_000_000)
+
+df = registry.find_symbol("BTC-PERPETUAL", exchange="deribit")
+active = df.filter(
+    (pl.col("valid_from_ts") <= as_of_us) & (pl.col("valid_until_ts") > as_of_us)
+)
+print(active)
+```
+
 ### 2.2 DuckDB (Ad-hoc SQL)
 Once you have the `symbol_id` (e.g., `101`), query the tables directly.
 
@@ -115,6 +131,23 @@ DuckDB is the recommended tool for interactive exploration. Polars is ideal for 
 
 **Partition-first rule:** always filter by `date` to avoid full scans (for tables that include a `date` column). When using `pointline.research` or `l2_replay` APIs with `symbol_id`, exchange partitioning is handled automatically.
 
+### 4.1 Check Data Availability (Manifest)
+Before running a heavy query, check which dates are present:
+```python
+import polars as pl
+from pointline.config import get_table_path
+
+manifest = pl.read_delta(str(get_table_path("ingest_manifest")))
+available = (
+    manifest
+    .filter((pl.col("exchange") == "deribit") & (pl.col("data_type") == "trades"))
+    .select("date")
+    .unique()
+    .sort("date")
+)
+print(available)
+```
+
 ## 5. Core Concepts
 
 ### 5.1 Time: `ts_local_us` vs `ts_exch_us`
@@ -130,6 +163,14 @@ Symbols change (e.g., renames). We use a stable `symbol_id`.
 ### 5.2.1 Exchange ID Selection
 `exchange_id` is the stable numeric ID used for joins and filters. It is defined in `pointline/config.py`.
 While `symbol_id` is now the primary access key, `exchange_id` is still useful for aggregate analysis (e.g., "all volume on Binance").
+
+**Example (derive `exchange_id` from a resolved symbol):**
+```python
+from pointline import registry
+
+df = registry.find_symbol("BTC-PERPETUAL", exchange="deribit")
+exchange_id = df["exchange_id"][0]
+```
 
 ### 5.3 Fixed-Point Math
 To save space and ensure precision, prices and quantities are stored as integers (`i64`).
@@ -156,6 +197,22 @@ dim_symbol = pl.read_delta(str(get_table_path("dim_symbol"))).select(
 
 trades = research.load_trades(symbol_id=101, start_date="2025-12-28")
 trades = decode_trades(trades, dim_symbol)  # drops *_int, outputs Float64
+```
+
+**Minimal end-to-end example (real prices and sizes):**
+```python
+from pointline import research
+from pointline.trades import decode_fixed_point as decode_trades
+from pointline.config import get_table_path
+import polars as pl
+
+dim_symbol = pl.read_delta(str(get_table_path("dim_symbol"))).select(
+    ["symbol_id", "price_increment", "amount_increment"]
+)
+
+trades = research.load_trades(symbol_id=101, start_date="2025-12-28", end_date="2025-12-28")
+trades = decode_trades(trades, dim_symbol)
+print(trades.select(["ts_local_us", "price", "qty"]).head(5))
 ```
 
 ## 6. Common Workflows
@@ -226,11 +283,23 @@ WHERE date >= '<start_date>' AND date <= '<end_date>'
 LIMIT 100;
 ```
 
+**DuckDB setup note:**
+If `delta_scan` is unavailable, install and load the Delta extension in DuckDB:
+```sql
+INSTALL delta;
+LOAD delta;
+```
+
 ### 7.3 Polars best practices
 - Use `pointline.research` helpers (`load_trades`, `scan_table`) instead of raw `pl.read_delta` where possible.
 - Provide `symbol_id` to ensure optimal partition pruning.
 - Keep joins on `exchange_id` + `symbol_id`.
 - Only pass `start_date`/`end_date` to tables that include a `date` column (e.g., trades/quotes/l2_updates); others will raise.
+
+### 7.4 Common Mistakes
+- Using `ts_exch_us` for backtesting instead of `ts_local_us`.
+- Forgetting to filter by `date` and scanning full tables.
+- Treating `price_int` / `qty_int` as real values without decoding.
 
 ## 8. Agent Interface
 
