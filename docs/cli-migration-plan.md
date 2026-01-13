@@ -11,7 +11,7 @@ consistent flag naming, and easier extension.
 - Align commands to data-lake layers (`bronze`, `silver`, `gold`) and domains (`symbol`, `assets`,
   `manifest`, `delta`).
 - Standardize verbs and flags across commands.
-- Preserve backward compatibility during a deprecation window.
+- Remove legacy paths and aliases in the same release to keep the CLI surface clean.
 
 ## Non-Goals
 - Change business logic, IO formats, or ETL semantics.
@@ -55,19 +55,8 @@ pointline
 - Uniform output flags (future): `--json`, `--quiet`.
 
 ## Compatibility & Deprecation Strategy
-1) **Phase 1 (compatibility)**
-   - Keep existing commands functional.
-   - Add new command tree in parallel.
-   - Emit deprecation warnings when old paths are used.
-
-2) **Phase 2 (migration)**
-   - Update docs and examples to new command tree.
-   - Add `pointline help` sections that recommend new paths.
-   - Provide a mapping table in docs and release notes.
-
-3) **Phase 3 (cleanup)**
-   - Remove deprecated command paths and old flag aliases.
-   - Remove warnings and compatibility shims.
+- This change is a breaking change: legacy command paths and flag aliases are removed immediately.
+- Documentation and examples will only show the new command tree.
 
 ## Command Mapping (Old → New)
 - `pointline download` → `pointline bronze download`
@@ -87,16 +76,14 @@ pointline
 
 ## Implementation Plan
 1) Add new subcommand structure in `pointline/cli/parser.py`.
-2) Implement alias subcommands that dispatch to existing handlers.
-3) Add flag aliases and normalize in a shared helper.
-4) Update docs and examples.
-5) Add tests:
+2) Remove legacy subcommands and flag aliases.
+3) Update docs and examples.
+4) Add tests:
    - new command path parity tests
-   - deprecated path still works with warning
 
 ## Risks & Mitigations
-- **User scripts break**: mitigate with shims and warnings.
-- **Flag ambiguity**: ensure clear precedence in normalization logic.
+- **User scripts break**: communicate breaking change in release notes.
+- **Flag ambiguity**: keep the new flag set minimal and consistent.
 - **Help output complexity**: keep top-level help concise with grouped sections.
 
 ## Acceptance Criteria
