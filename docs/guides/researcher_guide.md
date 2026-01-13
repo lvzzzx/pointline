@@ -113,7 +113,7 @@ Example:
 
 DuckDB is the recommended tool for interactive exploration. Polars is ideal for building pipelines.
 
-**Partition-first rule:** always filter by `date` to avoid full scans. When using `pointline.research` or `l2_replay` APIs with `symbol_id`, exchange partitioning is handled automatically.
+**Partition-first rule:** always filter by `date` to avoid full scans (for tables that include a `date` column). When using `pointline.research` or `l2_replay` APIs with `symbol_id`, exchange partitioning is handled automatically.
 
 ## 5. Core Concepts
 
@@ -230,6 +230,7 @@ LIMIT 100;
 - Use `pointline.research` helpers (`load_trades`, `scan_table`) instead of raw `pl.read_delta` where possible.
 - Provide `symbol_id` to ensure optimal partition pruning.
 - Keep joins on `exchange_id` + `symbol_id`.
+- Only pass `start_date`/`end_date` to tables that include a `date` column (e.g., trades/quotes/l2_updates); others will raise.
 
 ## 8. Agent Interface
 

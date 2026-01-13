@@ -191,6 +191,10 @@ def _apply_filters(
 
     # 3. Apply Date Filters
     if start_date is not None or end_date is not None:
+        if "date" not in lf.schema:
+            raise ValueError(
+                "scan_table: start_date/end_date provided but table has no 'date' column"
+            )
         start = _to_date(start_date) if start_date is not None else None
         end = _to_date(end_date) if end_date is not None else None
         if start and end:
