@@ -75,6 +75,21 @@ SCHEMA: dict[str, pl.DataType] = {
 }
 
 
+def read_dim_symbol_table(
+    *, columns: Sequence[str] | None = None, unique_by: Sequence[str] | None = None
+) -> pl.DataFrame:
+    """Read dim_symbol from Delta and optionally select columns/unique rows."""
+    from pointline.config import get_table_path
+
+    lf = pl.scan_delta(str(get_table_path("dim_symbol")))
+    if columns:
+        lf = lf.select(list(columns))
+    df = lf.collect()
+    if unique_by:
+        df = df.unique(subset=list(unique_by))
+    return df
+
+
 def assign_symbol_id_hash(df: pl.DataFrame) -> pl.DataFrame:
     """Assign deterministic symbol_id based on natural key + valid_from_ts.
 

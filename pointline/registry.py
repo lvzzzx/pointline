@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import logging
 import polars as pl
-from pointline.config import get_table_path
+from pointline.dim_symbol import read_dim_symbol_table
 
 logger = logging.getLogger(__name__)
 
@@ -14,12 +14,11 @@ def _read_dim_symbol() -> pl.DataFrame:
     """
     Read dim_symbol from Delta each call to avoid stale metadata.
     """
-    path = get_table_path("dim_symbol")
     try:
         # We select descriptive columns for search capability
         # We assume these are globally unique and stable across time for a given symbol_id
-        return pl.read_delta(str(path)).select(
-            [
+        return read_dim_symbol_table(
+            columns=[
                 "symbol_id",
                 "exchange_id",
                 "exchange",
@@ -34,8 +33,9 @@ def _read_dim_symbol() -> pl.DataFrame:
                 "contract_size",
                 "valid_from_ts",
                 "valid_until_ts",
-            ]
-        ).unique(subset=["symbol_id"])
+            ],
+            unique_by=["symbol_id"],
+        )
     except Exception as exc:
         logger.warning(f"Failed to load dim_symbol registry: {exc}")
         # Return empty schema if table doesn't exist

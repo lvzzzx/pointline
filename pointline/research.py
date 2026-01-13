@@ -10,7 +10,7 @@ import warnings
 import polars as pl
 
 from pointline.config import TABLE_HAS_DATE, TABLE_PATHS, get_table_path, normalize_exchange
-from pointline.dim_symbol import DEFAULT_VALID_UNTIL_TS_US
+from pointline.dim_symbol import DEFAULT_VALID_UNTIL_TS_US, read_dim_symbol_table
 from pointline.registry import resolve_symbols
 
 
@@ -289,16 +289,12 @@ def _resolve_symbol_ids_by_name(
 
 
 def _read_dim_symbol() -> pl.DataFrame:
-    return (
-        pl.scan_delta(str(get_table_path("dim_symbol")))
-        .select(
-            [
-                "symbol_id",
-                "exchange",
-                "exchange_symbol",
-                "valid_from_ts",
-                "valid_until_ts",
-            ]
-        )
-        .collect()
+    return read_dim_symbol_table(
+        columns=[
+            "symbol_id",
+            "exchange",
+            "exchange_symbol",
+            "valid_from_ts",
+            "valid_until_ts",
+        ]
     )
