@@ -5,7 +5,7 @@ which tracks daily asset-level statistics (circulating supply, market cap, etc.)
 
 Example:
     import polars as pl
-    from pointline.dim_asset_stats import normalize_dim_asset_stats_schema
+    from pointline.tables.dim_asset_stats import normalize_dim_asset_stats_schema
 
     df = pl.DataFrame({
         "base_asset": ["BTC"],

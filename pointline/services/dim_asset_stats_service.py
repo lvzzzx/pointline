@@ -8,7 +8,10 @@ import polars as pl
 from deltalake.exceptions import CommitFailedError
 
 from pointline.config import get_coingecko_coin_id, get_table_path
-from pointline.dim_asset_stats import normalize_dim_asset_stats_schema, required_dim_asset_stats_columns
+from pointline.tables.dim_asset_stats import (
+    normalize_dim_asset_stats_schema,
+    required_dim_asset_stats_columns,
+)
 from pointline.io.base_repository import BaseDeltaRepository
 from pointline.io.vendor.coingecko import CoinGeckoClient
 from pointline.services.base_service import BaseService

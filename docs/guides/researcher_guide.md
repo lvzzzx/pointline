@@ -187,7 +187,7 @@ Decoding is **explicit** to avoid silently changing semantics. Use the domain he
 from pointline import research
 from pointline.tables.trades import decode_fixed_point as decode_trades
 from pointline.tables.quotes import decode_fixed_point as decode_quotes
-from pointline.book_snapshots import decode_fixed_point as decode_books
+from pointline.tables.book_snapshots import decode_fixed_point as decode_books
 from pointline.config import get_table_path
 import polars as pl
 

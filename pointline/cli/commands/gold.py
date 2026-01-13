@@ -6,7 +6,7 @@ import argparse
 
 from pointline.cli.utils import parse_symbol_id_single
 from pointline.config import get_table_path
-from pointline.l2_state_checkpoint import build_state_checkpoints_delta
+from pointline.tables.l2_state_checkpoint import build_state_checkpoints_delta
 from pointline.registry import resolve_symbol
 
 

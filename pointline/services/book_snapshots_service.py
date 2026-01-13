@@ -18,7 +18,7 @@ from pointline.io.protocols import (
     TableRepository,
 )
 from pointline.services.base_service import BaseService
-from pointline.book_snapshots import (
+from pointline.tables.book_snapshots import (
     encode_fixed_point,
     normalize_book_snapshots_schema,
     parse_tardis_book_snapshots_csv,

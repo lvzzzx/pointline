@@ -11,7 +11,7 @@ from pointline.io.base_repository import BaseDeltaRepository
 from pointline.io.delta_manifest_repo import DeltaManifestRepository
 from pointline.io.protocols import BronzeFileMetadata, IngestionResult
 from pointline.services.book_snapshots_service import BookSnapshotsIngestionService
-from pointline.book_snapshots import (
+from pointline.tables.book_snapshots import (
     BOOK_SNAPSHOTS_SCHEMA,
     decode_fixed_point,
     encode_fixed_point,

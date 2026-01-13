@@ -4,7 +4,7 @@ This module keeps the implementation storage-agnostic; it operates on Polars Dat
 
 Example:
     import polars as pl
-    from pointline.book_snapshots import (
+    from pointline.tables.book_snapshots import (
         encode_fixed_point,
         normalize_book_snapshots_schema,
         parse_tardis_book_snapshots_csv,
