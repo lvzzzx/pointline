@@ -10,7 +10,10 @@ This data lake is designed for **Point-in-Time (PIT) accuracy** and **query spee
 
 ## 2. Quick Start
 
-**Lake root:** The base path is controlled by `LAKE_ROOT` (see `pointline/config.py`). If unset, it defaults to `./data/lake`.
+**Lake root:** Resolved in this order (see `pointline/config.py`):
+1. `LAKE_ROOT` environment variable
+2. User config file at `~/.config/pointline/config.toml`
+3. Default `~/data/lake`
 
 ### 2.1 DuckDB (Ad-hoc SQL)
 ```sql
@@ -40,7 +43,8 @@ import os
 from datetime import datetime, timezone
 import polars as pl
 
-lake_root = os.getenv("LAKE_ROOT", "./data/lake")
+from pointline.config import LAKE_ROOT
+lake_root = str(LAKE_ROOT)
 asof = datetime(2025, 12, 28, 12, 0, 0, tzinfo=timezone.utc)
 asof_us = int(asof.timestamp() * 1_000_000)
 symbol = "BTC-PERPETUAL"
@@ -80,17 +84,17 @@ daily_vol = (
 
 **Partitioning:** Silver tables are partitioned by `exchange` and `date`, with `date` derived from `ts_local_us` in UTC.
 Example:
-`/lake/silver/trades/exchange=binance/date=2025-12-28/part-*.parquet`
+`${LAKE_ROOT}/silver/trades/exchange=binance/date=2025-12-28/part-*.parquet`
 
 ### 3.2 Table catalog (Silver)
 | Table | Path | Partitions | Key columns |
 |---|---|---|---|
-| trades | `/lake/silver/trades` | `exchange`, `date` | `ts_local_us`, `symbol_id`, `price_int`, `qty_int` |
-| quotes | `/lake/silver/quotes` | `exchange`, `date` | `ts_local_us`, `symbol_id`, `bid_px_int`, `ask_px_int` |
-| book_snapshot_25 | `/lake/silver/book_snapshot_25` | `exchange`, `date` | `ts_local_us`, `symbol_id`, `bids_px`, `asks_px` |
-| l2_updates | `/lake/silver/l2_updates` | `exchange`, `date` | `ts_local_us`, `symbol_id`, `side`, `price_int`, `size_int` |
-| dim_symbol | `/lake/silver/dim_symbol` | none | `symbol_id`, `exchange_id`, `exchange_symbol`, validity range |
-| ingest_manifest | `/lake/silver/ingest_manifest` | none | `exchange`, `data_type`, `date`, `status` |
+| trades | `${LAKE_ROOT}/silver/trades` | `exchange`, `date` | `ts_local_us`, `symbol_id`, `price_int`, `qty_int` |
+| quotes | `${LAKE_ROOT}/silver/quotes` | `exchange`, `date` | `ts_local_us`, `symbol_id`, `bid_px_int`, `ask_px_int` |
+| book_snapshot_25 | `${LAKE_ROOT}/silver/book_snapshot_25` | `exchange`, `date` | `ts_local_us`, `symbol_id`, `bids_px`, `asks_px` |
+| l2_updates | `${LAKE_ROOT}/silver/l2_updates` | `exchange`, `date` | `ts_local_us`, `symbol_id`, `side`, `price_int`, `size_int` |
+| dim_symbol | `${LAKE_ROOT}/silver/dim_symbol` | none | `symbol_id`, `exchange_id`, `exchange_symbol`, validity range |
+| ingest_manifest | `${LAKE_ROOT}/silver/ingest_manifest` | none | `exchange`, `data_type`, `date`, `status` |
 
 **For complete schema definitions, see [Schema Reference](../schemas.md).**
 
@@ -103,7 +107,8 @@ Example:
 
 DuckDB is the recommended tool for interactive exploration. Polars is ideal for building pipelines.
 
-**Partition-first rule:** always filter by `date` (and `exchange_id` if possible) to avoid full scans.
+**Partition-first rule:** always filter by `date` (for tables that include a `date` column)
+and `exchange_id` if possible to avoid full scans.
 
 ## 5. Core Concepts
 
@@ -166,7 +171,7 @@ To get the book state at time `T`:
 ### 7.1 Exchange and Symbol Identity
 - **exchange (string):** vendor name from Tardis, used for partitioning.
 - **exchange_id (i16):** stable numeric mapping (`EXCHANGE_MAP` in `pointline/config.py`) used for joins.
-- **symbol_id (i32):** stable identifier from `silver.dim_symbol` (SCD Type 2).
+- **symbol_id (i64):** stable identifier from `silver.dim_symbol` (SCD Type 2).
 
 ### 7.2 Safe query template (DuckDB)
 ```sql
@@ -194,14 +199,14 @@ When writing code for this data lake, follow these rules:
     -   Timestamp: `ts_local_us` (int64)
     -   Price: `price_int` (int64)
     -   Quantity: `qty_int` (int64)
-    -   IDs: `exchange_id` (u16), `symbol_id` (u32)
+    -   IDs: `exchange_id` (i16), `symbol_id` (i64)
 4.  **Joins:** Always use `join_asof` on `ts_local_us` for merging asynchronous streams.
 5.  **Partitioning:** Always filter by `date` partition first to avoid scanning the entire lake.
 
 **Safe Query Template (DuckDB):**
 ```sql
 SELECT * 
-FROM delta_scan('/lake/silver/<table_name>')
+FROM delta_scan('${LAKE_ROOT}/silver/<table_name>')
 WHERE date >= '<start_date>' AND date <= '<end_date>'
   AND symbol_id = <id>
 LIMIT 100;

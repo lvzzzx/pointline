@@ -29,7 +29,9 @@ Provide PIT-correct data access guidance and query patterns for the Pointline/Ta
 - **Partition-first:** Use `pointline.research` helpers; they automatically resolve partitions from `symbol_id`.
 - **Joins:** Use `join_asof` on `ts_local_us` for asynchronous streams.
 - **Fixed-point:** Keep `price_int`/`qty_int` integers until the final step.
-- **Lake root:** Resolve paths relative to `LAKE_ROOT` (default `./data/lake` in `pointline/config.py`).
+- **Lake root:** Resolve paths relative to `LAKE_ROOT` or user config
+  (`~/.config/pointline/config.toml`), default `~/data/lake` in `pointline/config.py`.
+- **Table helpers:** Use `pointline.tables.*` modules for table-specific decoding/validation.
 
 ## Quick Start Patterns
 
