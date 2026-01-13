@@ -7,6 +7,7 @@ LAKE_ROOT = Path(os.getenv("LAKE_ROOT", str(Path.home() / "data" / "lake")))
 # Table Registry (Table Name -> Relative Path from LAKE_ROOT)
 TABLE_PATHS = {
     "dim_symbol": "silver/dim_symbol",
+    "dim_asset_stats": "silver/dim_asset_stats",
     "ingest_manifest": "silver/ingest_manifest",
     "trades": "silver/trades",
     "quotes": "silver/quotes",
@@ -136,6 +137,65 @@ TYPE_MAP = {
     "futures": 2,  # Plural form
     "options": 3,  # Plural form
 }
+
+
+# Asset to CoinGecko Mapping
+# Maps base_asset (from dim_symbol) to CoinGecko coin_id
+# Used for fetching asset statistics from CoinGecko API
+ASSET_TO_COINGECKO_MAP = {
+    # Major cryptocurrencies
+    "BTC": "bitcoin",
+    "ETH": "ethereum",
+    "BNB": "binancecoin",
+    "SOL": "solana",
+    "XRP": "ripple",
+    "ADA": "cardano",
+    "TRX": "tron",
+    "UNI": "uniswap",
+    "DOT": "polkadot",
+    "DOGE": "dogecoin",
+    "AVAX": "avalanche-2",
+    "SHIB": "shiba-inu",
+    "MATIC": "matic-network",
+    "LTC": "litecoin",
+    "BCH": "bitcoin-cash",
+    "XLM": "stellar",
+    "XMR": "monero",
+    "ZEC": "zcash",
+    "LINK": "chainlink",
+    "ATOM": "cosmos",
+    "ALGO": "algorand",
+    "FIL": "filecoin",
+    "ETC": "ethereum-classic",
+    "HBAR": "hedera-hashgraph",
+    "NEAR": "near",
+    "APT": "aptos",
+    "SUI": "sui",
+    "TON": "the-open-network",
+    "OP": "optimism",
+    "ARB": "arbitrum",
+    "INJ": "injective-protocol",
+    "TIA": "celestia",
+    "SEI": "sei-network",
+    "TAO": "bittensor",
+    "HYPE": "hyperliquid",
+    "CCUSDT": "cetus-protocol",  # Note: May need adjustment based on actual CoinGecko ID
+}
+
+
+def get_coingecko_coin_id(base_asset: str) -> str | None:
+    """
+    Get CoinGecko coin_id for a given base_asset.
+    
+    This is the canonical source of truth for base_asset → CoinGecko coin_id mapping.
+    
+    Args:
+        base_asset: Base asset ticker (e.g., "BTC", "ETH")
+        
+    Returns:
+        CoinGecko coin_id (e.g., "bitcoin", "ethereum") or None if not found
+    """
+    return ASSET_TO_COINGECKO_MAP.get(base_asset.upper())
 
 
 

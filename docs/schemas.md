@@ -67,7 +67,57 @@ JOIN silver.dim_symbol s
 
 ---
 
-### 1.2 `silver.ingest_manifest`
+### 1.2 `silver.dim_asset_stats`
+
+Daily dimension table tracking asset-level statistics, primarily `circulating_supply`, updated via CoinGecko API. Enables market cap calculations, supply analysis, and other asset-level research queries.
+
+**Storage:** Single unpartitioned Delta table (small size, similar to `dim_symbol`).
+
+**Natural Key:** `(base_asset, date)`
+
+| Column | Type | Description |
+|--------|------|-------------|
+| **base_asset** | string | Asset ticker (e.g., `BTC`, `ETH`) - matches `dim_symbol.base_asset` |
+| **date** | date | UTC date (partition column) |
+| **coingecko_coin_id** | string | CoinGecko API coin identifier (e.g., `bitcoin`, `ethereum`) |
+| **circulating_supply** | f64 | Circulating supply in native units (e.g., BTC, ETH) |
+| **total_supply** | f64 | Total supply (if available from CoinGecko, nullable) |
+| **max_supply** | f64 | Maximum supply (if available, null for uncapped assets) |
+| **market_cap_usd** | f64 | Market cap in USD (optional, for convenience, nullable) |
+| **fully_diluted_valuation_usd** | f64 | FDV in USD (optional, nullable) |
+| **updated_at_ts** | i64 | Timestamp when CoinGecko last updated this data (µs) |
+| **fetched_at_ts** | i64 | Timestamp when we fetched from CoinGecko API (µs) |
+| **source** | string | Data source identifier (e.g., `coingecko`) |
+
+**Notes:**
+- Daily snapshot model: one row per asset per date
+- Unpartitioned (small dimension table, similar to `dim_symbol`)
+- Updated once per 24h via CoinGecko API sync job
+- `max_supply` is `null` for uncapped assets (e.g., ETH)
+- `fetched_at_ts` tracks when we pulled data; `updated_at_ts` tracks CoinGecko's last update
+- Date filtering uses column pruning (Delta Lake) - no physical partitioning needed
+
+**Join Pattern:**
+```sql
+SELECT 
+    s.*,
+    a.circulating_supply,
+    a.market_cap_usd
+FROM silver.dim_symbol s
+JOIN silver.dim_asset_stats a
+  ON s.base_asset = a.base_asset
+  AND DATE(FROM_UNIXTIME(s.valid_from_ts / 1_000_000)) = a.date
+WHERE s.is_current = true
+```
+
+**Update Logic:**
+- Daily sync job fetches data from CoinGecko API
+- Uses `MERGE` operation on `(base_asset, date)` key for idempotency
+- Re-running same date updates if CoinGecko data changed
+
+---
+
+### 1.3 `silver.ingest_manifest`
 
 Tracks ingestion status per Bronze file. Enables idempotent re-runs, provides auditability, and enables fast skip logic.
 

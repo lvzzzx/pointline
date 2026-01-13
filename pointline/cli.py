@@ -25,6 +25,7 @@ from pointline.io.vendor.tardis import build_updates_from_instruments, TardisCli
 from pointline import research
 from pointline.l2_state_checkpoint import build_state_checkpoints_delta
 from pointline.services.dim_symbol_service import DimSymbolService
+from pointline.services.dim_asset_stats_service import DimAssetStatsService
 from pointline.services.trades_service import TradesIngestionService
 from pointline.services.quotes_service import QuotesIngestionService
 from pointline.services.book_snapshots_service import BookSnapshotsIngestionService
@@ -955,6 +956,80 @@ def _cmd_dim_symbol_sync(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_dim_asset_stats_sync(args: argparse.Namespace) -> int:
+    """Sync dim_asset_stats for a single date."""
+    from datetime import datetime
+    from pointline.io.vendor.coingecko import CoinGeckoClient
+
+    try:
+        target_date = datetime.strptime(args.date, "%Y-%m-%d").date()
+    except ValueError as exc:
+        print(f"Error: Invalid date format: {args.date} (expected YYYY-MM-DD)")
+        return 1
+
+    base_assets = None
+    if args.base_assets:
+        base_assets = [asset.strip().upper() for asset in args.base_assets.split(",")]
+
+    repo = BaseDeltaRepository(Path(args.table_path))
+    client = CoinGeckoClient(api_key=args.api_key if args.api_key else None)
+    service = DimAssetStatsService(repo, coingecko_client=client)
+
+    print(f"Syncing dim_asset_stats for date: {target_date}")
+    if base_assets:
+        print(f"Base assets: {', '.join(base_assets)}")
+    else:
+        print("Syncing all assets from dim_symbol")
+
+    try:
+        service.sync_daily(target_date, base_assets)
+        print(f"✓ Sync complete for {target_date}")
+        return 0
+    except Exception as exc:
+        print(f"Error: {exc}")
+        return 1
+
+
+def _cmd_dim_asset_stats_backfill(args: argparse.Namespace) -> int:
+    """Backfill historical dim_asset_stats for a date range."""
+    from datetime import datetime
+    from pointline.io.vendor.coingecko import CoinGeckoClient
+
+    try:
+        start_date = datetime.strptime(args.start_date, "%Y-%m-%d").date()
+        end_date = datetime.strptime(args.end_date, "%Y-%m-%d").date()
+    except ValueError as exc:
+        print(f"Error: Invalid date format (expected YYYY-MM-DD)")
+        return 1
+
+    if start_date > end_date:
+        print("Error: start_date must be <= end_date")
+        return 1
+
+    base_assets = None
+    if args.base_assets:
+        base_assets = [asset.strip().upper() for asset in args.base_assets.split(",")]
+
+    repo = BaseDeltaRepository(Path(args.table_path))
+    client = CoinGeckoClient(api_key=args.api_key if args.api_key else None)
+    service = DimAssetStatsService(repo, coingecko_client=client)
+
+    total_days = (end_date - start_date).days + 1
+    print(f"Backfilling dim_asset_stats from {start_date} to {end_date} ({total_days} days)")
+    if base_assets:
+        print(f"Base assets: {', '.join(base_assets)}")
+    else:
+        print("Syncing all assets from dim_symbol")
+
+    try:
+        service.sync_date_range(start_date, end_date, base_assets)
+        print(f"✓ Backfill complete: {total_days} days")
+        return 0
+    except Exception as exc:
+        print(f"Error: {exc}")
+        return 1
+
+
 def _parse_symbol_id_single(value: str | None) -> int | None:
     if not value:
         return None
@@ -1457,6 +1532,60 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Perform a full history rebuild for the symbols in the source",
     )
     dim_symbol_sync.set_defaults(func=_cmd_dim_symbol_sync)
+
+    dim_asset_stats = subparsers.add_parser("dim-asset-stats", help="dim_asset_stats operations")
+    dim_asset_stats_sub = dim_asset_stats.add_subparsers(dest="dim_asset_stats_command")
+
+    dim_asset_stats_sync = dim_asset_stats_sub.add_parser("sync", help="Sync dim_asset_stats for a date")
+    dim_asset_stats_sync.add_argument(
+        "--date",
+        required=True,
+        help="Date to sync (YYYY-MM-DD)",
+    )
+    dim_asset_stats_sync.add_argument(
+        "--base-assets",
+        help="Comma-separated list of base assets to sync (e.g., BTC,ETH,SOL). If omitted, syncs all assets from dim_symbol",
+    )
+    dim_asset_stats_sync.add_argument(
+        "--table-path",
+        default=str(get_table_path("dim_asset_stats")),
+        help="Path to the dim_asset_stats Delta table",
+    )
+    dim_asset_stats_sync.add_argument(
+        "--api-key",
+        default=os.getenv("COINGECKO_API_KEY", ""),
+        help="CoinGecko API key (optional, for higher rate limits)",
+    )
+    dim_asset_stats_sync.set_defaults(func=_cmd_dim_asset_stats_sync)
+
+    dim_asset_stats_backfill = dim_asset_stats_sub.add_parser(
+        "backfill", help="Backfill historical dim_asset_stats for a date range"
+    )
+    dim_asset_stats_backfill.add_argument(
+        "--start-date",
+        required=True,
+        help="Start date YYYY-MM-DD (inclusive)",
+    )
+    dim_asset_stats_backfill.add_argument(
+        "--end-date",
+        required=True,
+        help="End date YYYY-MM-DD (inclusive)",
+    )
+    dim_asset_stats_backfill.add_argument(
+        "--base-assets",
+        help="Comma-separated list of base assets to sync (e.g., BTC,ETH,SOL). If omitted, syncs all assets from dim_symbol",
+    )
+    dim_asset_stats_backfill.add_argument(
+        "--table-path",
+        default=str(get_table_path("dim_asset_stats")),
+        help="Path to the dim_asset_stats Delta table",
+    )
+    dim_asset_stats_backfill.add_argument(
+        "--api-key",
+        default=os.getenv("COINGECKO_API_KEY", ""),
+        help="CoinGecko API key (optional, for higher rate limits)",
+    )
+    dim_asset_stats_backfill.set_defaults(func=_cmd_dim_asset_stats_backfill)
 
     gold = subparsers.add_parser("gold", help="Gold table build utilities")
     gold_sub = gold.add_subparsers(dest="gold_command")
