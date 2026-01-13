@@ -164,6 +164,19 @@ class DerivativeTickerIngestionService(BaseService):
         read_options = {
             "infer_schema_length": 10000,
             "try_parse_dates": False,
+            "schema_overrides": {
+                "exchange": pl.Utf8,
+                "symbol": pl.Utf8,
+                "timestamp": pl.Int64,
+                "local_timestamp": pl.Int64,
+                "funding_timestamp": pl.Int64,
+                "funding_rate": pl.Float64,
+                "predicted_funding_rate": pl.Float64,
+                "open_interest": pl.Float64,
+                "last_price": pl.Float64,
+                "index_price": pl.Float64,
+                "mark_price": pl.Float64,
+            },
         }
         import inspect
 
