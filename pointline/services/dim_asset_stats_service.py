@@ -215,16 +215,32 @@ class DimAssetStatsService(BaseService):
         """
         Sync asset stats for a date range.
 
+        Uses CoinGecko's circulating_supply_chart endpoint if API key is available
+        (much more efficient - one call per asset), otherwise falls back to daily syncs.
+
         Args:
             start_date: Start date (inclusive)
             end_date: End date (inclusive)
             base_assets: Optional list of base assets to sync
         """
+        from datetime import timedelta, datetime
+
+        # Try to use chart endpoint if API key is available (much faster)
+        if self.coingecko_client.api_key:
+            logger.info(
+                f"Using efficient chart endpoint for date range {start_date} to {end_date} "
+                "(one API call per asset)"
+            )
+            self._sync_date_range_chart(start_date, end_date, base_assets)
+            return
+
+        # Fallback to daily syncs (for free tier)
+        logger.info(
+            f"Using daily sync method for date range {start_date} to {end_date} "
+            "(chart endpoint requires API key for historical data)"
+        )
         current = start_date
         total_days = (end_date - start_date).days + 1
-        logger.info(f"Syncing dim_asset_stats for {total_days} days from {start_date} to {end_date}")
-
-        from datetime import timedelta
 
         day = 0
         while current <= end_date:
@@ -234,3 +250,127 @@ class DimAssetStatsService(BaseService):
             current += timedelta(days=1)
 
         logger.info(f"Completed syncing {total_days} days")
+
+    def _sync_date_range_chart(
+        self, start_date: date, end_date: date, base_assets: list[str] | None = None
+    ) -> None:
+        """
+        Efficiently sync date range using CoinGecko's circulating_supply_chart endpoint.
+
+        This method fetches all historical data in one API call per asset, then
+        filters to the requested date range and creates daily snapshots.
+
+        Args:
+            start_date: Start date (inclusive)
+            end_date: End date (inclusive)
+            base_assets: Optional list of base assets to sync
+        """
+        from datetime import datetime, timedelta
+        from pointline.config import get_coingecko_coin_id, get_table_path
+
+        if base_assets is None:
+            try:
+                dim_symbol = pl.read_delta(str(get_table_path("dim_symbol")))
+                current_symbols = dim_symbol.filter(pl.col("is_current") == True)
+                base_assets = current_symbols["base_asset"].unique().to_list()
+                base_assets = [asset for asset in base_assets if get_coingecko_coin_id(asset) is not None]
+            except Exception as e:
+                logger.warning(f"Could not read dim_symbol to get base_assets: {e}")
+                base_assets = []
+
+        if not base_assets:
+            logger.warning(f"No base_assets to sync for date range {start_date} to {end_date}")
+            return
+
+        # Calculate days from now to start_date
+        days_ago = (datetime.now().date() - start_date).days + 30  # Add buffer
+        days_param = "max" if days_ago > 365 else str(days_ago)
+
+        # Convert dates to timestamps for filtering
+        start_ts_ms = int(datetime.combine(start_date, datetime.min.time()).timestamp() * 1000)
+        end_ts_ms = int(
+            (datetime.combine(end_date, datetime.max.time()) + timedelta(days=1)).timestamp() * 1000
+        )
+
+        stats_data = []
+        fetched_at_ts = int(datetime.now().timestamp() * 1_000_000)
+
+        for base_asset in base_assets:
+            coin_id = get_coingecko_coin_id(base_asset)
+            if coin_id is None:
+                logger.warning(f"No CoinGecko mapping for base_asset: {base_asset}, skipping")
+                continue
+
+            try:
+                logger.info(f"Fetching chart data for {base_asset} ({coin_id})...")
+                chart_data = self.coingecko_client.fetch_circulating_supply_chart(
+                    coin_id, days=days_param, interval="daily"
+                )
+
+                # Filter to date range and create daily snapshots
+                # Chart data is in milliseconds, we need to group by date
+                daily_supplies: dict[date, float] = {}
+                for timestamp_ms, supply_value in chart_data:
+                    if start_ts_ms <= timestamp_ms < end_ts_ms:
+                        # Convert to date (UTC)
+                        dt = datetime.fromtimestamp(timestamp_ms / 1000)
+                        day = dt.date()
+                        # Keep the latest value for each day
+                        if day not in daily_supplies:
+                            daily_supplies[day] = supply_value
+
+                # For each day in range, create a row
+                # Note: Chart endpoint only provides circulating_supply
+                # We'll fetch current stats once for other fields (total_supply, max_supply)
+                # Market cap would need historical market data endpoint
+                current_stats = None
+                try:
+                    current_stats = self.coingecko_client.fetch_asset_stats(coin_id)
+                except Exception as e:
+                    logger.warning(f"Could not fetch current stats for {base_asset}: {e}")
+
+                for day, supply in daily_supplies.items():
+                    if start_date <= day <= end_date:
+                        updated_at_ts = int(datetime.combine(day, datetime.min.time()).timestamp() * 1_000_000)
+
+                        stats_data.append({
+                            "base_asset": base_asset,
+                            "date": day,
+                            "coingecko_coin_id": coin_id,
+                            "circulating_supply": supply,
+                            "total_supply": float(current_stats["total_supply"]) if current_stats and current_stats.get("total_supply") else None,
+                            "max_supply": float(current_stats["max_supply"]) if current_stats and current_stats.get("max_supply") else None,
+                            "market_cap_usd": None,  # Would need historical market data endpoint
+                            "fully_diluted_valuation_usd": None,  # Would need historical market data endpoint
+                            "updated_at_ts": updated_at_ts,
+                            "fetched_at_ts": fetched_at_ts,
+                            "source": "coingecko",
+                        })
+
+                logger.info(f"Processed {len(daily_supplies)} days for {base_asset}")
+
+            except ValueError as e:
+                if "requires Pro/Enterprise API key" in str(e):
+                    logger.warning(
+                        f"Chart endpoint requires API key for {base_asset}. "
+                        "Falling back to daily sync method."
+                    )
+                    # Fall back to daily sync for this asset
+                    current = start_date
+                    while current <= end_date:
+                        self.sync_daily(current, [base_asset])
+                        current += timedelta(days=1)
+                else:
+                    logger.error(f"Failed to fetch chart for {base_asset} ({coin_id}): {e}")
+            except Exception as e:
+                logger.error(f"Failed to process {base_asset} ({coin_id}): {e}")
+                continue
+
+        if not stats_data:
+            logger.warning(f"No data fetched for date range {start_date} to {end_date}")
+            return
+
+        # Convert to DataFrame and update
+        df = pl.DataFrame(stats_data)
+        self.update(df)
+        logger.info(f"Synced {len(stats_data)} rows for date range {start_date} to {end_date}")

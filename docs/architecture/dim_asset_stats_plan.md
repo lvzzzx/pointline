@@ -58,9 +58,10 @@ WHERE s.is_current = true
 
 ## CoinGecko API Integration
 
-### API Endpoint
+### API Endpoints
 
-**CoinGecko API v3:** `https://api.coingecko.com/api/v3/coins/{coin_id}`
+#### 1. Individual Coin Endpoint (Daily Sync)
+**Endpoint:** `GET /api/v3/coins/{coin_id}`
 
 **Key Fields:**
 - `market_data.circulating_supply`
@@ -69,6 +70,35 @@ WHERE s.is_current = true
 - `market_data.market_cap.usd`
 - `market_data.fully_diluted_valuation.usd`
 - `last_updated` (ISO 8601 timestamp)
+
+**Use Case:** Daily syncs for current data
+
+#### 2. Circulating Supply Chart Endpoint (Historical Backfill) ⭐ **RECOMMENDED**
+**Endpoint:** `GET /pro-api.coingecko.com/api/v3/coins/{id}/circulating_supply_chart`  
+**Reference:** [CoinGecko API Docs](https://docs.coingecko.com/reference/coins-id-circulating-supply-chart)
+
+**Benefits:**
+- ✅ **One API call per asset** instead of one per day per asset
+- ✅ **Much faster** for historical backfills (e.g., 1 year = 1 call vs 365 calls)
+- ✅ **Avoids rate limits** - dramatically fewer requests
+- ✅ **Data from June 22, 2019** onwards
+- ✅ **Automatic granularity:** 5-minutely (1 day), hourly (2-90 days), daily (91+ days)
+
+**Parameters:**
+- `days`: Number of days or `"max"` for all available data
+- `interval`: Optional `"5m"`, `"hourly"`, or `"daily"` (auto-selected if omitted)
+
+**Response Format:**
+```json
+{
+  "circulating_supply": [
+    [1712448000000, "19675268.0"],  // [timestamp_ms, supply_value]
+    [1712534400000, "19675268.0"]
+  ]
+}
+```
+
+**Note:** Requires Pro/Enterprise API key. Falls back to daily sync method if no API key provided.
 
 ### Rate Limits
 

@@ -67,9 +67,30 @@ pointline dim-asset-stats backfill \
 
 ### Rate Limiting
 
-- **Free tier:** ~30 requests/minute (conservative limit)
-- The service automatically adds delays between requests (~2.1 seconds)
-- For large backfills, consider using a CoinGecko API key for higher limits
+- **Free tier:** ~10 requests/minute (very conservative to avoid 429 errors)
+- **With API key (Pro/Enterprise):** Much higher limits + access to chart endpoints
+- The service automatically adds delays between requests (~7 seconds for free tier)
+
+### Using Chart Endpoint (Recommended for Historical Backfills)
+
+If you have a CoinGecko Pro/Enterprise API key, the service automatically uses the efficient **circulating_supply_chart** endpoint for historical backfills:
+
+**Benefits:**
+- ✅ One API call per asset (instead of one per day per asset)
+- ✅ Backfill 1 year of data: **24 calls** (one per asset) vs **8,784 calls** (daily method)
+- ✅ Completes in minutes instead of hours
+- ✅ Avoids rate limit issues
+
+**Example with API key:**
+```bash
+# This will use the efficient chart endpoint automatically
+pointline dim-asset-stats backfill \
+  --start-date 2024-01-01 \
+  --end-date 2024-12-31 \
+  --api-key YOUR_COINGECKO_API_KEY
+```
+
+**Without API key:** Falls back to daily sync method (slower but works on free tier)
 
 ### Data Availability
 

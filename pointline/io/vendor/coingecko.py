@@ -20,19 +20,21 @@ REQUEST_DELAY_SECONDS = 7.0  # ~8-9 requests/minute (very conservative to avoid 
 class CoinGeckoClient:
     """Client for CoinGecko API v3."""
 
-    BASE_URL = "https://api.coingecko.com/api/v3"
+    BASE_URL_FREE = "https://api.coingecko.com/api/v3"
+    BASE_URL_PRO = "https://pro-api.coingecko.com/api/v3"
 
     def __init__(self, api_key: str | None = None, rate_limit_delay: float = REQUEST_DELAY_SECONDS):
         """
         Initialize CoinGecko client.
 
         Args:
-            api_key: Optional API key for higher rate limits (not required for free tier)
-            rate_limit_delay: Delay between requests in seconds (default: 2.1s for ~28 req/min)
+            api_key: Optional API key for Pro/Enterprise tier (enables chart endpoints)
+            rate_limit_delay: Delay between requests in seconds (default: 7.0s for free tier)
         """
         self.api_key = api_key
         self.rate_limit_delay = rate_limit_delay
         self.last_request_time: float = 0.0
+        self.base_url = self.BASE_URL_PRO if api_key else self.BASE_URL_FREE
 
     def _rate_limit(self) -> None:
         """Enforce rate limiting between requests."""
@@ -60,10 +62,11 @@ class CoinGeckoClient:
             requests.RequestException: If request fails after retries
             ValueError: If coin not found (404)
         """
-        url = f"{self.BASE_URL}{endpoint}"
+        url = f"{self.base_url}{endpoint}"
         headers = {}
         if self.api_key:
-            headers["x-cg-demo-api-key"] = self.api_key
+            # Use Pro API header for Pro/Enterprise endpoints
+            headers["x-cg-pro-api-key"] = self.api_key
 
         for attempt in range(max_retries):
             self._rate_limit()
@@ -175,6 +178,59 @@ class CoinGeckoClient:
                 })
 
         return results
+
+    def fetch_circulating_supply_chart(
+        self, coin_id: str, days: str | int = "max", interval: str | None = None
+    ) -> list[tuple[int, float]]:
+        """
+        Fetch historical circulating supply chart data.
+
+        This is much more efficient for historical backfills than fetching individual dates.
+        Returns data points as (timestamp_ms, supply_value) tuples.
+
+        Args:
+            coin_id: CoinGecko coin ID (e.g., "bitcoin")
+            days: Number of days of history ("max" for all available, or integer)
+            interval: Optional interval ("5m", "hourly", "daily"). If None, auto-selected:
+                     - 1 day = 5-minutely
+                     - 2-90 days = hourly
+                     - 91+ days = daily
+
+        Returns:
+            List of (timestamp_ms, supply_value) tuples
+            timestamp_ms is in milliseconds since epoch
+
+        Note:
+            This endpoint requires Pro/Enterprise API key.
+            Data available from June 22, 2019.
+            For free tier, falls back to individual date fetches.
+
+        Raises:
+            ValueError: If coin_id not found
+            requests.RequestException: If API request fails
+        """
+        if not self.api_key:
+            raise ValueError(
+                "Circulating supply chart endpoint requires Pro/Enterprise API key. "
+                "Use fetch_asset_stats() for free tier or provide --api-key"
+            )
+
+        params: dict[str, Any] = {"days": str(days)}
+        if interval:
+            params["interval"] = interval
+
+        data = self._make_request(f"/coins/{coin_id}/circulating_supply_chart", params=params)
+
+        # Parse response: [[timestamp_ms, "supply_value"], ...]
+        chart_data = data.get("circulating_supply", [])
+        result = []
+        for point in chart_data:
+            timestamp_ms = int(point[0])
+            supply_value = float(point[1]) if point[1] else None
+            if supply_value is not None:
+                result.append((timestamp_ms, supply_value))
+
+        return result
 
     @staticmethod
     def parse_timestamp(iso_str: str) -> int:
