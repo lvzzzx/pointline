@@ -11,7 +11,7 @@ from pointline.io.base_repository import BaseDeltaRepository
 from pointline.io.delta_manifest_repo import DeltaManifestRepository
 from pointline.io.protocols import BronzeFileMetadata, IngestionResult
 from pointline.services.quotes_service import QuotesIngestionService
-from pointline.quotes import (
+from pointline.tables.quotes import (
     QUOTES_SCHEMA,
     decode_fixed_point,
     encode_fixed_point,

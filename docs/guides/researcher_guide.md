@@ -185,8 +185,8 @@ Decoding is **explicit** to avoid silently changing semantics. Use the domain he
 
 ```python
 from pointline import research
-from pointline.trades import decode_fixed_point as decode_trades
-from pointline.quotes import decode_fixed_point as decode_quotes
+from pointline.tables.trades import decode_fixed_point as decode_trades
+from pointline.tables.quotes import decode_fixed_point as decode_quotes
 from pointline.book_snapshots import decode_fixed_point as decode_books
 from pointline.config import get_table_path
 import polars as pl
@@ -202,7 +202,7 @@ trades = decode_trades(trades, dim_symbol)  # drops *_int, outputs Float64
 **Minimal end-to-end example (real prices and sizes):**
 ```python
 from pointline import research
-from pointline.trades import decode_fixed_point as decode_trades
+from pointline.tables.trades import decode_fixed_point as decode_trades
 from pointline.config import get_table_path
 import polars as pl
 

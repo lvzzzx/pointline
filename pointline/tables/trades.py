@@ -4,7 +4,7 @@ This module keeps the implementation storage-agnostic; it operates on Polars Dat
 
 Example:
     import polars as pl
-    from pointline.trades import parse_tardis_trades_csv, normalize_trades_schema
+    from pointline.tables.trades import parse_tardis_trades_csv, normalize_trades_schema
 
     raw_df = pl.read_csv("trades.csv")
     parsed = parse_tardis_trades_csv(raw_df)

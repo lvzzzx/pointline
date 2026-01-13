@@ -11,7 +11,7 @@ import polars as pl
 
 from pointline.config import LAKE_ROOT, normalize_exchange, get_exchange_id
 from pointline.dim_symbol import check_coverage
-from pointline.derivative_ticker import (
+from pointline.tables.derivative_ticker import (
     normalize_derivative_ticker_schema,
     parse_tardis_derivative_ticker_csv,
     resolve_symbol_ids,

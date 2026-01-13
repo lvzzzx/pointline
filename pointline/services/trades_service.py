@@ -18,7 +18,7 @@ from pointline.io.protocols import (
     TableRepository,
 )
 from pointline.services.base_service import BaseService
-from pointline.trades import (
+from pointline.tables.trades import (
     encode_fixed_point,
     normalize_trades_schema,
     parse_tardis_trades_csv,

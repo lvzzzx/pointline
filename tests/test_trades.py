@@ -11,7 +11,7 @@ from pointline.io.base_repository import BaseDeltaRepository
 from pointline.io.delta_manifest_repo import DeltaManifestRepository
 from pointline.io.protocols import BronzeFileMetadata, IngestionResult
 from pointline.services.trades_service import TradesIngestionService
-from pointline.trades import (
+from pointline.tables.trades import (
     TRADES_SCHEMA,
     SIDE_BUY,
     SIDE_SELL,

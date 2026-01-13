@@ -4,7 +4,7 @@ This module keeps the implementation storage-agnostic; it operates on Polars Dat
 
 Example:
     import polars as pl
-    from pointline.quotes import parse_tardis_quotes_csv, normalize_quotes_schema
+    from pointline.tables.quotes import parse_tardis_quotes_csv, normalize_quotes_schema
 
     raw_df = pl.read_csv("quotes.csv")
     parsed = parse_tardis_quotes_csv(raw_df)

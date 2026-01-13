@@ -24,7 +24,7 @@ from pointline.io.protocols import (
     TableRepository,
 )
 from pointline.services.base_service import BaseService
-from pointline.l2_updates import (
+from pointline.tables.l2_updates import (
     encode_l2_updates_fixed_point,
     normalize_l2_updates_schema,
     parse_tardis_l2_updates_csv,

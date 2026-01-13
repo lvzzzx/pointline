@@ -18,7 +18,7 @@ from pointline.io.protocols import (
     TableRepository,
 )
 from pointline.services.base_service import BaseService
-from pointline.quotes import (
+from pointline.tables.quotes import (
     encode_fixed_point,
     normalize_quotes_schema,
     parse_tardis_quotes_csv,

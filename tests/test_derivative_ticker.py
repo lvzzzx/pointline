@@ -1,6 +1,6 @@
 import polars as pl
 
-from pointline.derivative_ticker import (
+from pointline.tables.derivative_ticker import (
     DERIVATIVE_TICKER_SCHEMA,
     normalize_derivative_ticker_schema,
     parse_tardis_derivative_ticker_csv,

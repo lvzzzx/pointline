@@ -17,14 +17,14 @@ from pointline.cli.utils import (
     resolve_manifest_file_id,
 )
 from pointline.config import get_exchange_id, get_table_path, normalize_exchange
-from pointline.quotes import (
+from pointline.tables.quotes import (
     QUOTES_SCHEMA,
     encode_fixed_point as encode_quotes_fixed_point,
     normalize_quotes_schema,
     parse_tardis_quotes_csv,
     resolve_symbol_ids as resolve_quotes_symbol_ids,
 )
-from pointline.trades import (
+from pointline.tables.trades import (
     TRADES_SCHEMA,
     encode_fixed_point as encode_trades_fixed_point,
     normalize_trades_schema,
