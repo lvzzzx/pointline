@@ -183,12 +183,12 @@ These tables are owned by **data infra** and should be built as scheduled jobs.
 
 **Polars + Python: full-depth checkpoints (skeleton)**
 ```python
-import os
 from datetime import datetime, timezone
 import polars as pl
 from pointline import research
+from pointline.config import LAKE_ROOT
 
-lake_root = os.getenv("LAKE_ROOT", "./data/lake")
+lake_root = str(LAKE_ROOT)
 
 checkpoint_every_us = 10_000_000
 checkpoint_every_updates = 10_000

@@ -18,6 +18,7 @@
 - **Maturin:** Used as the build system and for packaging the Rust replay engine extension in the wheel.
 - **Pytest:** The primary framework for unit and integration testing.
 - **Ruff:** Used for lightning-fast linting and code formatting to maintain code quality.
+- **tomli:** TOML parsing for user config files on Python 3.10.
 
 ## Performance Extensions
 - **Rust:** High-performance order book replay engine for full-depth L2 reconstruction.

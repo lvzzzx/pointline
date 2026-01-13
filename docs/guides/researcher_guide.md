@@ -10,7 +10,21 @@ This data lake is designed for **Point-in-Time (PIT) accuracy** and **query spee
 
 ## 2. Quick Start
 
-**Lake root:** The base path is controlled by `LAKE_ROOT` (see `pointline/config.py`). If unset, it defaults to `./data/lake`.
+**Lake root:** Resolved in this order (see `pointline/config.py`):
+1. `LAKE_ROOT` environment variable
+2. User config file at `~/.config/pointline/config.toml`
+3. Default `~/data/lake`
+
+**Config file example:**
+```toml
+lake_root = "/mnt/pointline/lake"
+```
+
+**CLI:**
+```bash
+pointline config show
+pointline config set --lake-root /mnt/pointline/lake
+```
 
 ### 2.1 Discover Symbols
 Before querying data, find the correct `symbol_id`. This ID is the **primary key** for all research operations.
@@ -76,17 +90,17 @@ print(trades)
 derived from `ts_local_us` in UTC). `silver.l2_updates` additionally partitions by
 `symbol_id` to preserve replay ordering without a global sort.
 Example:
-`/lake/silver/trades/exchange=binance/date=2025-12-28/part-*.parquet`
+`${LAKE_ROOT}/silver/trades/exchange=binance/date=2025-12-28/part-*.parquet`
 
 ### 3.2 Table catalog (Silver)
 | Table | Path | Partitions | Key columns |
 |---|---|---|---|
-| trades | `/lake/silver/trades` | `exchange`, `date` | `ts_local_us`, `symbol_id`, `price_int`, `qty_int` |
-| quotes | `/lake/silver/quotes` | `exchange`, `date` | `ts_local_us`, `symbol_id`, `bid_px_int`, `ask_px_int` |
-| book_snapshot_25 | `/lake/silver/book_snapshot_25` | `exchange`, `date` | `ts_local_us`, `symbol_id`, `bids_px`, `asks_px` |
-| l2_updates | `/lake/silver/l2_updates` | `exchange`, `date`, `symbol_id` | `ts_local_us`, `symbol_id`, `side`, `price_int`, `size_int` |
-| dim_symbol | `/lake/silver/dim_symbol` | none | `symbol_id`, `exchange_id`, `exchange_symbol`, validity range |
-| ingest_manifest | `/lake/silver/ingest_manifest` | none | `exchange`, `data_type`, `date`, `status` |
+| trades | `${LAKE_ROOT}/silver/trades` | `exchange`, `date` | `ts_local_us`, `symbol_id`, `price_int`, `qty_int` |
+| quotes | `${LAKE_ROOT}/silver/quotes` | `exchange`, `date` | `ts_local_us`, `symbol_id`, `bid_px_int`, `ask_px_int` |
+| book_snapshot_25 | `${LAKE_ROOT}/silver/book_snapshot_25` | `exchange`, `date` | `ts_local_us`, `symbol_id`, `bids_px`, `asks_px` |
+| l2_updates | `${LAKE_ROOT}/silver/l2_updates` | `exchange`, `date`, `symbol_id` | `ts_local_us`, `symbol_id`, `side`, `price_int`, `size_int` |
+| dim_symbol | `${LAKE_ROOT}/silver/dim_symbol` | none | `symbol_id`, `exchange_id`, `exchange_symbol`, validity range |
+| ingest_manifest | `${LAKE_ROOT}/silver/ingest_manifest` | none | `exchange`, `data_type`, `date`, `status` |
 
 **For complete schema definitions, see [Schema Reference](../schemas.md).**
 
@@ -206,7 +220,7 @@ If `exchange` is omitted, the lookup spans all exchanges and may return multiple
 -- 1. Find your ID first
 -- 2. Query with ID
 SELECT *
-FROM delta_scan('/lake/silver/<table_name>')
+FROM delta_scan('${LAKE_ROOT}/silver/<table_name>')
 WHERE date >= '<start_date>' AND date <= '<end_date>'
   AND symbol_id = <your_id>
 LIMIT 100;

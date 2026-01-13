@@ -1,8 +1,89 @@
 import os
+import re
+import warnings
 from pathlib import Path
 
+try:
+    import tomllib
+except ModuleNotFoundError:  # Python < 3.11
+    import tomli as tomllib
+
 # Base Paths
-LAKE_ROOT = Path(os.getenv("LAKE_ROOT", str(Path.home() / "data" / "lake")))
+DEFAULT_LAKE_ROOT = Path.home() / "data" / "lake"
+CONFIG_PATH = Path(
+    os.getenv("POINTLINE_CONFIG", str(Path.home() / ".config" / "pointline" / "config.toml"))
+).expanduser()
+
+
+def _read_config_file(path: Path) -> dict:
+    if not path.exists():
+        return {}
+    try:
+        return tomllib.loads(path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        warnings.warn(f"Failed to parse Pointline config at {path}: {exc}")
+        return {}
+
+
+def _resolve_lake_root() -> Path:
+    env_value = os.getenv("LAKE_ROOT")
+    if env_value:
+        return Path(env_value).expanduser()
+
+    config = _read_config_file(CONFIG_PATH)
+    config_value = config.get("lake_root")
+    if isinstance(config_value, str) and config_value.strip():
+        return Path(config_value).expanduser()
+
+    return DEFAULT_LAKE_ROOT
+
+
+LAKE_ROOT = _resolve_lake_root()
+
+
+def load_config() -> dict:
+    """Return parsed config content from CONFIG_PATH."""
+    return _read_config_file(CONFIG_PATH)
+
+
+def get_config_lake_root() -> str | None:
+    """Return lake_root from config, if present."""
+    config = load_config()
+    value = config.get("lake_root")
+    return value if isinstance(value, str) and value.strip() else None
+
+
+def _format_toml_string(value: str) -> str:
+    escaped = value.replace("\\", "\\\\").replace('"', '\\"')
+    return f'"{escaped}"'
+
+
+def set_config_lake_root(value: str | Path) -> Path:
+    """Persist lake_root to the user config file."""
+    resolved = Path(value).expanduser()
+    CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    new_line = f"lake_root = {_format_toml_string(str(resolved))}"
+
+    if CONFIG_PATH.exists():
+        lines = CONFIG_PATH.read_text(encoding="utf-8").splitlines()
+    else:
+        lines = []
+
+    updated = False
+    pattern = re.compile(r"^\s*lake_root\s*=")
+    for idx, line in enumerate(lines):
+        if pattern.match(line):
+            lines[idx] = new_line
+            updated = True
+            break
+
+    if not updated:
+        if lines and lines[-1].strip():
+            lines.append("")
+        lines.append(new_line)
+
+    CONFIG_PATH.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return resolved
 
 # Table Registry (Table Name -> Relative Path from LAKE_ROOT)
 TABLE_PATHS = {

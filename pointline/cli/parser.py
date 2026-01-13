@@ -10,6 +10,7 @@ from pointline.cli.commands.dim_asset_stats import (
     cmd_dim_asset_stats_backfill,
     cmd_dim_asset_stats_sync,
 )
+from pointline.cli.commands.config import cmd_config_set, cmd_config_show
 from pointline.cli.commands.dim_symbol import cmd_dim_symbol_sync
 from pointline.cli.commands.download import cmd_download
 from pointline.cli.commands.gold import cmd_l2_state_checkpoint_build
@@ -22,6 +23,17 @@ from pointline.config import LAKE_ROOT, TABLE_PATHS, get_table_path
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="pointline", description="Pointline data lake CLI")
     subparsers = parser.add_subparsers(dest="command")
+
+    # --- Config ---
+    config = subparsers.add_parser("config", help="User configuration utilities")
+    config_sub = config.add_subparsers(dest="config_command")
+
+    config_show = config_sub.add_parser("show", help="Show resolved configuration")
+    config_show.set_defaults(func=cmd_config_show)
+
+    config_set = config_sub.add_parser("set", help="Set configuration values")
+    config_set.add_argument("--lake-root", required=True, help="Root path to the data lake")
+    config_set.set_defaults(func=cmd_config_set)
 
     # --- Symbol ---
     symbol = subparsers.add_parser("symbol", help="Symbol registry utilities")
