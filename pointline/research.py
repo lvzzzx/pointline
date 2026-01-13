@@ -5,10 +5,11 @@ from __future__ import annotations
 from datetime import date, datetime, time, timedelta, timezone
 from pathlib import Path
 from typing import Iterable, Sequence
+import warnings
 
 import polars as pl
 
-from pointline.config import TABLE_PATHS, get_table_path, normalize_exchange
+from pointline.config import TABLE_HAS_DATE, TABLE_PATHS, get_table_path, normalize_exchange
 from pointline.dim_symbol import DEFAULT_VALID_UNTIL_TS_US
 from pointline.registry import resolve_symbols
 
@@ -56,6 +57,7 @@ def scan_table(
     lf = pl.scan_delta(str(get_table_path(table_name)))
     lf = _apply_filters(
         lf,
+        table_name=table_name,
         symbol_id=resolved_symbol_ids,
         exchange=exchange,
         start_date=start_date,
@@ -139,7 +141,7 @@ def load_book_snapshot_25(
     *,
     symbol_id: int | Iterable[int] | None = None,
     symbol: str | Iterable[str] | None = None,
-    exchange: str | None = None,
+    exchange: str | Iterable[str] | None = None,
     start_date: date | str | None = None,
     end_date: date | str | None = None,
     columns: Sequence[str] | None = None,
@@ -161,6 +163,7 @@ def load_book_snapshot_25(
 def _apply_filters(
     lf: pl.LazyFrame,
     *,
+    table_name: str | None,
     symbol_id: int | Iterable[int] | None,
     exchange: str | Iterable[str] | None,
     start_date: date | str | None,
@@ -179,6 +182,10 @@ def _apply_filters(
             exchanges_to_filter.extend(resolved_exchanges)
         else:
             resolved = resolve_symbols(ids)
+            if not resolved:
+                raise ValueError(
+                    "scan_table: symbol_id values not found in dim_symbol registry"
+                )
             exchanges_to_filter.extend(resolved)
         
         # Apply symbol_id filter
@@ -191,7 +198,15 @@ def _apply_filters(
 
     # 3. Apply Date Filters
     if start_date is not None or end_date is not None:
-        if "date" not in lf.schema:
+        if table_name is not None:
+            table_has_date = TABLE_HAS_DATE.get(table_name)
+        else:
+            table_has_date = None
+        if table_has_date is False:
+            raise ValueError(
+                "scan_table: start_date/end_date provided but table has no 'date' column"
+            )
+        if table_has_date is None and "date" not in lf.schema:
             raise ValueError(
                 "scan_table: start_date/end_date provided but table has no 'date' column"
             )
@@ -266,16 +281,24 @@ def _resolve_symbol_ids_by_name(
 
     symbol_ids = dim_symbol.select("symbol_id").unique()["symbol_id"].to_list()
     exchanges = dim_symbol.select("exchange").unique()["exchange"].to_list()
+    if exchange is None and len(exchanges) > 1:
+        warnings.warn(
+            "scan_table: exchange not provided; symbol lookup matched multiple exchanges"
+        )
     return symbol_ids, exchanges
 
 
 def _read_dim_symbol() -> pl.DataFrame:
-    return pl.read_delta(str(get_table_path("dim_symbol"))).select(
-        [
-            "symbol_id",
-            "exchange",
-            "exchange_symbol",
-            "valid_from_ts",
-            "valid_until_ts",
-        ]
+    return (
+        pl.scan_delta(str(get_table_path("dim_symbol")))
+        .select(
+            [
+                "symbol_id",
+                "exchange",
+                "exchange_symbol",
+                "valid_from_ts",
+                "valid_until_ts",
+            ]
+        )
+        .collect()
     )

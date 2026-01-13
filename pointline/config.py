@@ -98,6 +98,19 @@ TABLE_PATHS = {
     "l2_state_checkpoint": "gold/l2_state_checkpoint",
 }
 
+# Table registry for date column availability (used for safe filtering).
+TABLE_HAS_DATE = {
+    "dim_symbol": False,
+    "dim_asset_stats": True,
+    "ingest_manifest": True,
+    "trades": True,
+    "quotes": True,
+    "book_snapshot_25": True,
+    "derivative_ticker": True,
+    "l2_updates": True,
+    "l2_state_checkpoint": True,
+}
+
 # Storage Settings
 STORAGE_OPTIONS = {
     "compression": "zstd",
