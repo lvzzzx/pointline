@@ -422,33 +422,6 @@ Gold tables are derived from Silver tables and optimized for specific research w
 
 ---
 
-### 3.1 `gold.bars_1m`
-
-OHLCV (Open-High-Low-Close-Volume) time bars derived from `silver.trades`.
-
-**Source:** Derived from `silver.trades`  
-**Partitioned by:** `["exchange", "date"]`
-
-| Column | Type | Notes |
-|---|---:|---|
-| date | date | |
-| exchange | string | partitioned by (not stored in Parquet files) |
-| exchange_id | i16 | |
-| symbol_id | i64 | |
-| ts_bucket_start_us | i64 | bucket start time |
-| open_px_int | i64 | fixed-point |
-| high_px_int | i64 | fixed-point |
-| low_px_int | i64 | fixed-point |
-| close_px_int | i64 | fixed-point |
-| volume_qty_int | i64 | fixed-point |
-| volume_notional | f64 | |
-| trade_count | i32 | |
-
-**Interval:** 1 minute (or 1s/1h, configurable)  
-**Time Labeling:** `ts_bucket_start_us` (inclusive) or `ts_close` (exclusive) - convention must be clearly defined.
-
----
-
 ### 3.2 `gold.book_snapshot_25_wide`
 
 Wide-format version of `silver.book_snapshot_25` for legacy tools.
@@ -663,7 +636,6 @@ Delta Lake (via Parquet) does not support unsigned integer types `UInt16` and `U
 | `derivative_ticker` | Silver | `exchange`, `date` | `ts_local_us`, `symbol_id`, `mark_px`, `funding_rate` |
 | `liquidations` | Silver | `exchange`, `date` | `ts_local_us`, `symbol_id`, `price_int`, `qty_int` |
 | `options_chain` | Silver | `exchange`, `date` | `ts_local_us`, `underlying_symbol_id`, `option_symbol_id` |
-| `bars_1m` | Gold | `exchange`, `date` | `ts_bucket_start_us`, `symbol_id`, OHLCV |
 | `book_snapshot_25_wide` | Gold | `exchange`, `date` | Wide format for legacy tools |
 | `tob_quotes` | Gold | `exchange`, `date` | Fast path for top-of-book |
 | `l2_state_checkpoint` | Gold | `exchange`, `date` | Checkpoints for replay |

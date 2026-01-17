@@ -352,16 +352,6 @@ Options chain is typically cross-sectional and heavy. Store updates per contract
 
 ---
 
-### 5.9 `gold.bars_1m` (OHLCV)
-Derived from `silver.trades`. Standard time bars for signal generation.
-- **Interval:** 1 minute (or 1s/1h)
-- **Time labeling:** `ts_open` (inclusive) or `ts_close` (exclusive) - define convention clearly.
-
-**Table:** `gold.bars_1m`  
-**Schema:** See [Schema Reference - Gold Tables - bars_1m](../schemas.md#31-goldbars_1m)
-
----
-
 ## 6) Partitioning strategy
 
 **Default Partitioning (most Silver tables):**
