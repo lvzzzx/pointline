@@ -349,7 +349,7 @@ Derivative market data including mark/index, funding, open interest, etc.
 | funding_rate | f64 | funding often fine as float |
 | predicted_funding_rate | f64 | optional; venue-provided estimate |
 | funding_ts_us | i64 | next funding event timestamp |
-| open_interest | f64 | keep float; source often fractional |
+| open_interest | f64 | Open interest in **base asset units** (e.g., BTC, ETH, SOL). Keep float; source often fractional |
 | file_id | i32 | lineage tracking |
 | file_line_number | i32 | lineage tracking |
 
