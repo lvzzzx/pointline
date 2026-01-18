@@ -94,6 +94,7 @@ TABLE_PATHS = {
     "quotes": "silver/quotes",
     "book_snapshot_25": "silver/book_snapshot_25",
     "derivative_ticker": "silver/derivative_ticker",
+    "kline_1h": "silver/kline_1h",
     "l2_updates": "silver/l2_updates",
     "l2_state_checkpoint": "gold/l2_state_checkpoint",
 }
@@ -107,6 +108,7 @@ TABLE_HAS_DATE = {
     "quotes": True,
     "book_snapshot_25": True,
     "derivative_ticker": True,
+    "kline_1h": True,
     "l2_updates": True,
     "l2_state_checkpoint": True,
 }

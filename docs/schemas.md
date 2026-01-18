@@ -176,6 +176,9 @@ Silver tables are the canonical research foundation. They are normalized, typed 
 - `file_id` (i32): Lineage tracking (join with `ingest_manifest`)
 - `file_line_number` (i32): Lineage tracking (deterministic ordering)
 
+**Note:** Time-bucketed bars (e.g., `silver.kline_1h`) use
+`ts_bucket_start_us`/`ts_bucket_end_us` instead of `ts_local_us`.
+
 ---
 
 ### 2.1 `silver.l2_updates`
@@ -416,6 +419,42 @@ Options chain data, typically cross-sectional and heavy. Store updates per contr
 
 ---
 
+### 2.9 `silver.kline_1h`
+
+Vendor-provided 1h OHLCV bars from Binance public data (Spot + USD-M futures).
+
+**Source:** Binance public data `klines`  
+**Partitioned by:** `["exchange", "date"]`
+
+| Column | Type | Notes |
+|---|---:|---|
+| date | date | derived from `ts_bucket_start_us` in UTC |
+| exchange | string | partitioned by (not stored in Parquet files) |
+| exchange_id | i16 | |
+| symbol_id | i64 | |
+| ts_bucket_start_us | i64 | bar open time (µs since epoch) |
+| ts_bucket_end_us | i64 | bar close time (µs since epoch) |
+| open_px_int | i64 | fixed-point |
+| high_px_int | i64 | fixed-point |
+| low_px_int | i64 | fixed-point |
+| close_px_int | i64 | fixed-point |
+| volume_qty_int | i64 | base asset volume (fixed-point) |
+| quote_volume | f64 | quote asset volume |
+| trade_count | i64 | number of trades in bar |
+| taker_buy_base_qty_int | i64 | taker buy base volume (fixed-point) |
+| taker_buy_quote_qty | f64 | taker buy quote volume |
+| file_id | i32 | lineage tracking |
+| file_line_number | i32 | lineage tracking |
+| ingest_seq | i32 | deterministic ordering within file |
+
+**Notes:**
+- Interval-specific tables are used (e.g., `silver.kline_1h`); additional intervals
+  should be added as separate tables (e.g., `silver.kline_4h`).
+- Binance Spot timestamps switch to microseconds on 2025-01-01; ingestion normalizes
+  all timestamps to microseconds.
+
+---
+
 ## 3. Gold Tables
 
 Gold tables are derived from Silver tables and optimized for specific research workflows. They are reproducible from Silver and versioned.
@@ -636,6 +675,7 @@ Delta Lake (via Parquet) does not support unsigned integer types `UInt16` and `U
 | `derivative_ticker` | Silver | `exchange`, `date` | `ts_local_us`, `symbol_id`, `mark_px`, `funding_rate` |
 | `liquidations` | Silver | `exchange`, `date` | `ts_local_us`, `symbol_id`, `price_int`, `qty_int` |
 | `options_chain` | Silver | `exchange`, `date` | `ts_local_us`, `underlying_symbol_id`, `option_symbol_id` |
+| `kline_1h` | Silver | `exchange`, `date` | `ts_bucket_start_us`, `symbol_id`, OHLCV |
 | `book_snapshot_25_wide` | Gold | `exchange`, `date` | Wide format for legacy tools |
 | `tob_quotes` | Gold | `exchange`, `date` | Fast path for top-of-book |
 | `l2_state_checkpoint` | Gold | `exchange`, `date` | Checkpoints for replay |
