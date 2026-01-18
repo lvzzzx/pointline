@@ -63,6 +63,30 @@ active = df.filter(
 print(active)
 ```
 
+**Best practice: two-stage resolution (explicit IDs)**
+For research over a time range, resolve all valid `symbol_id` values first, then query explicitly.
+This avoids cross-exchange ambiguity and handles symbol changes (SCD2) correctly.
+
+```python
+from pointline import registry, research
+import polars as pl
+
+start_ts_us = 1700000000000000
+end_ts_us = 1700003600000000
+
+df = registry.find_symbol("BTC-PERPETUAL", exchange="deribit")
+active = df.filter(
+    (pl.col("valid_from_ts") < end_ts_us) & (pl.col("valid_until_ts") > start_ts_us)
+)
+symbol_ids = active["symbol_id"].to_list()
+
+trades = research.load_trades(
+    symbol_id=symbol_ids,
+    start_ts_us=start_ts_us,
+    end_ts_us=end_ts_us,
+)
+```
+
 ### 2.2 DuckDB (Ad-hoc SQL)
 Once you have the `symbol_id` (e.g., `101`), query the tables directly.
 
@@ -73,8 +97,10 @@ SELECT
     price_int,
     qty_int
 FROM delta_scan('${LAKE_ROOT}/silver/trades')
-WHERE date = '2025-12-28'
+WHERE date >= '2025-12-28' AND date <= '2025-12-29'
   AND symbol_id = 101 -- Use the ID found in step 2.1
+  AND ts_local_us >= <start_ts_us>  -- [start, end)
+  AND ts_local_us <  <end_ts_us>
 ORDER BY ts_local_us;
 ```
 
@@ -86,10 +112,11 @@ from pointline import research
 
 # Load trades for a specific symbol ID
 # The system automatically resolves the exchange partition for optimization
+# Date partitions are derived from the time range (ts_local_us) when provided.
 trades = research.load_trades(
     symbol_id=101,
-    start_date="2025-12-28",
-    end_date="2025-12-29"
+    start_ts_us=1700000000000000,
+    end_ts_us=1700003600000000
 )
 
 print(trades)
@@ -153,6 +180,7 @@ print(available)
 ### 5.1 Time: `ts_local_us` vs `ts_exch_us`
 -   **`ts_local_us` (Local Time):** The timestamp when the data arrived at the recording server. **ALWAYS use this for backtesting replay.**
 -   **`ts_exch_us` (Exchange Time):** The matching engine timestamp. Use this only for latency analysis (e.g., `ts_local - ts_exch`).
+-   **Time range filters:** `start_ts_us`/`end_ts_us` use **[start, end)** semantics and default to `ts_local_us` (set `ts_col="ts_exch_us"` for latency work).
 
 ### 5.2 Symbol Resolution (SCD Type 2)
 Symbols change (e.g., renames). We use a stable `symbol_id`.
@@ -195,7 +223,11 @@ dim_symbol = pl.read_delta(str(get_table_path("dim_symbol"))).select(
     ["symbol_id", "price_increment", "amount_increment"]
 )
 
-trades = research.load_trades(symbol_id=101, start_date="2025-12-28")
+trades = research.load_trades(
+    symbol_id=101,
+    start_ts_us=1700000000000000,
+    end_ts_us=1700003600000000,
+)
 trades = decode_trades(trades, dim_symbol)  # drops *_int, outputs Float64
 ```
 
@@ -210,7 +242,11 @@ dim_symbol = pl.read_delta(str(get_table_path("dim_symbol"))).select(
     ["symbol_id", "price_increment", "amount_increment"]
 )
 
-trades = research.load_trades(symbol_id=101, start_date="2025-12-28", end_date="2025-12-28")
+trades = research.load_trades(
+    symbol_id=101,
+    start_ts_us=1700000000000000,
+    end_ts_us=1700003600000000,
+)
 trades = decode_trades(trades, dim_symbol)
 print(trades.select(["ts_local_us", "price", "qty"]).head(5))
 ```
@@ -222,8 +258,16 @@ To get the effective spread at the time of a trade:
 
 ```python
 # Load trades and quotes
-trades = research.load_trades(symbol_id=101, start_date="2025-01-01").sort("ts_local_us")
-quotes = research.load_quotes(symbol_id=101, start_date="2025-01-01").sort("ts_local_us")
+trades = research.load_trades(
+    symbol_id=101,
+    start_ts_us=1700000000000000,
+    end_ts_us=1700003600000000,
+).sort("ts_local_us")
+quotes = research.load_quotes(
+    symbol_id=101,
+    start_ts_us=1700000000000000,
+    end_ts_us=1700003600000000,
+).sort("ts_local_us")
 
 # Join
 pit_data = trades.join_asof(
@@ -268,9 +312,8 @@ df = l2_replay.replay_between(
 - **exchange (string):** vendor name, used for partitioning. Auto-resolved by APIs when `symbol_id` is provided.
 - **exchange_id (i16):** stable numeric mapping used for joins.
 
-**Symbol name convenience:** you can provide `exchange` + `symbol` to `pointline.research` loaders.  
-If the symbol changed over time, the loader returns the **union of all matching `symbol_id` values** in the date range.
-If `exchange` is omitted, the lookup spans all exchanges and may return multiple IDs.
+**Symbol resolution required:** `pointline.research` loaders require explicit `symbol_id` values.
+Resolve IDs first (two-stage) to avoid cross-exchange ambiguity and handle SCD2 changes correctly.
 
 ### 7.2 Safe query template (DuckDB)
 ```sql
@@ -280,6 +323,8 @@ SELECT *
 FROM delta_scan('${LAKE_ROOT}/silver/<table_name>')
 WHERE date >= '<start_date>' AND date <= '<end_date>'
   AND symbol_id = <your_id>
+  AND ts_local_us >= <start_ts_us>
+  AND ts_local_us <  <end_ts_us>
 LIMIT 100;
 ```
 
@@ -294,11 +339,11 @@ LOAD delta;
 - Use `pointline.research` helpers (`load_trades`, `scan_table`) instead of raw `pl.read_delta` where possible.
 - Provide `symbol_id` to ensure optimal partition pruning.
 - Keep joins on `exchange_id` + `symbol_id`.
-- Only pass `start_date`/`end_date` to tables that include a `date` column (e.g., trades/quotes/l2_updates); others will raise.
+- `start_ts_us`/`end_ts_us` are required; date partitions are derived implicitly.
 
 ### 7.4 Common Mistakes
 - Using `ts_exch_us` for backtesting instead of `ts_local_us`.
-- Forgetting to filter by `date` and scanning full tables.
+- Forgetting to filter by time (or date) and scanning full tables.
 - Treating `price_int` / `qty_int` as real values without decoding.
 
 ## 8. Agent Interface

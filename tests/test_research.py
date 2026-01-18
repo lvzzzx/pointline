@@ -1,41 +1,78 @@
-import polars as pl
-from datetime import date
-from unittest.mock import patch, MagicMock
-from pointline.research import (
-    _resolve_symbol_ids_by_name,
-    load_trades,
-    list_tables,
-    scan_table,
-)
+from unittest.mock import MagicMock, patch
 
+import polars as pl
+import pytest
+
+from pointline.research import load_trades, list_tables, scan_table
+
+@patch("pointline.research.resolve_symbols")
 @patch("pointline.research.pl.scan_delta")
 @patch("pointline.research.get_table_path")
-def test_scan_table_filters(mock_get_path, mock_scan_delta):
+def test_scan_table_filters(mock_get_path, mock_scan_delta, mock_resolve_symbols):
     # Setup mocks
     mock_get_path.return_value = "/fake/path"
     mock_lf = MagicMock(spec=pl.LazyFrame)
     mock_scan_delta.return_value = mock_lf
     
+    mock_resolve_symbols.return_value = ["binance"]
+
     # Configure mock_lf to return itself on filter/select for chaining
     mock_lf.filter.return_value = mock_lf
     mock_lf.select.return_value = mock_lf
+    mock_lf.schema = {
+        "symbol_id": pl.Int64,
+        "exchange": pl.Utf8,
+        "date": pl.Date,
+        "ts_local_us": pl.Int64,
+    }
 
     # Call scan_table
     scan_table(
         "trades",
-        exchange="binance",
         symbol_id=[100, 200],
-        start_date="2025-01-01",
-        end_date=date(2025, 1, 2),
-        columns=["ts_local_us", "price_int"]
+        start_ts_us=1_700_000_000_000_000,
+        end_ts_us=1_700_000_100_000_000,
+        columns=["ts_local_us", "price_int"],
     )
 
     # Verify pl.scan_delta was called with the path from get_table_path
     mock_scan_delta.assert_called_once_with("/fake/path")
+    mock_resolve_symbols.assert_called_once_with([100, 200])
     
     # Verify filters were applied
     # Note: The order of filters depends on the implementation of _apply_filters
-    assert mock_lf.filter.call_count == 3 # exchange, symbol_id, date range
+    assert mock_lf.filter.call_count == 4 # exchange, symbol_id, date range, time range
+    mock_lf.select.assert_called_once_with(["ts_local_us", "price_int"])
+
+@patch("pointline.research.resolve_symbols")
+@patch("pointline.research.pl.scan_delta")
+@patch("pointline.research.get_table_path")
+def test_scan_table_time_range_prunes_date(mock_get_path, mock_scan_delta, mock_resolve_symbols):
+    mock_get_path.return_value = "/fake/path"
+    mock_lf = MagicMock(spec=pl.LazyFrame)
+    mock_scan_delta.return_value = mock_lf
+    mock_lf.filter.return_value = mock_lf
+    mock_lf.select.return_value = mock_lf
+    mock_lf.schema = {
+        "symbol_id": pl.Int64,
+        "exchange": pl.Utf8,
+        "date": pl.Date,
+        "ts_local_us": pl.Int64,
+    }
+
+    scan_table(
+        "trades",
+        symbol_id=[100],
+        start_ts_us=1_700_000_000_000_000,
+        end_ts_us=1_700_000_100_000_000,
+        columns=["ts_local_us", "price_int"],
+    )
+
+    mock_scan_delta.assert_called_once_with("/fake/path")
+    mock_resolve_symbols.assert_called_once_with([100])
+    filter_args = [str(call.args[0]) for call in mock_lf.filter.call_args_list]
+    assert any("date" in expr for expr in filter_args)
+    assert any("ts_local_us" in expr for expr in filter_args)
     mock_lf.select.assert_called_once_with(["ts_local_us", "price_int"])
 
 def test_list_tables():
@@ -49,42 +86,32 @@ def test_load_trades_lazy(mock_scan_table):
     mock_lf = MagicMock(spec=pl.LazyFrame)
     mock_scan_table.return_value = mock_lf
     
-    result = load_trades(exchange="binance", lazy=True)
+    result = load_trades(
+        symbol_id=[100],
+        start_ts_us=1_700_000_000_000_000,
+        end_ts_us=1_700_000_100_000_000,
+        lazy=True,
+    )
     
     assert result == mock_lf
     mock_scan_table.assert_called_once_with(
         "trades",
-        exchange="binance",
-        symbol_id=None,
-        symbol=None,
-        start_date=None,
-        end_date=None,
+        symbol_id=[100],
+        start_ts_us=1_700_000_000_000_000,
+        end_ts_us=1_700_000_100_000_000,
+        ts_col="ts_local_us",
         columns=None
     )
 
+def test_scan_table_requires_symbol_id():
+    with pytest.raises(ValueError, match="symbol_id is required"):
+        scan_table(
+            "trades",
+            start_ts_us=1_700_000_000_000_000,
+            end_ts_us=1_700_000_100_000_000,
+        )
 
-def test_resolve_symbol_ids_by_name_union(monkeypatch):
-    dim_symbol = pl.DataFrame(
-        {
-            "symbol_id": [101, 102, 201],
-            "exchange": ["binance", "binance", "kraken"],
-            "exchange_symbol": ["BTCUSDT", "BTCUSDT", "BTCUSDT"],
-            "valid_from_ts": [1, 2, 3],
-            "valid_until_ts": [2, 3, 2**63 - 1],
-        }
-    )
 
-    monkeypatch.setattr(
-        "pointline.research._read_dim_symbol",
-        lambda: dim_symbol,
-    )
-
-    symbol_ids, exchanges = _resolve_symbol_ids_by_name(
-        "BTCUSDT",
-        exchange="binance",
-        start_date=None,
-        end_date=None,
-    )
-
-    assert set(symbol_ids) == {101, 102}
-    assert set(exchanges) == {"binance"}
+def test_scan_table_requires_time_range():
+    with pytest.raises(ValueError, match="start_ts_us and end_ts_us are required"):
+        scan_table("trades", symbol_id=[100])

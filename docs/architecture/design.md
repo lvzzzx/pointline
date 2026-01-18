@@ -211,10 +211,9 @@ checkpoint_every_updates = 10_000
 updates = (
     research.scan_table(
         "l2_updates",
-        exchange_id=21,
         symbol_id=1234,
-        start_date="2025-12-01",
-        end_date="2025-12-01",
+        start_ts_us=1700000000000000,
+        end_ts_us=1700003600000000,
         columns=[
             "ts_local_us",
             "ingest_seq",
@@ -526,7 +525,7 @@ Recommended patterns:
 Core “safe” APIs (suggested):
 - `load_l2_updates(exchange, symbols, start, end)` -> wraps `deltalake` reader
 - `load_snapshots_top25(exchange, symbols, start, end)`
-- `load_trades(exchange, symbols, start, end)`
+- `load_trades(symbol_id, start_ts_us, end_ts_us)`
 - `asof_join(left, right, on="ts_local_us", by=["exchange_id","symbol_id"])`
 - `book_asof(symbol, t_local)` (anchor snapshot + replay updates)
 
