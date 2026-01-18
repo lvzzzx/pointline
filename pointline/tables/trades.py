@@ -101,13 +101,15 @@ def parse_tardis_trades_csv(df: pl.DataFrame) -> pl.DataFrame:
     
     for col in df.columns:
         col_lower = col.lower()
-        if "local" in col_lower and "timestamp" in col_lower:
+        if "timestamp" not in col_lower:
+            continue
+        if "local" in col_lower:
             ts_local_col = col
-        elif "timestamp" in col_lower and "local" not in col_lower and ts_local_col is None:
-            # If no local timestamp found, use first timestamp column
-            if ts_exch_col is None:
-                ts_exch_col = col
-        elif "timestamp" in col_lower and "exch" in col_lower:
+            continue
+        if "exch" in col_lower:
+            ts_exch_col = col
+            continue
+        if ts_exch_col is None:
             ts_exch_col = col
     
     # Parse local timestamp (required)

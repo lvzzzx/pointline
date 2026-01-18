@@ -13,7 +13,8 @@ Example:
 
 from __future__ import annotations
 
-from typing import Sequence
+from decimal import Decimal
+from typing import Iterable, Sequence
 
 import polars as pl
 
@@ -370,22 +371,41 @@ def decode_fixed_point(
             f"decode_fixed_point: {missing_symbols.height} symbol_ids not found in dim_symbol"
         )
 
+    price_decimals = _max_decimal_places(dim_symbol["price_increment"].to_list())
+    amount_decimals = _max_decimal_places(dim_symbol["amount_increment"].to_list())
+
     result = joined.with_columns(
         [
             pl.when(pl.col("bid_px_int").is_not_null())
-            .then((pl.col("bid_px_int") * pl.col("price_increment")).cast(pl.Float64))
+            .then(
+                (pl.col("bid_px_int") * pl.col("price_increment"))
+                .round(price_decimals)
+                .cast(pl.Float64)
+            )
             .otherwise(None)
             .alias("bid_price"),
             pl.when(pl.col("bid_sz_int").is_not_null())
-            .then((pl.col("bid_sz_int") * pl.col("amount_increment")).cast(pl.Float64))
+            .then(
+                (pl.col("bid_sz_int") * pl.col("amount_increment"))
+                .round(amount_decimals)
+                .cast(pl.Float64)
+            )
             .otherwise(None)
             .alias("bid_amount"),
             pl.when(pl.col("ask_px_int").is_not_null())
-            .then((pl.col("ask_px_int") * pl.col("price_increment")).cast(pl.Float64))
+            .then(
+                (pl.col("ask_px_int") * pl.col("price_increment"))
+                .round(price_decimals)
+                .cast(pl.Float64)
+            )
             .otherwise(None)
             .alias("ask_price"),
             pl.when(pl.col("ask_sz_int").is_not_null())
-            .then((pl.col("ask_sz_int") * pl.col("amount_increment")).cast(pl.Float64))
+            .then(
+                (pl.col("ask_sz_int") * pl.col("amount_increment"))
+                .round(amount_decimals)
+                .cast(pl.Float64)
+            )
             .otherwise(None)
             .alias("ask_amount"),
         ]
@@ -395,6 +415,21 @@ def decode_fixed_point(
     if not keep_ints:
         drop_cols += required_cols
     return result.drop(drop_cols)
+
+
+def _max_decimal_places(values: Iterable[float | None]) -> int:
+    max_places = 0
+    for value in values:
+        if value is None:
+            continue
+        try:
+            exponent = Decimal(str(value)).normalize().as_tuple().exponent
+        except (ArithmeticError, ValueError):
+            continue
+        places = -exponent if exponent < 0 else 0
+        if places > max_places:
+            max_places = places
+    return max_places
 
 
 def resolve_symbol_ids(

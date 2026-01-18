@@ -180,7 +180,7 @@ def _apply_filters(
         # Add resolved exchanges to the filter list to ensure we hit partitions
         if resolved_exchanges:
             exchanges_to_filter.extend(resolved_exchanges)
-        else:
+        elif not exchange:
             resolved = resolve_symbols(ids)
             if not resolved:
                 raise ValueError(
