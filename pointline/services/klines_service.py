@@ -8,7 +8,7 @@ from pathlib import Path
 
 import polars as pl
 
-from pointline.config import LAKE_ROOT, normalize_exchange, get_exchange_id
+from pointline.config import get_bronze_root, normalize_exchange, get_exchange_id
 from pointline.dim_symbol import check_coverage
 from pointline.io.protocols import BronzeFileMetadata, IngestionManifestRepository, IngestionResult
 from pointline.io.vendor.binance import normalize_symbol
@@ -61,7 +61,7 @@ class KlinesIngestionService(BaseService):
         bronze_root: Path | None = None,
     ) -> IngestionResult:
         if bronze_root is None:
-            bronze_root = LAKE_ROOT / "binance"
+            bronze_root = get_bronze_root("binance_vision")
         bronze_path = bronze_root / meta.bronze_file_path
 
         if not bronze_path.exists():

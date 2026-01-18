@@ -468,18 +468,19 @@ def test_book_snapshots_ingestion_service_ingest_file(
     service = BookSnapshotsIngestionService(repo, dim_symbol_repo, sample_manifest_repo)
 
     # Create a sample CSV file
-    bronze_path = tmp_path / "bronze" / "book_snapshots.csv"
+    bronze_path = tmp_path / "bronze" / "tardis" / "book_snapshots.csv"
     bronze_path.parent.mkdir(parents=True, exist_ok=True)
     raw_df = _sample_tardis_book_snapshots_csv()
     raw_df.write_csv(bronze_path)
 
     # Create metadata
     meta = BronzeFileMetadata(
+        vendor="tardis",
         exchange="binance",
         data_type="book_snapshot_25",
         symbol="BTCUSDT",
         date=date(2024, 5, 1),
-        bronze_file_path=str(bronze_path.relative_to(tmp_path / "bronze")),
+        bronze_file_path=str(bronze_path.relative_to(tmp_path / "bronze" / "tardis")),
         file_size_bytes=1000,
         last_modified_ts=1714557600,
         sha256="a" * 64,
@@ -489,7 +490,9 @@ def test_book_snapshots_ingestion_service_ingest_file(
     file_id = sample_manifest_repo.resolve_file_id(meta)
 
     # Ingest
-    result = service.ingest_file(meta, file_id, bronze_root=tmp_path / "bronze")
+    result = service.ingest_file(
+        meta, file_id, bronze_root=tmp_path / "bronze" / "tardis"
+    )
 
     # Check result
     assert result.row_count > 0
@@ -518,23 +521,26 @@ def test_book_snapshots_ingestion_service_empty_file(
     service = BookSnapshotsIngestionService(repo, dim_symbol_repo, sample_manifest_repo)
 
     # Create empty CSV
-    bronze_path = tmp_path / "bronze" / "empty.csv"
+    bronze_path = tmp_path / "bronze" / "tardis" / "empty.csv"
     bronze_path.parent.mkdir(parents=True, exist_ok=True)
     bronze_path.write_text("")  # Empty file
 
     meta = BronzeFileMetadata(
+        vendor="tardis",
         exchange="binance",
         data_type="book_snapshot_25",
         symbol="BTCUSDT",
         date=date(2024, 5, 1),
-        bronze_file_path=str(bronze_path.relative_to(tmp_path / "bronze")),
+        bronze_file_path=str(bronze_path.relative_to(tmp_path / "bronze" / "tardis")),
         file_size_bytes=0,
         last_modified_ts=1714557600,
         sha256="b" * 64,
     )
 
     file_id = sample_manifest_repo.resolve_file_id(meta)
-    result = service.ingest_file(meta, file_id, bronze_root=tmp_path / "bronze")
+    result = service.ingest_file(
+        meta, file_id, bronze_root=tmp_path / "bronze" / "tardis"
+    )
 
     assert result.row_count == 0
     assert result.error_message is None
@@ -551,24 +557,27 @@ def test_book_snapshots_ingestion_service_quarantine(
 
     service = BookSnapshotsIngestionService(repo, dim_symbol_repo, sample_manifest_repo)
 
-    bronze_path = tmp_path / "bronze" / "book_snapshots.csv"
+    bronze_path = tmp_path / "bronze" / "tardis" / "book_snapshots.csv"
     bronze_path.parent.mkdir(parents=True, exist_ok=True)
     raw_df = _sample_tardis_book_snapshots_csv()
     raw_df.write_csv(bronze_path)
 
     meta = BronzeFileMetadata(
+        vendor="tardis",
         exchange="binance",
         data_type="book_snapshot_25",
         symbol="BTCUSDT",
         date=date(2024, 5, 1),
-        bronze_file_path=str(bronze_path.relative_to(tmp_path / "bronze")),
+        bronze_file_path=str(bronze_path.relative_to(tmp_path / "bronze" / "tardis")),
         file_size_bytes=1000,
         last_modified_ts=1714557600,
         sha256="c" * 64,
     )
 
     file_id = sample_manifest_repo.resolve_file_id(meta)
-    result = service.ingest_file(meta, file_id, bronze_root=tmp_path / "bronze")
+    result = service.ingest_file(
+        meta, file_id, bronze_root=tmp_path / "bronze" / "tardis"
+    )
 
     # Should be quarantined
     assert result.row_count == 0

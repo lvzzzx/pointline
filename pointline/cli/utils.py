@@ -20,7 +20,14 @@ from pointline.io.protocols import BronzeFileMetadata
 def sorted_files(files: Iterable[BronzeFileMetadata]) -> list[BronzeFileMetadata]:
     return sorted(
         files,
-        key=lambda f: (f.exchange, f.data_type, f.symbol, f.date.isoformat(), f.bronze_file_path),
+        key=lambda f: (
+            f.vendor,
+            f.exchange,
+            f.data_type,
+            f.symbol,
+            f.date.isoformat(),
+            f.bronze_file_path,
+        ),
     )
 
 
@@ -29,6 +36,7 @@ def print_files(files: Sequence[BronzeFileMetadata]) -> None:
         print(
             " | ".join(
                 [
+                    f"vendor={f.vendor}",
                     f"exchange={f.exchange}",
                     f"type={f.data_type}",
                     f"symbol={f.symbol}",
@@ -78,6 +86,10 @@ def resolve_manifest_file_id(
         raise ValueError(
             f"File is not under bronze root: {file_path} (bronze_root={bronze_root})"
         ) from exc
+    if bronze_root.name != "bronze":
+        vendor = bronze_root.name
+    else:
+        vendor = bronze_rel.parts[0] if bronze_rel.parts else "unknown"
 
     sha256 = compute_sha256(file_path)
     manifest_df = manifest_repo.read_all()
@@ -85,7 +97,8 @@ def resolve_manifest_file_id(
         raise ValueError("manifest is empty; cannot resolve file_id")
 
     matches = manifest_df.filter(
-        (pl.col("exchange") == exchange)
+        (pl.col("vendor") == vendor)
+        & (pl.col("exchange") == exchange)
         & (pl.col("data_type") == data_type)
         & (pl.col("symbol") == symbol)
         & (pl.col("date") == file_date)

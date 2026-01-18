@@ -196,6 +196,7 @@ def test_validate_quotes_basic():
         "ask_px_int": [5000050, 5000150, 5000200],
         "ask_sz_int": [15000, 25000, 30000],
         "ts_local_us": [1714550400000000, 1714550401000000, 1714550402000000],
+        "ts_exch_us": [1714550400000000, 1714550401000000, 1714550402000000],
         "exchange": ["binance", "binance", "binance"],
         "exchange_id": [1, 1, 1],
         "symbol_id": [100, 100, 100],
@@ -216,6 +217,7 @@ def test_validate_quotes_crossed_book():
         "ask_px_int": [5000050, 5000150, 5000100],  # Last ask < bid (crossed)
         "ask_sz_int": [15000, 25000, 35000],
         "ts_local_us": [1714550400000000, 1714550401000000, 1714550402000000],
+        "ts_exch_us": [1714550400000000, 1714550401000000, 1714550402000000],
         "exchange": ["binance", "binance", "binance"],
         "exchange_id": [1, 1, 1],
         "symbol_id": [100, 100, 100],
@@ -238,6 +240,7 @@ def test_validate_quotes_partial_quotes():
         "ask_px_int": [5000050, 5000150, None],
         "ask_sz_int": [15000, 25000, None],
         "ts_local_us": [1714550400000000, 1714550401000000, 1714550402000000],
+        "ts_exch_us": [1714550400000000, 1714550401000000, 1714550402000000],
         "exchange": ["binance", "binance", "binance"],
         "exchange_id": [1, 1, 1],
         "symbol_id": [100, 100, 100],
@@ -257,6 +260,7 @@ def test_validate_quotes_both_missing():
         "ask_px_int": [5000050, None, 5000250],
         "ask_sz_int": [15000, None, 35000],
         "ts_local_us": [1714550400000000, 1714550401000000, 1714550402000000],
+        "ts_exch_us": [1714550400000000, 1714550401000000, 1714550402000000],
         "exchange": ["binance", "binance", "binance"],
         "exchange_id": [1, 1, 1],
         "symbol_id": [100, 100, 100],
@@ -447,6 +451,7 @@ def test_quotes_service_validate():
         "ask_px_int": [5000050, 5000100],
         "ask_sz_int": [15000, 20000],
         "ts_local_us": [1714550400000000, 1714550401000000],
+        "ts_exch_us": [1714550400000000, 1714550401000000],
         "exchange": ["binance", "binance"],
         "exchange_id": [1, 1],
         "symbol_id": [100, 100],
@@ -527,6 +532,7 @@ def test_quotes_service_ingest_file_quarantine():
     service = QuotesIngestionService(repo, dim_repo, manifest_repo)
     
     meta = BronzeFileMetadata(
+        vendor="tardis",
         exchange="binance",
         data_type="quotes",
         symbol="BTCUSDT",
@@ -547,8 +553,8 @@ def test_quotes_service_ingest_file_quarantine():
     
     try:
         # Mock the bronze path
-        from pointline.config import LAKE_ROOT
-        bronze_path = LAKE_ROOT / "tardis" / meta.bronze_file_path
+        from pointline.config import get_bronze_root
+        bronze_path = get_bronze_root("tardis") / meta.bronze_file_path
         bronze_path.parent.mkdir(parents=True, exist_ok=True)
         import shutil
         shutil.copy(temp_path, bronze_path)
@@ -580,6 +586,7 @@ def test_quotes_service_ingest_file_success():
     service = QuotesIngestionService(repo, dim_repo, manifest_repo)
     
     meta = BronzeFileMetadata(
+        vendor="tardis",
         exchange="binance",
         data_type="quotes",
         symbol="BTCUSDT",
@@ -601,8 +608,8 @@ def test_quotes_service_ingest_file_success():
     
     try:
         # Mock the bronze path
-        from pointline.config import LAKE_ROOT
-        bronze_path = LAKE_ROOT / "tardis" / meta.bronze_file_path
+        from pointline.config import get_bronze_root
+        bronze_path = get_bronze_root("tardis") / meta.bronze_file_path
         bronze_path.parent.mkdir(parents=True, exist_ok=True)
         import shutil
         shutil.copy(temp_path, bronze_path)

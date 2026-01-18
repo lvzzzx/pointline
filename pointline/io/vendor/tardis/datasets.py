@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Callable
 
 from tardis_dev import datasets
+from pointline.config import get_bronze_root
 
 
 def download_tardis_datasets(
@@ -16,7 +17,7 @@ def download_tardis_datasets(
     from_date: str,
     to_date: str,
     filename_template: str,
-    download_dir: str | Path = "./data/lake",
+    download_dir: str | Path | None = None,
     format: str = "csv",
     api_key: str | None = None,
     concurrency: int = 5,
@@ -27,6 +28,8 @@ def download_tardis_datasets(
     if not api_key:
         raise ValueError("Tardis API key is required.")
 
+    if download_dir is None:
+        download_dir = get_bronze_root("tardis")
     download_dir = Path(download_dir)
     download_dir.mkdir(parents=True, exist_ok=True)
 

@@ -39,11 +39,17 @@ def _resolve_lake_root() -> Path:
 
 
 LAKE_ROOT = _resolve_lake_root()
+BRONZE_ROOT = LAKE_ROOT / "bronze"
 
 
 def load_config() -> dict:
     """Return parsed config content from CONFIG_PATH."""
     return _read_config_file(CONFIG_PATH)
+
+
+def get_bronze_root(vendor: str) -> Path:
+    """Return the bronze root for a given vendor (e.g., tardis, binance_vision)."""
+    return BRONZE_ROOT / vendor
 
 
 def get_config_lake_root() -> str | None:

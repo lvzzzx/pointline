@@ -9,7 +9,7 @@ from pathlib import Path
 
 import polars as pl
 
-from pointline.config import EXCHANGE_MAP, LAKE_ROOT, normalize_exchange, get_exchange_id
+from pointline.config import EXCHANGE_MAP, get_bronze_root, normalize_exchange, get_exchange_id
 from pointline.dim_symbol import check_coverage
 from pointline.io.protocols import (
     BronzeFileMetadata,
@@ -100,13 +100,13 @@ class QuotesIngestionService(BaseService):
         Args:
             meta: Metadata about the bronze file
             file_id: File ID from manifest repository
-            bronze_root: Root path for bronze files (default: LAKE_ROOT/tardis)
+            bronze_root: Root path for bronze files (default: LAKE_ROOT/bronze/tardis)
             
         Returns:
             IngestionResult with row count and timestamp ranges
         """
         if bronze_root is None:
-            bronze_root = LAKE_ROOT / "tardis"
+            bronze_root = get_bronze_root("tardis")
         bronze_path = bronze_root / meta.bronze_file_path
         
         if not bronze_path.exists():
@@ -255,7 +255,7 @@ class QuotesIngestionService(BaseService):
         Returns (ok, message). Message is empty if ok.
         """
         if bronze_root is None:
-            bronze_root = LAKE_ROOT / "tardis"
+            bronze_root = get_bronze_root("tardis")
         bronze_path = bronze_root / meta.bronze_file_path
 
         raw_df = self._read_bronze_csv(bronze_path)

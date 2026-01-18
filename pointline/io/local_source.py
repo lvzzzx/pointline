@@ -8,11 +8,17 @@ from pointline.io.protocols import BronzeSource, BronzeFileMetadata
 class LocalBronzeSource:
     """
     Implementation of BronzeSource for local filesystem.
-    Expects Hive-style partitioning or standard Tardis directory structure.
+    Expects Hive-style partitioning under a vendor root (e.g., bronze/tardis).
     """
     
-    def __init__(self, root_path: Path):
+    def __init__(self, root_path: Path, vendor: str | None = None):
         self.root_path = root_path
+        if vendor:
+            self.vendor = vendor
+        elif root_path.name != "bronze":
+            self.vendor = root_path.name
+        else:
+            self.vendor = None
 
     def list_files(self, glob_pattern: str) -> Iterator[BronzeFileMetadata]:
         """
@@ -24,18 +30,21 @@ class LocalBronzeSource:
                 continue
                 
             stat = p.stat()
+            rel_path = p.relative_to(self.root_path)
             
             # Extract metadata from path parts
             # Example: .../exchange=binance/type=quotes/date=2024-05-01/symbol=BTCUSDT/...
             meta = self._extract_metadata(p)
+            vendor = self.vendor or (rel_path.parts[0] if rel_path.parts else "unknown")
             
             sha256 = self._compute_sha256(p)
             yield BronzeFileMetadata(
+                vendor=vendor,
                 exchange=meta.get("exchange", "unknown"),
                 data_type=meta.get("type", "unknown"),
                 symbol=meta.get("symbol", "unknown"),
                 date=meta.get("date", date(1970, 1, 1)),
-                bronze_file_path=str(p.relative_to(self.root_path)),
+                bronze_file_path=str(rel_path),
                 file_size_bytes=stat.st_size,
                 last_modified_ts=int(stat.st_mtime * 1_000_000), # microseconds
                 sha256=sha256,

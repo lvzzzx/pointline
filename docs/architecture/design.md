@@ -1,14 +1,7 @@
-# Offline Data Lake Design for Tardis Market Data (HFT Research)
+# Offline Data Lake Design for Multi-Vendor Market Data (HFT Research)
 
-This document describes a high-performance, point-in-time (PIT) accurate offline data lake for **Tardis** datasets:
-- `incremental_book_L2`
-- order book `snapshots` (e.g., top-25)
-- `trades`
-- `quotes`
-- `book_ticker`
-- `derivative_ticker`
-- `liquidations`
-- `options_chain`
+This document describes a high-performance, point-in-time (PIT) accurate offline data lake for
+**multi-vendor** datasets (e.g., Tardis, Binance Public Data).
 
 Primary goals:
 1. **PIT correctness**: backtests reproduce what could have been known at the time.
@@ -46,14 +39,32 @@ Where:
 ## 2) Lake layers: Bronze → Silver → Gold
 
 ### Bronze (immutable vendor truth)
-Store raw Tardis files exactly as downloaded.
+Store raw vendor files exactly as downloaded. Use a vendor-first layout so multiple raw sources
+can coexist for the same exchange and data type.
 
-Example:
+**Recommended layout (vendor → exchange → type → date → symbol):**
+`/lake/bronze/{vendor}/exchange={exchange}/type={data_type}/date={date}/symbol={symbol}/...`
 
-/lake/bronze/tardis/exchange=deribit/type=incremental_book_L2/date=2025-12-28/symbol=BTC-PERPETUAL/deribit_incremental_book_L2_2025-12-28_BTC-PERPETUAL.csv.gz
+**Example (Tardis):**
+`/lake/bronze/tardis/exchange=deribit/type=incremental_book_L2/date=2025-12-28/`
+`symbol=BTC-PERPETUAL/deribit_incremental_book_L2_2025-12-28_BTC-PERPETUAL.csv.gz`
 
-**Tardis downloader filename template (recommended):**
-`tardis/exchange={exchange}/type={data_type}/date={date}/symbol={symbol}/{exchange}_{data_type}_{date}_{symbol}.{format}`
+**Example (Binance Public Data):**
+`/lake/bronze/binance_vision/spot/exchange=binance/type=klines/date=2025-01-01/`
+`symbol=ADABKRW/interval=1h/ADABKRW-1h-2025-01-01.zip`
+
+**Vendor-specific templates:**
+- **Tardis:** `exchange={exchange}/type={data_type}/date={date}/symbol={symbol}/`
+  `{exchange}_{data_type}_{date}_{symbol}.{format}`
+- **Binance Public Data:** `{market}/exchange={exchange}/type={data_type}/`
+  `date={date}/symbol={symbol}/...` (use `interval={interval}` for klines;
+  monthly files map to `date=YYYY-MM-01`)
+
+Notes:
+- For Binance Public Data, prefer explicit `market` folders (`spot`, `usd_m`, `coin_m`).
+- Keep `.CHECKSUM` files adjacent to the zips; verify and record status in
+  `silver.ingest_manifest`.
+- If a vendor republishes a file, treat it as a new bronze version and preserve both.
 
 No transformations besides checksums/manifests.
 
@@ -74,6 +85,10 @@ Precomputed “fast paths”:
 - options surface snapshots on a time grid (optional)
 
 Gold tables are reproducible from Silver (and versioned).
+
+Current scope decision:
+- Keep **Bronze (vendor raw)** + **Silver (canonical)** as the foundation.
+- Defer Gold adoption until a concrete need is identified.
 
 Additional replay accelerator (derived from `silver.l2_updates`):
 - `gold.l2_state_checkpoint` for full-depth replay checkpoints
@@ -483,14 +498,14 @@ idempotent, provides auditability, and enables fast skip logic.
 **Table:** `silver.ingest_manifest` (small, unpartitioned Delta table)
 
 **Primary key (logical):**
-`(exchange, data_type, symbol, date, bronze_file_name)`
+`(vendor, exchange, data_type, symbol, date, bronze_file_name)`
 *Note: `file_id` is the surrogate key for joins from Silver tables.*
 
 **Schema:** See [Schema Reference - ingest_manifest](../schemas.md#12-silveringest_manifest) for complete column definitions.
 
 **Ingestion decision (skip logic):**
 1. For each Bronze file, compute `file_size_bytes` and `last_modified_ts`.
-2. Lookup by `(exchange, data_type, symbol, date, bronze_file_name)`.
+2. Lookup by `(vendor, exchange, data_type, symbol, date, bronze_file_name)`.
 3. If a row exists with `status=success` **and** matching `file_size_bytes` + `last_modified_ts`
    (or `sha256` if used), **skip** ingestion.
 4. Otherwise, ingest and write/overwrite a manifest row with updated stats.

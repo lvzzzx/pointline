@@ -8,6 +8,8 @@ from typing import Iterable
 
 import requests
 
+from pointline.config import get_bronze_root
+
 BINANCE_PUBLIC_BASE_URL = "https://data.binance.vision"
 
 _EXCHANGE_TO_MARKET_PATH = {
@@ -19,7 +21,20 @@ _EXCHANGE_TO_MARKET_PATH = {
     "binance-cm": "futures/cm",
 }
 
+_EXCHANGE_TO_MARKET_LABEL = {
+    "binance": "spot",
+    "binance-futures": "usd_m",
+    "binance-coin-futures": "coin_m",
+    "binance-usd-m": "usd_m",
+    "binance-um": "usd_m",
+    "binance-cm": "coin_m",
+}
+
 _ALLOWED_TIMEFRAMES = {"daily", "monthly"}
+DEFAULT_BINANCE_TEMPLATE = (
+    "{market}/exchange={exchange}/type={data_type}/date={date}/symbol={symbol}/"
+    "interval={interval}/{filename}"
+)
 
 
 @dataclass
@@ -38,7 +53,7 @@ def download_binance_klines(
     from_date: str,
     to_date: str,
     timeframe: str | None = None,
-    download_dir: str | Path = "./data/lake/binance",
+    download_dir: str | Path | None = None,
     filename_template: str | None = None,
     base_url: str = BINANCE_PUBLIC_BASE_URL,
     concurrency: int = 5,
@@ -58,10 +73,10 @@ def download_binance_klines(
         timeframe: "daily" or "monthly". Defaults to "monthly" for 1h, else "daily".
         download_dir: Root directory to store files under.
         filename_template: Optional template with {exchange},{symbol},{interval},{date},
-            {timeframe},{filename},{market},{data_type}. When omitted, mirror the
-            Binance public data path under download_dir. For monthly downloads, {date}
-            is set to the first day of the month (YYYY-MM-01) to keep Hive partitions
-            parseable.
+            {timeframe},{filename},{market},{market_path},{data_type}. When omitted,
+            use a vendor-first Hive layout under download_dir. For monthly downloads,
+            {date} is set to the first day of the month (YYYY-MM-01) to keep Hive
+            partitions parseable.
         base_url: Base URL for Binance public data.
         concurrency: Number of concurrent downloads.
         overwrite: Overwrite existing files if True.
@@ -69,6 +84,7 @@ def download_binance_klines(
         timeout_s: Request timeout in seconds.
     """
     market_path = _resolve_market_path(exchange)
+    market_label = _resolve_market_label(exchange)
     if timeframe is None:
         timeframe = "monthly" if interval == "1h" else "daily"
     timeframe = timeframe.lower().strip()
@@ -86,6 +102,8 @@ def download_binance_klines(
     if start >= end:
         raise ValueError("from_date must be before to_date")
 
+    if download_dir is None:
+        download_dir = get_bronze_root("binance_vision")
     download_dir = Path(download_dir)
     download_dir.mkdir(parents=True, exist_ok=True)
 
@@ -111,6 +129,7 @@ def download_binance_klines(
                 interval=interval,
                 timeframe=timeframe,
                 filename=filename,
+                market_label=market_label,
                 market_path=market_path,
                 data_type="klines",
                 label=label,
@@ -162,6 +181,16 @@ def _resolve_market_path(exchange: str) -> str:
     return _EXCHANGE_TO_MARKET_PATH[normalized]
 
 
+def _resolve_market_label(exchange: str) -> str:
+    normalized = exchange.lower().strip()
+    if normalized not in _EXCHANGE_TO_MARKET_LABEL:
+        raise ValueError(
+            f"Exchange '{exchange}' not supported for Binance public data. "
+            f"Supported: {sorted(_EXCHANGE_TO_MARKET_LABEL)}"
+        )
+    return _EXCHANGE_TO_MARKET_LABEL[normalized]
+
+
 def _parse_date(value: str) -> date:
     return datetime.strptime(value, "%Y-%m-%d").date()
 
@@ -209,6 +238,7 @@ def _build_local_path(
     interval: str,
     timeframe: str,
     filename: str,
+    market_label: str,
     market_path: str,
     data_type: str,
     label: str,
@@ -224,12 +254,24 @@ def _build_local_path(
             date=partition_date,
             timeframe=timeframe,
             filename=filename,
-            market=market_path,
+            market=market_label,
+            market_path=market_path,
             data_type=data_type,
         )
         return download_dir / relative
 
-    return download_dir / remote_path
+    relative = DEFAULT_BINANCE_TEMPLATE.format(
+        exchange=exchange,
+        symbol=symbol,
+        interval=interval,
+        date=partition_date,
+        timeframe=timeframe,
+        filename=filename,
+        market=market_label,
+        market_path=market_path,
+        data_type=data_type,
+    )
+    return download_dir / relative
 
 
 def _download_one(

@@ -98,7 +98,7 @@ print(trades)
 ## 3. Data Lake Layout
 
 ### 3.1 Directory structure
-- **Bronze:** raw vendor files + ingestion manifest
+- **Bronze:** raw vendor files (vendor-first layout)
 - **Silver:** canonical tables (research foundation)
 - **Gold:** derived tables for convenience (optional)
 
@@ -116,7 +116,7 @@ Example:
 | book_snapshot_25 | `${LAKE_ROOT}/silver/book_snapshot_25` | `exchange`, `date` | `ts_local_us`, `symbol_id`, `bids_px`, `asks_px` |
 | l2_updates | `${LAKE_ROOT}/silver/l2_updates` | `exchange`, `date`, `symbol_id` | `ts_local_us`, `symbol_id`, `side`, `price_int`, `size_int` |
 | dim_symbol | `${LAKE_ROOT}/silver/dim_symbol` | none | `symbol_id`, `exchange_id`, `exchange_symbol`, validity range |
-| ingest_manifest | `${LAKE_ROOT}/silver/ingest_manifest` | none | `exchange`, `data_type`, `date`, `status` |
+| ingest_manifest | `${LAKE_ROOT}/silver/ingest_manifest` | none | `vendor`, `exchange`, `data_type`, `date`, `status` |
 
 **For complete schema definitions, see [Schema Reference](../schemas.md).**
 

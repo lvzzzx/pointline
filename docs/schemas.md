@@ -123,12 +123,13 @@ Tracks ingestion status per Bronze file. Enables idempotent re-runs, provides au
 
 **Storage:** Small unpartitioned Delta table.
 
-**Primary Key (logical):** `(exchange, data_type, symbol, date, bronze_file_name)`  
+**Primary Key (logical):** `(vendor, exchange, data_type, symbol, date, bronze_file_name)`  
 **Surrogate Key:** `file_id` (i32) - used for joins from Silver tables
 
 | Column | Type | Description |
 |---|---|---|
 | **file_id** | i32 | Surrogate Key (Primary Key) |
+| **vendor** | string | raw data source (e.g., `tardis`, `binance_vision`) |
 | **exchange** | string | e.g., `binance` |
 | **data_type** | string | e.g., `trades`, `quotes` |
 | **symbol** | string | upper-case, `BTCUSDT` |
@@ -148,7 +149,7 @@ Tracks ingestion status per Bronze file. Enables idempotent re-runs, provides au
 
 **Ingestion Decision (Skip Logic):**
 1. For each Bronze file, compute `file_size_bytes` and `last_modified_ts`.
-2. Lookup by `(exchange, data_type, symbol, date, bronze_file_name)`.
+2. Lookup by `(vendor, exchange, data_type, symbol, date, bronze_file_name)`.
 3. If a row exists with `status=success` **and** matching `file_size_bytes` + `last_modified_ts` (or `sha256` if used), **skip** ingestion.
 4. Otherwise, ingest and write/overwrite a manifest row with updated stats.
 
@@ -666,7 +667,7 @@ Delta Lake (via Parquet) does not support unsigned integer types `UInt16` and `U
 | Table | Layer | Partitions | Key Columns |
 |---|---|---|---|
 | `dim_symbol` | Silver (Reference) | none | `symbol_id`, `exchange_id`, `exchange_symbol`, validity range |
-| `ingest_manifest` | Silver (Reference) | none | `exchange`, `data_type`, `date`, `status` |
+| `ingest_manifest` | Silver (Reference) | none | `vendor`, `exchange`, `data_type`, `date`, `status` |
 | `l2_updates` | Silver | `exchange`, `date`, `symbol_id` | `ts_local_us`, `symbol_id`, `price_int`, `size_int` |
 | `book_snapshot_25` | Silver | `exchange`, `date` | `ts_local_us`, `symbol_id`, `bids_px`, `asks_px` |
 | `trades` | Silver | `exchange`, `date` | `ts_local_us`, `symbol_id`, `price_int`, `qty_int` |

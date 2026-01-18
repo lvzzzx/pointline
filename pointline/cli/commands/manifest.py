@@ -38,6 +38,7 @@ def cmd_manifest_show(args: argparse.Namespace) -> int:
 
         display_cols = [
             "file_id",
+            "vendor",
             "exchange",
             "data_type",
             "symbol",

@@ -81,6 +81,7 @@ Scans physical storage (Local, S3, etc.) to find candidate files. Does not know 
 ```python
 @dataclass
 class BronzeFileMetadata:
+    vendor: str
     exchange: str
     data_type: str
     symbol: str
@@ -88,6 +89,7 @@ class BronzeFileMetadata:
     bronze_file_path: str
     file_size_bytes: int
     last_modified_ts: int
+    sha256: str
 
 class BronzeSource(Protocol):
     def list_files(self, glob_pattern: str) -> Iterator[BronzeFileMetadata]:

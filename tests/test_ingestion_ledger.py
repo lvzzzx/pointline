@@ -11,7 +11,7 @@ from pointline.io.delta_manifest_repo import DeltaManifestRepository
 @pytest.fixture
 def temp_bronze_dir(tmp_path):
     """Creates a dummy bronze directory structure."""
-    base = tmp_path / "lake" / "tardis"
+    base = tmp_path / "lake" / "bronze" / "tardis"
     # Create file 1
     f1 = base / "exchange=binance/type=quotes/date=2024-05-01/symbol=BTCUSDT"
     f1.mkdir(parents=True)
@@ -36,6 +36,7 @@ def test_local_source_scanning(temp_bronze_dir):
     assert len(files) == 2
     
     f1 = next(f for f in files if f.date == date(2024, 5, 1))
+    assert f1.vendor == "tardis"
     assert f1.exchange == "binance"
     assert f1.symbol == "BTCUSDT"
     assert "file1.csv.gz" in f1.bronze_file_path
@@ -44,13 +45,15 @@ def test_local_source_scanning(temp_bronze_dir):
 def test_manifest_workflow(manifest_repo):
     # Setup Dummy Metadata
     meta1 = BronzeFileMetadata(
-        exchange="binance", data_type="quotes", symbol="BTC", 
+        vendor="tardis",
+        exchange="binance", data_type="quotes", symbol="BTC",
         date=date(2024, 1, 1), bronze_file_path="path/to/1",
         file_size_bytes=100, last_modified_ts=1000, sha256="a" * 64
     )
     
     meta2 = BronzeFileMetadata(
-        exchange="binance", data_type="quotes", symbol="BTC", 
+        vendor="tardis",
+        exchange="binance", data_type="quotes", symbol="BTC",
         date=date(2024, 1, 2), bronze_file_path="path/to/2",
         file_size_bytes=200, last_modified_ts=2000, sha256="b" * 64
     )
@@ -87,7 +90,8 @@ def test_manifest_workflow(manifest_repo):
 def test_skip_logic_modified_file(manifest_repo):
     """If content hash changes, it should NOT be skipped."""
     meta = BronzeFileMetadata(
-        exchange="binance", data_type="quotes", symbol="BTC", 
+        vendor="tardis",
+        exchange="binance", data_type="quotes", symbol="BTC",
         date=date(2024, 1, 1), bronze_file_path="path/to/1",
         file_size_bytes=100, last_modified_ts=1000, sha256="c" * 64
     )
@@ -101,7 +105,8 @@ def test_skip_logic_modified_file(manifest_repo):
     
     # Modified file (content hash change)
     meta_mod = BronzeFileMetadata(
-        exchange="binance", data_type="quotes", symbol="BTC", 
+        vendor="tardis",
+        exchange="binance", data_type="quotes", symbol="BTC",
         date=date(2024, 1, 1), bronze_file_path="path/to/1",
         file_size_bytes=150,
         last_modified_ts=1000,

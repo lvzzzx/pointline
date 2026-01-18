@@ -24,6 +24,7 @@ class DeltaManifestRepository(BaseDeltaRepository):
             # Schema definition is single source of truth
             schema = {
                 "file_id": pl.Int32,
+                "vendor": pl.Utf8,
                 "exchange": pl.Utf8,
                 "data_type": pl.Utf8,
                 "symbol": pl.Utf8,
@@ -43,6 +44,38 @@ class DeltaManifestRepository(BaseDeltaRepository):
             }
             df = pl.DataFrame(schema=schema)
             self.write_full(df)
+            return
+
+        try:
+            df = pl.read_delta(self.table_path)
+        except Exception:
+            return
+
+        if "vendor" not in df.columns:
+            df = df.with_columns(pl.lit("tardis").alias("vendor"))
+            ordered_cols = [
+                "file_id",
+                "vendor",
+                "exchange",
+                "data_type",
+                "symbol",
+                "date",
+                "bronze_file_name",
+                "file_size_bytes",
+                "last_modified_ts",
+                "sha256",
+                "row_count",
+                "ts_local_min_us",
+                "ts_local_max_us",
+                "ts_exch_min_us",
+                "ts_exch_max_us",
+                "ingested_at",
+                "status",
+                "error_message",
+            ]
+            existing_cols = [col for col in ordered_cols if col in df.columns]
+            df = df.select(existing_cols)
+            self.write_full(df)
 
     def resolve_file_id(self, meta: BronzeFileMetadata) -> int:
         """
@@ -61,6 +94,7 @@ class DeltaManifestRepository(BaseDeltaRepository):
         # 1. Check existing
         # Filter by composite unique key
         existing = df.filter(
+            (pl.col("vendor") == meta.vendor) &
             (pl.col("exchange") == meta.exchange) &
             (pl.col("data_type") == meta.data_type) &
             (pl.col("symbol") == meta.symbol) &
@@ -85,6 +119,7 @@ class DeltaManifestRepository(BaseDeltaRepository):
         # Schema definition is single source of truth - use explicit schema with Int32
         pending_record = pl.DataFrame({
             "file_id": [next_id],
+            "vendor": [meta.vendor],
             "exchange": [meta.exchange],
             "data_type": [meta.data_type],
             "symbol": [meta.symbol],
@@ -103,22 +138,23 @@ class DeltaManifestRepository(BaseDeltaRepository):
             "error_message": [None],
         }, schema={
             "file_id": pl.Int32,  # Delta Lake doesn't support UInt32, stores as Int32
-                "exchange": pl.Utf8,
-                "data_type": pl.Utf8,
-                "symbol": pl.Utf8,
-                "date": pl.Date,
-                "bronze_file_name": pl.Utf8,
-                "file_size_bytes": pl.Int64,
-                "last_modified_ts": pl.Int64,
-                "sha256": pl.Utf8,  # Nullable string
-                "row_count": pl.Int64,
-                "ts_local_min_us": pl.Int64,
-                "ts_local_max_us": pl.Int64,
-                "ts_exch_min_us": pl.Int64,
-                "ts_exch_max_us": pl.Int64,
-                "ingested_at": pl.Int64,
-                "status": pl.Utf8,
-                "error_message": pl.Utf8,  # Nullable string
+            "vendor": pl.Utf8,
+            "exchange": pl.Utf8,
+            "data_type": pl.Utf8,
+            "symbol": pl.Utf8,
+            "date": pl.Date,
+            "bronze_file_name": pl.Utf8,
+            "file_size_bytes": pl.Int64,
+            "last_modified_ts": pl.Int64,
+            "sha256": pl.Utf8,  # Nullable string
+            "row_count": pl.Int64,
+            "ts_local_min_us": pl.Int64,
+            "ts_local_max_us": pl.Int64,
+            "ts_exch_min_us": pl.Int64,
+            "ts_exch_max_us": pl.Int64,
+            "ingested_at": pl.Int64,
+            "status": pl.Utf8,
+            "error_message": pl.Utf8,  # Nullable string
             })
 
         self.append(pending_record)
@@ -139,6 +175,7 @@ class DeltaManifestRepository(BaseDeltaRepository):
         # Convert candidates to DataFrame for anti-join
         cand_df = pl.DataFrame([
             {
+                "vendor": c.vendor,
                 "exchange": c.exchange,
                 "data_type": c.data_type,
                 "symbol": c.symbol,
@@ -159,15 +196,29 @@ class DeltaManifestRepository(BaseDeltaRepository):
         success_manifest = manifest_df.filter(pl.col("status") == "success")
         
         # Join keys
-        join_keys = ["exchange", "data_type", "symbol", "date", "bronze_file_name", "sha256"]
+        join_keys = [
+            "vendor",
+            "exchange",
+            "data_type",
+            "symbol",
+            "date",
+            "bronze_file_name",
+            "sha256",
+        ]
         
         # Anti-join: Keep candidates that don't match strict success criteria
         pending_df = cand_df.join(success_manifest, on=join_keys, how="anti")
         
         # Convert back to objects
-        pending_keys = set(pending_df.select(["bronze_file_name", "sha256"]).iter_rows())
-        
-        return [c for c in candidates if (c.bronze_file_path, c.sha256) in pending_keys]
+        pending_keys = set(
+            pending_df.select(["vendor", "bronze_file_name", "sha256"]).iter_rows()
+        )
+
+        return [
+            c
+            for c in candidates
+            if (c.vendor, c.bronze_file_path, c.sha256) in pending_keys
+        ]
 
     def update_status(self, 
                       file_id: int, 
@@ -190,6 +241,7 @@ class DeltaManifestRepository(BaseDeltaRepository):
 
         update_df = pl.DataFrame({
             "file_id": [file_id],
+            "vendor": [meta.vendor],
             "exchange": [meta.exchange],
             "data_type": [meta.data_type],
             "symbol": [meta.symbol],
@@ -208,6 +260,7 @@ class DeltaManifestRepository(BaseDeltaRepository):
             "error_message": [err_msg],
         }, schema={
             "file_id": pl.Int32,  # Delta Lake doesn't support UInt32, stores as Int32
+            "vendor": pl.Utf8,
             "exchange": pl.Utf8,
             "data_type": pl.Utf8,
             "symbol": pl.Utf8,

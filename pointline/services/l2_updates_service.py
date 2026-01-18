@@ -15,7 +15,7 @@ import pyarrow as pa
 import pyarrow.compute as pc
 import pyarrow.parquet as pq
 
-from pointline.config import LAKE_ROOT, normalize_exchange, get_exchange_id
+from pointline.config import get_bronze_root, normalize_exchange, get_exchange_id
 from pointline.dim_symbol import check_coverage
 from pointline.io.protocols import (
     BronzeFileMetadata,
@@ -90,7 +90,7 @@ class L2UpdatesIngestionService(BaseService):
         bronze_root: Path | None = None,
     ) -> IngestionResult:
         if bronze_root is None:
-            bronze_root = LAKE_ROOT / "tardis"
+            bronze_root = get_bronze_root("tardis")
         bronze_path = bronze_root / meta.bronze_file_path
 
         if not bronze_path.exists():

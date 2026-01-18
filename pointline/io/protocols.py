@@ -34,6 +34,7 @@ class AppendableTableRepository(TableRepository, Protocol):
 @dataclass
 class BronzeFileMetadata:
     """Metadata extracted from the source file system before reading contents."""
+    vendor: str
     exchange: str
     data_type: str
     symbol: str

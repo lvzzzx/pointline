@@ -18,7 +18,7 @@ from pointline.cli.commands.ingest import cmd_ingest_discover, cmd_ingest_run
 from pointline.cli.commands.manifest import cmd_manifest_backfill_sha256, cmd_manifest_show
 from pointline.cli.commands.symbol import cmd_symbol_search
 from pointline.cli.commands.validate import cmd_validate_quotes, cmd_validate_trades
-from pointline.config import LAKE_ROOT, TABLE_PATHS, get_table_path
+from pointline.config import LAKE_ROOT, TABLE_PATHS, get_bronze_root, get_table_path
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="pointline", description="Pointline data lake CLI")
@@ -120,8 +120,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     bronze_download.add_argument(
         "--download-dir",
-        default=str(LAKE_ROOT),
-        help=f"Root directory for downloads (default: {LAKE_ROOT})",
+        default=str(get_bronze_root("tardis")),
+        help="Root directory for downloads (default: LAKE_ROOT/bronze/tardis)",
     )
     bronze_download.add_argument(
         "--filename-template",
@@ -145,8 +145,8 @@ def build_parser() -> argparse.ArgumentParser:
     bronze_discover = bronze_sub.add_parser("discover", help="Discover bronze files")
     bronze_discover.add_argument(
         "--bronze-root",
-        default=str(LAKE_ROOT / "tardis"),
-        help="Bronze root path (default: LAKE_ROOT/tardis)",
+        default=str(get_bronze_root("tardis")),
+        help="Bronze root path (default: LAKE_ROOT/bronze/tardis)",
     )
     bronze_discover.add_argument(
         "--glob",
@@ -172,8 +172,8 @@ def build_parser() -> argparse.ArgumentParser:
     bronze_ingest = bronze_sub.add_parser("ingest", help="Run ingestion for pending files")
     bronze_ingest.add_argument(
         "--bronze-root",
-        default=str(LAKE_ROOT / "tardis"),
-        help="Bronze root path (default: LAKE_ROOT/tardis)",
+        default=str(get_bronze_root("tardis")),
+        help="Bronze root path (default: LAKE_ROOT/bronze/tardis)",
     )
     bronze_ingest.add_argument(
         "--glob",
@@ -254,8 +254,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     silver_validate_quotes.add_argument(
         "--bronze-root",
-        default=str(LAKE_ROOT / "tardis"),
-        help="Bronze root used to resolve manifest paths (default: LAKE_ROOT/tardis)",
+        default=str(get_bronze_root("tardis")),
+        help="Bronze root used to resolve manifest paths (default: LAKE_ROOT/bronze/tardis)",
     )
     silver_validate_quotes.add_argument(
         "--manifest-path",
@@ -309,8 +309,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     silver_validate_trades.add_argument(
         "--bronze-root",
-        default=str(LAKE_ROOT / "tardis"),
-        help="Bronze root used to resolve manifest paths (default: LAKE_ROOT/tardis)",
+        default=str(get_bronze_root("tardis")),
+        help="Bronze root used to resolve manifest paths (default: LAKE_ROOT/bronze/tardis)",
     )
     silver_validate_trades.add_argument(
         "--manifest-path",
@@ -388,8 +388,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     manifest_backfill.add_argument(
         "--bronze-root",
-        default=str(LAKE_ROOT / "tardis"),
-        help="Bronze root containing raw files (default: LAKE_ROOT/tardis)",
+        default=str(get_bronze_root("tardis")),
+        help="Bronze root containing raw files (default: LAKE_ROOT/bronze/tardis)",
     )
     manifest_backfill.add_argument(
         "--batch-size",

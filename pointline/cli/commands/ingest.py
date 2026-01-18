@@ -55,6 +55,8 @@ def cmd_ingest_run(args: argparse.Namespace) -> int:
     if args.retry_quarantined:
         manifest_df = manifest_repo.read_all()
         quarantined = manifest_df.filter(pl.col("status") == "quarantined")
+        if bronze_root.name != "bronze" and "vendor" in quarantined.columns:
+            quarantined = quarantined.filter(pl.col("vendor") == bronze_root.name)
         if not quarantined.is_empty():
             quarantined_paths = set(quarantined["bronze_file_name"].to_list())
             files = [f for f in files if f.bronze_file_path in quarantined_paths]

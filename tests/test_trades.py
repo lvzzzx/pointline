@@ -201,6 +201,7 @@ def test_validate_trades_basic():
         "price_int": [5000000, 5000100, -100],  # Last one invalid
         "qty_int": [10000, 20000, 5000],
         "ts_local_us": [1714550400000000, 1714550401000000, 1714550402000000],
+        "ts_exch_us": [1714550400000000, 1714550401000000, 1714550402000000],
         "side": [0, 1, 2],
         "exchange": ["binance", "binance", "binance"],
         "exchange_id": [1, 1, 1],
@@ -220,6 +221,7 @@ def test_validate_trades_invalid_side():
         "price_int": [5000000] * 3,
         "qty_int": [10000] * 3,
         "ts_local_us": [1714550400000000] * 3,
+        "ts_exch_us": [1714550400000000] * 3,
         "side": [0, 1, 99],  # Last one invalid
         "exchange": ["binance"] * 3,
         "exchange_id": [1] * 3,
@@ -321,6 +323,7 @@ def test_trades_service_validate():
         "price_int": [5000000, -100],
         "qty_int": [10000, 5000],
         "ts_local_us": [1714550400000000, 1714550401000000],
+        "ts_exch_us": [1714550400000000, 1714550401000000],
         "side": [0, 1],
         "exchange": ["binance", "binance"],
         "exchange_id": [1, 1],
@@ -404,6 +407,7 @@ def test_trades_service_ingest_file_quarantine():
     service = TradesIngestionService(repo, dim_repo, manifest_repo)
     
     meta = BronzeFileMetadata(
+        vendor="tardis",
         exchange="binance",
         data_type="trades",
         symbol="BTCUSDT",
@@ -424,8 +428,8 @@ def test_trades_service_ingest_file_quarantine():
     
     try:
         # Mock the bronze path
-        from pointline.config import LAKE_ROOT
-        bronze_path = LAKE_ROOT / "tardis" / meta.bronze_file_path
+        from pointline.config import get_bronze_root
+        bronze_path = get_bronze_root("tardis") / meta.bronze_file_path
         bronze_path.parent.mkdir(parents=True, exist_ok=True)
         import shutil
         shutil.copy(temp_path, bronze_path)
@@ -457,6 +461,7 @@ def test_trades_service_ingest_file_success():
     service = TradesIngestionService(repo, dim_repo, manifest_repo)
     
     meta = BronzeFileMetadata(
+        vendor="tardis",
         exchange="binance",
         data_type="trades",
         symbol="BTCUSDT",
@@ -478,8 +483,8 @@ def test_trades_service_ingest_file_success():
     
     try:
         # Mock the bronze path
-        from pointline.config import LAKE_ROOT
-        bronze_path = LAKE_ROOT / "tardis" / meta.bronze_file_path
+        from pointline.config import get_bronze_root
+        bronze_path = get_bronze_root("tardis") / meta.bronze_file_path
         bronze_path.parent.mkdir(parents=True, exist_ok=True)
         import shutil
         shutil.copy(temp_path, bronze_path)
