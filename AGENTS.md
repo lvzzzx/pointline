@@ -33,3 +33,9 @@
 ## Architecture & Product Docs
 - Read `docs/architecture/design.md` before changing schemas or ETL semantics.
 - If you change the tech stack or tooling, update `conductor/tech-stack.md` first and note the rationale.
+
+# ExecPlans
+
+When writing complex features or significant refactors, use an ExecPlan (as described in `PLANS.md`) from design to implementation.
+
+
