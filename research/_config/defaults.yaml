@@ -1,0 +1,9 @@
+# Research defaults for scripts and pipelines.
+
+ts_col: ts_local_us
+exchange: deribit
+symbol: BTC-PERPETUAL
+
+date_range:
+  start: 2025-12-28
+  end: 2025-12-28

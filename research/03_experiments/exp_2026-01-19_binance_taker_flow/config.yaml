@@ -1,0 +1,19 @@
+name: exp_2026-01-19_binance_taker_flow
+lake_root:
+
+symbol_id:
+exchange: binance
+exchange_symbol: BTCUSDT
+
+bar_size: 5m
+quantile_window: 72h
+large_q: 0.85
+small_q: 0.50
+min_trades: 5000
+ts_col: ts_local_us
+
+start_ts_us:
+end_ts_us:
+
+output: results/features.parquet
+log_path: logs/runs.jsonl
