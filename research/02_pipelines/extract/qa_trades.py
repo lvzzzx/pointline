@@ -66,23 +66,26 @@ def _dedup_count(trades: pl.DataFrame) -> int | None:
     return int(dupes.select(pl.col("len") - 1).sum()[0, 0])
 
 
-def _choose_order_columns(trades: pl.DataFrame, ts_col: str) -> tuple[list[str], str]:
+def _non_monotonic_ts(trades: pl.DataFrame, ts_col: str) -> tuple[int, str]:
+    if trades.height < 2:
+        return 0, ts_col
     if (
         "file_id" in trades.columns
         and "file_line_number" in trades.columns
         and trades["file_id"].null_count() < trades.height
     ):
-        git return ["file_id", "file_line_number"], "file_id,file_line_number"
-    return [ts_col], ts_col
-
-
-def _non_monotonic_ts(trades: pl.DataFrame, ts_col: str) -> tuple[int, str]:
-    if trades.height < 2:
-        return 0, ts_col
-    order_cols, label = _choose_order_columns(trades, ts_col)
-    ordered = trades.sort(order_cols)
+        # Check monotonicity within each file; avoid cross-file ordering assumptions.
+        diffs = trades.select(
+            pl.col(ts_col)
+            .sort_by("file_line_number")
+            .diff()
+            .over("file_id")
+            .alias("ts_diff")
+        )["ts_diff"]
+        return int(diffs.lt(0).fill_null(False).sum()), "per-file file_line_number"
+    ordered = trades.sort(ts_col)
     diffs = ordered.select(pl.col(ts_col).diff()).to_series()
-    return int((diffs < 0).sum()), label
+    return int(diffs.lt(0).fill_null(False).sum()), ts_col
 
 
 def _side_sanity(trades: pl.DataFrame) -> tuple[float | None, float | None]:

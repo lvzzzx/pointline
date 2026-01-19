@@ -6,7 +6,7 @@ They avoid extra dependencies and focus on PIT-correct access patterns.
 ## Pipelines
 
 - extract/qa_trades.py
-  - Basic QA: duplicates, timestamp monotonicity, side sanity checks
+  - Basic QA: duplicates, per-file timestamp monotonicity (via file_line_number), side sanity checks
 
 - features/large_small_taker_flow.py
   - Builds 5m bars, rolling size thresholds, large/small aggregates, and 3h targets
