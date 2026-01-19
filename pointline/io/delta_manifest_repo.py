@@ -1,7 +1,7 @@
 from typing import List, Optional
 import polars as pl
 from pathlib import Path
-from deltalake import DeltaTable, WriterProperties
+from deltalake import DeltaTable, WriterProperties, write_deltalake
 
 from pointline.io.protocols import IngestionManifestRepository, BronzeFileMetadata, IngestionResult
 from pointline.io.base_repository import BaseDeltaRepository
@@ -75,7 +75,19 @@ class DeltaManifestRepository(BaseDeltaRepository):
             ]
             existing_cols = [col for col in ordered_cols if col in df.columns]
             df = df.select(existing_cols)
-            self.write_full(df)
+            # Overwrite schema to add missing vendor column on older manifests.
+            writer_properties = None
+            if "compression" in STORAGE_OPTIONS:
+                writer_properties = WriterProperties(
+                    compression=STORAGE_OPTIONS["compression"].upper()
+                )
+            write_deltalake(
+                self.table_path,
+                df.to_arrow(),
+                mode="overwrite",
+                schema_mode="overwrite",
+                writer_properties=writer_properties,
+            )
 
     def resolve_file_id(self, meta: BronzeFileMetadata) -> int:
         """

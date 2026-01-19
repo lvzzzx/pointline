@@ -211,10 +211,6 @@ def _apply_filters(
 
     # 4. Apply Time Filters
     if start_ts_us is not None or end_ts_us is not None:
-        if ts_col not in lf.schema:
-            raise ValueError(
-                f"scan_table: time column '{ts_col}' not found in table schema"
-            )
         if start_ts_us is not None and end_ts_us is not None:
             lf = lf.filter((pl.col(ts_col) >= start_ts_us) & (pl.col(ts_col) < end_ts_us))
         elif start_ts_us is not None:

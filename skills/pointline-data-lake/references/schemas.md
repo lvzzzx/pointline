@@ -20,12 +20,12 @@ Slowly Changing Dimension (SCD) Type 2 table tracking instrument metadata over t
 
 **Storage:** Single unpartitioned Delta table (small size).
 
-**Surrogate Key:** `symbol_id` (i32)  
+**Surrogate Key:** `symbol_id` (i64)  
 **Natural Key:** `(exchange_id, exchange_symbol)`
 
 | Column | Type | Description |
 |---|---|---|
-| **symbol_id** | i32 | Surrogate Key (Primary Key) |
+| **symbol_id** | i64 | Surrogate Key (Primary Key) |
 | **exchange_id** | i16 | Dictionary ID (e.g., 1=binance, 2=binance-futures) |
 | **exchange** | string | Normalized exchange name (e.g., `binance-futures`) for consistency with silver tables |
 | **exchange_symbol** | string | Raw vendor ticker (e.g., `BTC-PERPETUAL`) |
@@ -67,18 +67,69 @@ JOIN silver.dim_symbol s
 
 ---
 
-### 1.2 `silver.ingest_manifest`
+### 1.2 `silver.dim_asset_stats`
+
+Daily dimension table tracking asset-level statistics, primarily `circulating_supply`, updated via CoinGecko API. Enables market cap calculations, supply analysis, and other asset-level research queries.
+
+**Storage:** Single unpartitioned Delta table (small size, similar to `dim_symbol`).
+
+**Natural Key:** `(base_asset, date)`
+
+| Column | Type | Description |
+|--------|------|-------------|
+| **base_asset** | string | Asset ticker (e.g., `BTC`, `ETH`) - matches `dim_symbol.base_asset` |
+| **date** | date | UTC date (partition column) |
+| **coingecko_coin_id** | string | CoinGecko API coin identifier (e.g., `bitcoin`, `ethereum`) |
+| **circulating_supply** | f64 | Circulating supply in native units (e.g., BTC, ETH) |
+| **total_supply** | f64 | Total supply (if available from CoinGecko, nullable) |
+| **max_supply** | f64 | Maximum supply (if available, null for uncapped assets) |
+| **market_cap_usd** | f64 | Market cap in USD (optional, for convenience, nullable) |
+| **fully_diluted_valuation_usd** | f64 | FDV in USD (optional, nullable) |
+| **updated_at_ts** | i64 | Timestamp when CoinGecko last updated this data (µs) |
+| **fetched_at_ts** | i64 | Timestamp when we fetched from CoinGecko API (µs) |
+| **source** | string | Data source identifier (e.g., `coingecko`) |
+
+**Notes:**
+- Daily snapshot model: one row per asset per date
+- Unpartitioned (small dimension table, similar to `dim_symbol`)
+- Updated once per 24h via CoinGecko API sync job
+- `max_supply` is `null` for uncapped assets (e.g., ETH)
+- `fetched_at_ts` tracks when we pulled data; `updated_at_ts` tracks CoinGecko's last update
+- Date filtering uses column pruning (Delta Lake) - no physical partitioning needed
+
+**Join Pattern:**
+```sql
+SELECT 
+    s.*,
+    a.circulating_supply,
+    a.market_cap_usd
+FROM silver.dim_symbol s
+JOIN silver.dim_asset_stats a
+  ON s.base_asset = a.base_asset
+  AND DATE(FROM_UNIXTIME(s.valid_from_ts / 1_000_000)) = a.date
+WHERE s.is_current = true
+```
+
+**Update Logic:**
+- Daily sync job fetches data from CoinGecko API
+- Uses `MERGE` operation on `(base_asset, date)` key for idempotency
+- Re-running same date updates if CoinGecko data changed
+
+---
+
+### 1.3 `silver.ingest_manifest`
 
 Tracks ingestion status per Bronze file. Enables idempotent re-runs, provides auditability, and enables fast skip logic.
 
 **Storage:** Small unpartitioned Delta table.
 
-**Primary Key (logical):** `(exchange, data_type, symbol, date, bronze_file_name)`  
+**Primary Key (logical):** `(vendor, exchange, data_type, symbol, date, bronze_file_name)`  
 **Surrogate Key:** `file_id` (i32) - used for joins from Silver tables
 
 | Column | Type | Description |
 |---|---|---|
 | **file_id** | i32 | Surrogate Key (Primary Key) |
+| **vendor** | string | raw data source (e.g., `tardis`, `binance_vision`) |
 | **exchange** | string | e.g., `binance` |
 | **data_type** | string | e.g., `trades`, `quotes` |
 | **symbol** | string | upper-case, `BTCUSDT` |
@@ -98,7 +149,7 @@ Tracks ingestion status per Bronze file. Enables idempotent re-runs, provides au
 
 **Ingestion Decision (Skip Logic):**
 1. For each Bronze file, compute `file_size_bytes` and `last_modified_ts`.
-2. Lookup by `(exchange, data_type, symbol, date, bronze_file_name)`.
+2. Lookup by `(vendor, exchange, data_type, symbol, date, bronze_file_name)`.
 3. If a row exists with `status=success` **and** matching `file_size_bytes` + `last_modified_ts` (or `sha256` if used), **skip** ingestion.
 4. Otherwise, ingest and write/overwrite a manifest row with updated stats.
 
@@ -119,12 +170,15 @@ Silver tables are the canonical research foundation. They are normalized, typed 
 - `date` (date): Partition key, derived from `ts_local_us` in UTC
 - `exchange` (string): Partition key (not stored in Parquet, reconstructed from directory)
 - `exchange_id` (i16): For joins and compression
-- `symbol_id` (i32/i64): Stable identifier from `dim_symbol`
+- `symbol_id` (i64): Stable identifier from `dim_symbol`
 - `ts_local_us` (i64): Primary replay timeline (arrival time)
 - `ts_exch_us` (i64): Exchange time if available
 - `ingest_seq` (i32): Stable ordering within file
 - `file_id` (i32): Lineage tracking (join with `ingest_manifest`)
 - `file_line_number` (i32): Lineage tracking (deterministic ordering)
+
+**Note:** Time-bucketed bars (e.g., `silver.kline_1h`) use
+`ts_bucket_start_us`/`ts_bucket_end_us` instead of `ts_local_us`.
 
 ---
 
@@ -133,14 +187,14 @@ Silver tables are the canonical research foundation. They are normalized, typed 
 Incremental Level 2 order book updates from Tardis `incremental_book_L2`. Updates are **absolute sizes** at a price level (not deltas).
 
 **Source:** Tardis `incremental_book_L2`  
-**Partitioned by:** `["exchange", "date"]`
+**Partitioned by:** `["exchange", "date", "symbol_id"]`
 
 | Column | Type | Notes |
 |---|---:|---|
 | date | date | derived from `ts_local_us` in UTC |
 | exchange | string | partitioned by (not stored in Parquet files) |
 | exchange_id | i16 | dictionary-encoded |
-| symbol_id | i32 | dictionary-encoded |
+| symbol_id | i64 | partitioned by (not stored in Parquet files) |
 | ts_local_us | i64 | primary replay timeline |
 | ts_exch_us | i64 | exchange time if available |
 | ingest_seq | i32 | stable ordering within file |
@@ -152,7 +206,6 @@ Incremental Level 2 order book updates from Tardis `incremental_book_L2`. Update
 | file_line_number | i32 | lineage tracking |
 
 **Optional convenience columns:**
-- `msg_id` (group rows belonging to the same source message)
 - `event_group_id` (if vendor provides transaction IDs spanning multiple updates)
 
 **Data Semantics:**
@@ -160,7 +213,10 @@ Incremental Level 2 order book updates from Tardis `incremental_book_L2`. Update
 - `is_snapshot` marks snapshot rows.
 - If a new snapshot appears after incremental updates, **reset book state** before applying it.
 
-**Reconstruction Order:** Apply updates in strict order: `(ts_local_us ASC, ingest_seq ASC)`
+**Reconstruction Order (per symbol, per day):** Apply updates in strict order:
+`(ts_local_us ASC, ingest_seq ASC, file_id ASC, file_line_number ASC)`.
+Ingest must write sorted files within each `exchange/date/symbol_id` partition to avoid a
+global sort at replay time.
 
 ---
 
@@ -223,7 +279,7 @@ Trade executions from Tardis `trades` dataset.
 | date | date | |
 | exchange | string | partitioned by (not stored in Parquet files) |
 | exchange_id | i16 | |
-| symbol_id | i32 | |
+| symbol_id | i64 | |
 | ts_local_us | i64 | |
 | ts_exch_us | i64 | |
 | ingest_seq | i32 | |
@@ -249,7 +305,7 @@ Top-of-book quotes from Tardis `quotes` dataset or derived from L2.
 | date | date | |
 | exchange | string | partitioned by (not stored in Parquet files) |
 | exchange_id | i16 | |
-| symbol_id | i32 | |
+| symbol_id | i64 | |
 | ts_local_us | i64 | |
 | ts_exch_us | i64 | |
 | ingest_seq | i32 | |
@@ -287,19 +343,22 @@ Derivative market data including mark/index, funding, open interest, etc.
 | date | date | |
 | exchange | string | partitioned by (not stored in Parquet files) |
 | exchange_id | i16 | |
-| symbol_id | i32 | |
+| symbol_id | i64 | |
 | ts_local_us | i64 | |
 | ts_exch_us | i64 | |
 | ingest_seq | i32 | |
-| mark_px_int | i64 | optional fixed-point |
-| index_px_int | i64 | optional fixed-point |
-| last_px_int | i64 | optional fixed-point |
+| mark_px | f64 | keep float to preserve precision |
+| index_px | f64 | keep float to preserve precision |
+| last_px | f64 | keep float to preserve precision |
 | funding_rate | f64 | funding often fine as float |
-| funding_ts_us | i64 | next/last funding time |
-| open_interest | f64/i64 | depends on venue |
-| volume_24h | f64/i64 | depends on venue |
+| predicted_funding_rate | f64 | optional; venue-provided estimate |
+| funding_ts_us | i64 | next funding event timestamp |
+| open_interest | f64 | Open interest in **base asset units** (e.g., BTC, ETH, SOL). Keep float; source often fractional |
 | file_id | i32 | lineage tracking |
 | file_line_number | i32 | lineage tracking |
+
+**Note:** Use float columns for mark/index/last because some venues publish these with finer
+precision than trade tick size; fixed-point at `price_increment` would truncate.
 
 ---
 
@@ -315,7 +374,7 @@ Liquidation events from Tardis `liquidations` dataset.
 | date | date | |
 | exchange | string | partitioned by (not stored in Parquet files) |
 | exchange_id | i16 | |
-| symbol_id | i32 | |
+| symbol_id | i64 | |
 | ts_local_us | i64 | |
 | ts_exch_us | i64 | |
 | ingest_seq | i32 | |
@@ -340,8 +399,8 @@ Options chain data, typically cross-sectional and heavy. Store updates per contr
 | date | date | |
 | exchange | string | partitioned by (not stored in Parquet files) |
 | exchange_id | i16 | |
-| underlying_symbol_id | i32 | underlying |
-| option_symbol_id | i32 | contract |
+| underlying_symbol_id | i64 | underlying |
+| option_symbol_id | i64 | contract |
 | ts_local_us | i64 | |
 | ts_exch_us | i64 | |
 | ingest_seq | i32 | |
@@ -361,36 +420,45 @@ Options chain data, typically cross-sectional and heavy. Store updates per contr
 
 ---
 
-## 3. Gold Tables
+### 2.9 `silver.kline_1h`
 
-Gold tables are derived from Silver tables and optimized for specific research workflows. They are reproducible from Silver and versioned.
+Vendor-provided 1h OHLCV bars from Binance public data (Spot + USD-M futures).
 
----
-
-### 3.1 `gold.bars_1m`
-
-OHLCV (Open-High-Low-Close-Volume) time bars derived from `silver.trades`.
-
-**Source:** Derived from `silver.trades`  
+**Source:** Binance public data `klines`  
 **Partitioned by:** `["exchange", "date"]`
 
 | Column | Type | Notes |
 |---|---:|---|
-| date | date | |
+| date | date | derived from `ts_bucket_start_us` in UTC |
 | exchange | string | partitioned by (not stored in Parquet files) |
 | exchange_id | i16 | |
-| symbol_id | i32 | |
-| ts_bucket_start_us | i64 | bucket start time |
+| symbol_id | i64 | |
+| ts_bucket_start_us | i64 | bar open time (µs since epoch) |
+| ts_bucket_end_us | i64 | bar close time (µs since epoch) |
 | open_px_int | i64 | fixed-point |
 | high_px_int | i64 | fixed-point |
 | low_px_int | i64 | fixed-point |
 | close_px_int | i64 | fixed-point |
-| volume_qty_int | i64 | fixed-point |
-| volume_notional | f64 | |
-| trade_count | i32 | |
+| volume_qty_int | i64 | base asset volume (fixed-point) |
+| quote_volume | f64 | quote asset volume |
+| trade_count | i64 | number of trades in bar |
+| taker_buy_base_qty_int | i64 | taker buy base volume (fixed-point) |
+| taker_buy_quote_qty | f64 | taker buy quote volume |
+| file_id | i32 | lineage tracking |
+| file_line_number | i32 | lineage tracking |
+| ingest_seq | i32 | deterministic ordering within file |
 
-**Interval:** 1 minute (or 1s/1h, configurable)  
-**Time Labeling:** `ts_bucket_start_us` (inclusive) or `ts_close` (exclusive) - convention must be clearly defined.
+**Notes:**
+- Interval-specific tables are used (e.g., `silver.kline_1h`); additional intervals
+  should be added as separate tables (e.g., `silver.kline_4h`).
+- Binance Spot timestamps switch to microseconds on 2025-01-01; ingestion normalizes
+  all timestamps to microseconds.
+
+---
+
+## 3. Gold Tables
+
+Gold tables are derived from Silver tables and optimized for specific research workflows. They are reproducible from Silver and versioned.
 
 ---
 
@@ -418,7 +486,72 @@ Same schema as `silver.quotes`.
 
 ---
 
-### 3.4 `gold.options_surface_grid`
+### 3.4 `gold.l2_state_checkpoint`
+
+Full-depth book checkpoints to accelerate incremental replay over long ranges.
+
+**Source:** Derived from `silver.l2_updates`  
+**Partitioned by:** `["exchange", "date"]`  
+**Cluster/Z-order (recommended):** `["symbol_id", "ts_local_us"]`
+
+| Column | Type | Notes |
+|---|---:|---|
+| date | date | derived from `ts_local_us` in UTC |
+| exchange | string | partitioned by (not stored in Parquet files) |
+| exchange_id | i16 | |
+| symbol_id | i64 | |
+| ts_local_us | i64 | checkpoint timestamp (replay timeline) |
+| bids | list<struct<price_int: i64, size_int: i64>> | descending by price |
+| asks | list<struct<price_int: i64, size_int: i64>> | ascending by price |
+| file_id | i32 | lineage tracking |
+| ingest_seq | i32 | stable ordering within file |
+| file_line_number | i32 | deterministic ordering |
+| checkpoint_kind | string | optional (`periodic` or `snapshot`) |
+
+**Semantics:**
+- Checkpoints store **full depth** state plus the exact stream position used to create them.
+- Safe replay start point for long-range queries (replay forward from checkpoint).
+- Checkpoint build jobs should upsert by `(exchange, date, symbol_id)` to avoid deleting other symbols.
+
+---
+
+### 3.5 `gold.reflexivity_bars`
+
+Dollar-Volume bars (Notional Bars) optimized for Regime Detection. These bars align the "Driver" (Perpetual Trades) with the "Truth Serum" (Spot Trades) and "Market State" (OI, Funding) into a single statistically synchronized timeline.
+
+**Source:** Derived from `silver.trades` (Perp & Spot) and `silver.derivative_ticker`.
+**Partitioned by:** `["exchange", "date"]` (Partitioned by the Perpetual's exchange)
+
+| Column | Type | Notes |
+|---|---:|---|
+| date | date | |
+| exchange | string | |
+| exchange_id | i16 | |
+| symbol_id | i64 | Perpetual Symbol ID |
+| spot_symbol_id | i64 | Associated Spot Symbol ID used for validation |
+| open_ts | i64 | Bar start timestamp (µs) |
+| close_ts | i64 | Bar end timestamp (µs) |
+| open | f64 | Perpetual Price |
+| high | f64 | Perpetual Price |
+| low | f64 | Perpetual Price |
+| close | f64 | Perpetual Price |
+| perp_volume | f64 | Total Notional USD traded on Perp |
+| spot_volume | f64 | Total Notional USD traded on Spot (during same interval) |
+| speculation_ratio | f64 | `perp_volume / (spot_volume + 1.0)` |
+| duration_sec | f64 | Bar duration in seconds |
+| oi_close | f64 | Open Interest at `close_ts` (from `derivative_ticker`) |
+| funding_rate | f64 | Funding Rate at `close_ts` (from `derivative_ticker`) |
+| bar_id | i64 | Cumulative Bar Index |
+| tick_count | i32 | Number of perp trades in bar |
+
+**Logic:**
+- Bars are generated based on **Perpetual Volume Threshold** (e.g., every $10M traded).
+- **Spot Volume** is aggregated via a "sidecar join" over the exact time window of the bar.
+- **State Variables** (OI, Funding) are as-of joined from `silver.derivative_ticker` at `close_ts`.
+
+---
+
+### 3.6 `gold.options_surface_grid`
 
 Options surface snapshots on a time grid for efficient "entire surface at time t" queries.
 
@@ -467,7 +600,7 @@ Most Silver tables include these standard columns:
 | `date` | date | Partition key, derived from `ts_local_us` in UTC |
 | `exchange` | string | Partition key (not stored in Parquet, reconstructed from directory) |
 | `exchange_id` | i16 | Dictionary-encoded exchange ID for joins |
-| `symbol_id` | i32/i64 | Stable identifier from `dim_symbol` |
+| `symbol_id` | i64 | Stable identifier from `dim_symbol` |
 | `ts_local_us` | i64 | Primary replay timeline (arrival time) |
 | `ts_exch_us` | i64 | Exchange time if available |
 | `ingest_seq` | i32 | Stable ordering within file |
@@ -513,7 +646,8 @@ For datasets like `options_chain` where a single day is massive:
 Delta Lake (via Parquet) does not support unsigned integer types `UInt16` and `UInt32`. These are automatically converted to signed types (`Int16` and `Int32`) when written.
 
 - Use `Int16` instead of `UInt16` for `exchange_id`
-- Use `Int32` instead of `UInt32` for `symbol_id`, `ingest_seq`, `file_id`, `flags`
+- Use `Int32` instead of `UInt32` for `ingest_seq`, `file_id`, `flags`
+- Use `Int64` for `symbol_id` to match `dim_symbol`
 - `UInt8` is supported and maps to TINYINT (use for `side`, `asset_type`)
 
 **Timestamp Units:**
@@ -522,7 +656,7 @@ Delta Lake (via Parquet) does not support unsigned integer types `UInt16` and `U
 
 **ID Dictionaries:**
 - `exchange_id`: i16
-- `symbol_id`: i32 (or i64 for `book_snapshot_25` to match `dim_symbol`)
+- `symbol_id`: i64
 
 ---
 
@@ -533,18 +667,20 @@ Delta Lake (via Parquet) does not support unsigned integer types `UInt16` and `U
 | Table | Layer | Partitions | Key Columns |
 |---|---|---|---|
 | `dim_symbol` | Silver (Reference) | none | `symbol_id`, `exchange_id`, `exchange_symbol`, validity range |
-| `ingest_manifest` | Silver (Reference) | none | `exchange`, `data_type`, `date`, `status` |
-| `l2_updates` | Silver | `exchange`, `date` | `ts_local_us`, `symbol_id`, `price_int`, `size_int` |
+| `ingest_manifest` | Silver (Reference) | none | `vendor`, `exchange`, `data_type`, `date`, `status` |
+| `l2_updates` | Silver | `exchange`, `date`, `symbol_id` | `ts_local_us`, `symbol_id`, `price_int`, `size_int` |
 | `book_snapshot_25` | Silver | `exchange`, `date` | `ts_local_us`, `symbol_id`, `bids_px`, `asks_px` |
 | `trades` | Silver | `exchange`, `date` | `ts_local_us`, `symbol_id`, `price_int`, `qty_int` |
 | `quotes` | Silver | `exchange`, `date` | `ts_local_us`, `symbol_id`, `bid_px_int`, `ask_px_int` |
 | `book_ticker` | Silver | `exchange`, `date` | `ts_local_us`, `symbol_id`, `bid_px_int`, `ask_px_int` |
-| `derivative_ticker` | Silver | `exchange`, `date` | `ts_local_us`, `symbol_id`, `mark_px_int`, `funding_rate` |
+| `derivative_ticker` | Silver | `exchange`, `date` | `ts_local_us`, `symbol_id`, `mark_px`, `funding_rate` |
 | `liquidations` | Silver | `exchange`, `date` | `ts_local_us`, `symbol_id`, `price_int`, `qty_int` |
 | `options_chain` | Silver | `exchange`, `date` | `ts_local_us`, `underlying_symbol_id`, `option_symbol_id` |
-| `bars_1m` | Gold | `exchange`, `date` | `ts_bucket_start_us`, `symbol_id`, OHLCV |
+| `kline_1h` | Silver | `exchange`, `date` | `ts_bucket_start_us`, `symbol_id`, OHLCV |
 | `book_snapshot_25_wide` | Gold | `exchange`, `date` | Wide format for legacy tools |
 | `tob_quotes` | Gold | `exchange`, `date` | Fast path for top-of-book |
+| `l2_state_checkpoint` | Gold | `exchange`, `date` | Checkpoints for replay |
+| `reflexivity_bars` | Gold | `exchange`, `date` | Dollar-bars with Spot/OI/Funding context |
 | `options_surface_grid` | Gold | `exchange`, `date` | Time-gridded options surface |
 
 ---
