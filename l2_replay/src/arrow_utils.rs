@@ -15,7 +15,6 @@ use crate::types::{
 
 pub struct UpdateColumns<'a> {
     pub ts_local_us: &'a Int64Array,
-    pub ingest_seq: &'a Int32Array,
     pub file_line_number: &'a Int32Array,
     pub is_snapshot: &'a BooleanArray,
     pub side: ArrayRef,
@@ -28,7 +27,6 @@ pub struct CheckpointUpdateColumns<'a> {
     pub exchange_id: &'a Int16Array,
     pub symbol_id: &'a Int64Array,
     pub ts_local_us: &'a Int64Array,
-    pub ingest_seq: &'a Int32Array,
     pub file_line_number: &'a Int32Array,
     pub is_snapshot: &'a BooleanArray,
     pub side: ArrayRef,
@@ -169,7 +167,6 @@ pub fn build_checkpoint_batch(rows: &[CheckpointRow]) -> Result<RecordBatch> {
         Field::new("bids", DataType::List(Arc::new(list_field.clone())), true),
         Field::new("asks", DataType::List(Arc::new(list_field)), true),
         Field::new("file_id", DataType::Int32, false),
-        Field::new("ingest_seq", DataType::Int32, false),
         Field::new("file_line_number", DataType::Int32, false),
         Field::new("checkpoint_kind", DataType::Utf8, false),
     ]));
@@ -190,7 +187,6 @@ pub fn build_checkpoint_batch(rows: &[CheckpointRow]) -> Result<RecordBatch> {
     ));
 
     let mut file_id_builder = Int32Builder::new();
-    let mut ingest_seq_builder = Int32Builder::new();
     let mut file_line_builder = Int32Builder::new();
     let mut checkpoint_kind_builder = StringBuilder::new();
 
@@ -203,7 +199,6 @@ pub fn build_checkpoint_batch(rows: &[CheckpointRow]) -> Result<RecordBatch> {
         append_levels(&mut bids_builder, &row.bids);
         append_levels(&mut asks_builder, &row.asks);
         file_id_builder.append_value(row.file_id);
-        ingest_seq_builder.append_value(row.ingest_seq);
         file_line_builder.append_value(row.file_line_number);
         checkpoint_kind_builder.append_value(&row.checkpoint_kind);
     }
@@ -217,7 +212,6 @@ pub fn build_checkpoint_batch(rows: &[CheckpointRow]) -> Result<RecordBatch> {
         Arc::new(bids_builder.finish()),
         Arc::new(asks_builder.finish()),
         Arc::new(file_id_builder.finish()),
-        Arc::new(ingest_seq_builder.finish()),
         Arc::new(file_line_builder.finish()),
         Arc::new(checkpoint_kind_builder.finish()),
     ];
@@ -228,7 +222,6 @@ pub fn build_checkpoint_batch(rows: &[CheckpointRow]) -> Result<RecordBatch> {
 pub fn update_columns<'a>(batch: &'a RecordBatch) -> Result<UpdateColumns<'a>> {
     Ok(UpdateColumns {
         ts_local_us: get_array(batch, "ts_local_us")?,
-        ingest_seq: get_array(batch, "ingest_seq")?,
         file_line_number: get_array(batch, "file_line_number")?,
         is_snapshot: get_array(batch, "is_snapshot")?,
         side: batch.column(batch.schema().index_of("side")?).clone(),
@@ -241,7 +234,6 @@ pub fn update_columns<'a>(batch: &'a RecordBatch) -> Result<UpdateColumns<'a>> {
 pub fn update_from_columns(cols: &UpdateColumns<'_>, row: usize) -> Result<L2Update> {
     Ok(L2Update {
         ts_local_us: cols.ts_local_us.value(row),
-        ingest_seq: cols.ingest_seq.value(row),
         file_line_number: cols.file_line_number.value(row),
         is_snapshot: cols.is_snapshot.value(row),
         side: get_u8_value(&cols.side, row)?,
@@ -256,7 +248,6 @@ pub fn checkpoint_update_columns<'a>(batch: &'a RecordBatch) -> Result<Checkpoin
         exchange_id: get_array(batch, "exchange_id")?,
         symbol_id: get_array(batch, "symbol_id")?,
         ts_local_us: get_array(batch, "ts_local_us")?,
-        ingest_seq: get_array(batch, "ingest_seq")?,
         file_line_number: get_array(batch, "file_line_number")?,
         is_snapshot: get_array(batch, "is_snapshot")?,
         side: batch.column(batch.schema().index_of("side")?).clone(),
@@ -276,7 +267,6 @@ pub fn checkpoint_update_from_columns(
     };
     let update = L2Update {
         ts_local_us: cols.ts_local_us.value(row),
-        ingest_seq: cols.ingest_seq.value(row),
         file_line_number: cols.file_line_number.value(row),
         is_snapshot: cols.is_snapshot.value(row),
         side: get_u8_value(&cols.side, row)?,

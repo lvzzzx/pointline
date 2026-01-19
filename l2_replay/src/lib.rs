@@ -19,7 +19,6 @@ mod tests {
 
     fn update(
         ts_local_us: i64,
-        ingest_seq: i32,
         file_line_number: i32,
         is_snapshot: bool,
         side: u8,
@@ -29,7 +28,6 @@ mod tests {
     ) -> L2Update {
         L2Update {
             ts_local_us,
-            ingest_seq,
             file_line_number,
             is_snapshot,
             side,
@@ -42,11 +40,11 @@ mod tests {
     #[test]
     fn snapshot_groups_emit_once() {
         let updates = vec![
-            update(1, 1, 1, false, 0, 100, 5, 10),
-            update(2, 2, 2, false, 1, 101, 3, 10),
-            update(3, 3, 3, true, 0, 99, 1, 10),
-            update(3, 4, 4, true, 1, 102, 2, 10),
-            update(4, 5, 5, false, 0, 100, 4, 10),
+            update(1, 1, false, 0, 100, 5, 10),
+            update(2, 2, false, 1, 101, 3, 10),
+            update(3, 3, true, 0, 99, 1, 10),
+            update(3, 4, true, 1, 102, 2, 10),
+            update(4, 5, false, 0, 100, 4, 10),
         ];
 
         let mut snapshots: Vec<(OrderBook, StreamPos)> = Vec::new();
@@ -68,9 +66,9 @@ mod tests {
     #[test]
     fn snapshot_group_ends_on_non_snapshot() {
         let updates = vec![
-            update(1, 1, 1, true, 0, 100, 1, 10),
-            update(1, 2, 2, false, 1, 101, 2, 10),
-            update(2, 3, 3, false, 0, 99, 1, 10),
+            update(1, 1, true, 0, 100, 1, 10),
+            update(1, 2, false, 1, 101, 2, 10),
+            update(2, 3, false, 0, 99, 1, 10),
         ];
 
         let mut snapshots: Vec<StreamPos> = Vec::new();
@@ -87,11 +85,11 @@ mod tests {
     #[test]
     fn checkpoints_emit_on_update_cadence() {
         let updates = vec![
-            update(1, 1, 1, false, 0, 100, 5, 10),
-            update(2, 2, 2, false, 1, 101, 3, 10),
-            update(3, 3, 3, false, 0, 99, 1, 10),
-            update(4, 4, 4, false, 1, 102, 2, 10),
-            update(5, 5, 5, false, 0, 100, 4, 10),
+            update(1, 1, false, 0, 100, 5, 10),
+            update(2, 2, false, 1, 101, 3, 10),
+            update(3, 3, false, 0, 99, 1, 10),
+            update(4, 4, false, 1, 102, 2, 10),
+            update(5, 5, false, 0, 100, 4, 10),
         ];
 
         let config = ReplayConfig {
@@ -115,9 +113,9 @@ mod tests {
     #[test]
     fn checkpoints_emit_on_time_cadence() {
         let updates = vec![
-            update(0, 1, 1, false, 0, 100, 5, 10),
-            update(3, 2, 2, false, 1, 101, 3, 10),
-            update(10, 3, 3, false, 0, 99, 1, 10),
+            update(0, 1, false, 0, 100, 5, 10),
+            update(3, 2, false, 1, 101, 3, 10),
+            update(10, 3, false, 0, 99, 1, 10),
         ];
 
         let config = ReplayConfig {
@@ -140,8 +138,8 @@ mod tests {
     #[test]
     fn monotonic_validation_panics_on_out_of_order() {
         let updates = vec![
-            update(2, 2, 2, false, 0, 100, 5, 10),
-            update(1, 1, 1, false, 1, 101, 3, 10),
+            update(2, 2, false, 0, 100, 5, 10),
+            update(1, 1, false, 1, 101, 3, 10),
         ];
 
         let config = ReplayConfig {

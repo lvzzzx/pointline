@@ -239,12 +239,10 @@ class DerivativeTickerIngestionService(BaseService):
             file_line_number = pl.col("file_line_number").cast(pl.Int32)
         else:
             file_line_number = pl.int_range(1, df.height + 1, dtype=pl.Int32)
-        ingest_seq = pl.int_range(1, df.height + 1, dtype=pl.Int32)
         return df.with_columns(
             [
                 pl.lit(file_id, dtype=pl.Int32).alias("file_id"),
                 file_line_number.alias("file_line_number"),
-                ingest_seq.alias("ingest_seq"),
             ]
         )
 

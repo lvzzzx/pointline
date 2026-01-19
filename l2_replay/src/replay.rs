@@ -76,7 +76,7 @@ pub fn replay<I, F, G>(
     G: FnMut(&OrderBook, &StreamPos),
 {
     let mut book = OrderBook::default();
-    let mut prev_key: Option<(i64, i32, i32, i32)> = None;
+    let mut prev_key: Option<(i64, i32, i32)> = None;
 
     let mut snapshot_key: Option<(i64, i32)> = None; // (ts_local_us, file_id)
     let mut snapshot_pos: Option<StreamPos> = None;
@@ -89,7 +89,6 @@ pub fn replay<I, F, G>(
     for update in updates {
         let current_key = (
             update.ts_local_us,
-            update.ingest_seq,
             update.file_id,
             update.file_line_number,
         );
@@ -147,7 +146,6 @@ pub fn replay<I, F, G>(
         // 3. Update state
         let pos = StreamPos {
             ts_local_us: update.ts_local_us,
-            ingest_seq: update.ingest_seq,
             file_line_number: update.file_line_number,
             file_id: update.file_id,
         };

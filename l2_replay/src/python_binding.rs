@@ -43,7 +43,6 @@ fn snapshot_with_pos_to_py(py: Python<'_>, snapshot: SnapshotWithPos) -> PyObjec
     dict.set_item("exchange_id", snapshot.exchange_id).ok();
     dict.set_item("symbol_id", snapshot.symbol_id).ok();
     dict.set_item("ts_local_us", snapshot.ts_local_us).ok();
-    dict.set_item("ingest_seq", snapshot.ingest_seq).ok();
     dict.set_item("file_line_number", snapshot.file_line_number).ok();
     dict.set_item("file_id", snapshot.file_id).ok();
     dict.set_item("bids", levels_to_py(py, &snapshot.bids)).ok();
@@ -225,7 +224,6 @@ fn build_state_checkpoints(
 #[derive(FromPyObject)]
 struct PyUpdate {
     ts_local_us: i64,
-    ingest_seq: i32,
     file_line_number: i32,
     is_snapshot: bool,
     side: u8,
@@ -238,7 +236,6 @@ impl From<PyUpdate> for L2Update {
     fn from(update: PyUpdate) -> Self {
         L2Update {
             ts_local_us: update.ts_local_us,
-            ingest_seq: update.ingest_seq,
             file_line_number: update.file_line_number,
             is_snapshot: update.is_snapshot,
             side: update.side,

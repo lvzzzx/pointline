@@ -17,7 +17,7 @@ from pointline.validation_utils import with_expected_exchange_id
 # - Delta Lake (via Parquet) does not support unsigned integer types UInt16 and UInt32
 # - These are automatically converted to signed types (Int16 and Int32) when written
 # - Use Int16 instead of UInt16 for exchange_id
-# - Use Int32 instead of UInt32 for ingest_seq, file_id
+# - Use Int32 instead of UInt32 for file_id
 # - Use Int64 for symbol_id to match dim_symbol
 DERIVATIVE_TICKER_SCHEMA: dict[str, pl.DataType] = {
     "date": pl.Date,
@@ -26,7 +26,6 @@ DERIVATIVE_TICKER_SCHEMA: dict[str, pl.DataType] = {
     "symbol_id": pl.Int64,
     "ts_local_us": pl.Int64,
     "ts_exch_us": pl.Int64,
-    "ingest_seq": pl.Int32,
     "mark_px": pl.Float64,
     "index_px": pl.Float64,
     "last_px": pl.Float64,

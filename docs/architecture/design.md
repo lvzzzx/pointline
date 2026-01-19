@@ -28,11 +28,11 @@ Why:
 - `ts_local_us` (int64 µs)
 
 **Stable ordering key for every table:**
-- `(exchange_id, symbol_id, date, ts_local_us, ingest_seq)`
+- `(exchange_id, symbol_id, date, ts_local_us, file_id, file_line_number)`
 
 Where:
-- `ingest_seq` is a deterministic sequence within the source file (e.g., line number).
-- **Lineage tracking**: In Silver tables, store `file_id` (i32) and `file_line_number` to ensure `ingest_seq` is robust and debuggable. Join with `silver.ingest_manifest` to resolve the original `bronze_file_name`.
+- `file_line_number` is deterministic within the source file; combined with `file_id` it provides a stable tie-break.
+- **Lineage tracking**: In Silver tables, store `file_id` (i32) and `file_line_number`. Join with `silver.ingest_manifest` to resolve the original `bronze_file_name`.
 
 ---
 
@@ -72,7 +72,7 @@ No transformations besides checksums/manifests.
 Convert to Parquet with:
 - integer timestamps
 - integer IDs (dictionary encoding)
-- stable `ingest_seq`
+- stable lineage ordering (`file_id` + `file_line_number`)
 - normalized numeric types (fixed-point ints where possible)
 
 Silver is the canonical research foundation.
@@ -106,13 +106,13 @@ Additional replay accelerator (derived from `silver.l2_updates`):
 Delta Lake (via Parquet) does not support unsigned integer types `UInt16` and `UInt32`.
 These are automatically converted to signed types (`Int16` and `Int32`) when written.
 - Use `Int16` instead of `UInt16` for `exchange_id`
-- Use `Int32` instead of `UInt32` for `ingest_seq`, `file_id`, `flags`
+- Use `Int32` instead of `UInt32` for `file_id`, `file_line_number`, `flags`
 - Use `Int64` for `symbol_id` to match `dim_symbol`
 - `UInt8` is supported and maps to TINYINT (use for `side`, `asset_type`)
 
 **Data Organization inside partitions**:
-- **Z-Order / Cluster by:** `(symbol_id, ingest_seq)`
-- or **Sort by:** `(symbol_id, ts_local_us, ingest_seq)`
+- **Z-Order / Cluster by:** `(symbol_id, ts_local_us)`
+- or **Sort by:** `(symbol_id, ts_local_us, file_id, file_line_number)`
 This boosts pruning for specific symbols without creating thousands of tiny partition directories.
 
 ---
@@ -216,7 +216,6 @@ updates = (
         end_ts_us=1700003600000000,
         columns=[
             "ts_local_us",
-            "ingest_seq",
             "file_id",
             "file_line_number",
             "is_snapshot",
@@ -225,7 +224,7 @@ updates = (
             "size_int",
         ],
     )
-    .sort(["ts_local_us", "ingest_seq", "file_line_number"])
+    .sort(["ts_local_us", "file_id", "file_line_number"])
     .collect()
 )
 
@@ -262,7 +261,6 @@ for row in updates.iter_rows(named=True):
                 "bids": [{"price_int": p, "size_int": s} for p, s in sorted(bids.items(), reverse=True)],
                 "asks": [{"price_int": p, "size_int": s} for p, s in sorted(asks.items())],
                 "file_id": row["file_id"],
-                "ingest_seq": row["ingest_seq"],
                 "file_line_number": row["file_line_number"],
                 "checkpoint_kind": "periodic",
             }
@@ -295,7 +293,7 @@ Snapshots are full top-N book states (e.g., 25 levels).
 - `symbol` is mapped to `symbol_id` via `dim_symbol`.
 - `ts_exch_us` maps from `timestamp`; `ts_local_us` maps from `local_timestamp`.
 - `date` is derived from `ts_local_us` in UTC.
-- `ingest_seq` provides deterministic ordering within the source file.
+- `file_line_number` provides deterministic ordering within the source file.
 
 **List encoding**
 - Convert `asks[0..24].price/amount` and `bids[0..24].price/amount` into lists of length 25.
@@ -399,7 +397,7 @@ Maintain:
 - `book_asks: map(price_int -> size_int)`
 
 Apply in strict order (per symbol, per day):
-- `(ts_local_us ASC, ingest_seq ASC, file_id ASC, file_line_number ASC)`
+- `(ts_local_us ASC, file_id ASC, file_line_number ASC)`
 - Ingest must write **sorted** files within each `exchange/date/symbol_id` partition.
   Readers may skip global sort only if this invariant is guaranteed.
 
@@ -423,7 +421,7 @@ Use snapshots (top-25) to accelerate random access:
 When joining streams:
 - Use **as-of join** on `ts_local_us` by default:
   - join each event with the last-known book snapshot/quote/ticker at or before that time
-- Keep `ingest_seq` to break ties within the same microsecond.
+- Use `file_id` + `file_line_number` to break ties within the same microsecond.
 
 This prevents lookahead bias from “future” book states.
 
@@ -468,7 +466,7 @@ Stages:
 2. **Parse & Normalize (Silver)**
    - read CSV.gz
    - cast types
-   - compute `ingest_seq`
+   - preserve `file_line_number`
    - encode instrument IDs
    - convert price/qty to fixed-point ints (using metadata)
    - **Write to Delta Table**:
@@ -511,7 +509,7 @@ idempotent, provides auditability, and enables fast skip logic.
 
 **Lineage guarantees:**
 - Silver tables **must** include `file_id` and `file_line_number`.
-- `ingest_seq` is derived from `file_line_number` to ensure deterministic ordering.
+- `file_line_number` provides deterministic ordering within each file.
 - Full lineage (source file path) is retrieved by joining Silver tables with `silver.ingest_manifest` on `file_id`.
 
 ---

@@ -10,7 +10,6 @@ fn build_updates(count: usize) -> Vec<L2Update> {
         let size_int = if i % 10 == 0 { 0 } else { 1 + (i as i64 % 100) };
         updates.push(L2Update {
             ts_local_us: i as i64,
-            ingest_seq: (i % i32::MAX as usize) as i32,
             file_line_number: (i % i32::MAX as usize) as i32,
             is_snapshot: false,
             side,

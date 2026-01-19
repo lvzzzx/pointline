@@ -399,21 +399,15 @@ class QuotesIngestionService(BaseService):
         return True, ""
 
     def _add_lineage(self, df: pl.DataFrame, file_id: int) -> pl.DataFrame:
-        """Add lineage tracking columns: file_id, file_line_number, and ingest_seq.
-        
-        ingest_seq is derived from file_line_number for deterministic ordering
-        within the source file.
-        """
+        """Add lineage tracking columns: file_id and file_line_number."""
         # Use Int32 to match Delta Lake storage (Delta Lake doesn't support UInt32)
         if "file_line_number" in df.columns:
             file_line_number = pl.col("file_line_number").cast(pl.Int32)
         else:
             file_line_number = pl.int_range(1, df.height + 1, dtype=pl.Int32)
-        ingest_seq = pl.int_range(1, df.height + 1, dtype=pl.Int32)
         return df.with_columns([
             pl.lit(file_id, dtype=pl.Int32).alias("file_id"),
             file_line_number.alias("file_line_number"),
-            ingest_seq.alias("ingest_seq"),  # Deterministic order within file
         ])
 
     def _add_metadata(self, df: pl.DataFrame, exchange: str, exchange_id: int) -> pl.DataFrame:

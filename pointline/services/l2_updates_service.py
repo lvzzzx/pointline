@@ -194,16 +194,10 @@ class L2UpdatesIngestionService(BaseService):
                             (pl.col("ts_local_us") < pl.col("ts_local_us").shift(1))
                             | (
                                 (pl.col("ts_local_us") == pl.col("ts_local_us").shift(1))
-                                & (pl.col("ingest_seq") < pl.col("ingest_seq").shift(1))
-                            )
-                            | (
-                                (pl.col("ts_local_us") == pl.col("ts_local_us").shift(1))
-                                & (pl.col("ingest_seq") == pl.col("ingest_seq").shift(1))
                                 & (pl.col("file_id") < pl.col("file_id").shift(1))
                             )
                             | (
                                 (pl.col("ts_local_us") == pl.col("ts_local_us").shift(1))
-                                & (pl.col("ingest_seq") == pl.col("ingest_seq").shift(1))
                                 & (pl.col("file_id") == pl.col("file_id").shift(1))
                                 & (
                                     pl.col("file_line_number")
@@ -223,7 +217,6 @@ class L2UpdatesIngestionService(BaseService):
                     # Joins can reorder rows; replay requires strict ordering.
                     df = df.sort([
                         "ts_local_us",
-                        "ingest_seq",
                         "file_id",
                         "file_line_number",
                     ])
@@ -256,13 +249,11 @@ class L2UpdatesIngestionService(BaseService):
 
                     first_key = (
                         int(df["ts_local_us"][0]),
-                        int(df["ingest_seq"][0]),
                         int(df["file_id"][0]),
                         int(df["file_line_number"][0]),
                     )
                     last_key = (
                         int(df["ts_local_us"][-1]),
-                        int(df["ingest_seq"][-1]),
                         int(df["file_id"][-1]),
                         int(df["file_line_number"][-1]),
                     )
@@ -536,7 +527,6 @@ class L2UpdatesIngestionService(BaseService):
         return df.with_columns([
             pl.lit(file_id, dtype=pl.Int32).alias("file_id"),
             file_line_number.alias("file_line_number"),
-            file_line_number.alias("ingest_seq"),
         ])
 
     def _add_metadata(self, df: pl.DataFrame, exchange: str, exchange_id: int) -> pl.DataFrame:

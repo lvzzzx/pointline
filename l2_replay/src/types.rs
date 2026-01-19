@@ -4,7 +4,6 @@ use std::fmt;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct L2Update {
     pub ts_local_us: i64,
-    pub ingest_seq: i32,
     pub file_line_number: i32,
     pub is_snapshot: bool,
     pub side: u8, // 0 = bid, 1 = ask
@@ -492,7 +491,6 @@ impl fmt::Debug for OrderBook {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct StreamPos {
     pub ts_local_us: i64,
-    pub ingest_seq: i32,
     pub file_line_number: i32,
     pub file_id: i32,
 }
@@ -518,7 +516,6 @@ impl Default for ReplayConfig {
 pub struct Checkpoint {
     pub ts_local_us: i64,
     pub file_id: i32,
-    pub ingest_seq: i32,
     pub file_line_number: i32,
     pub bids: Vec<(i64, i64)>,
     pub asks: Vec<(i64, i64)>,
@@ -538,7 +535,6 @@ pub struct SnapshotWithPos {
     pub exchange_id: i16,
     pub symbol_id: i64,
     pub ts_local_us: i64,
-    pub ingest_seq: i32,
     pub file_line_number: i32,
     pub file_id: i32,
     pub bids: Vec<(i64, i64)>,
@@ -561,7 +557,6 @@ pub struct CheckpointRow {
     pub bids: Vec<(i64, i64)>,
     pub asks: Vec<(i64, i64)>,
     pub file_id: i32,
-    pub ingest_seq: i32,
     pub file_line_number: i32,
     pub checkpoint_kind: String,
 }

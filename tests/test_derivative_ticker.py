@@ -50,7 +50,6 @@ def test_normalize_derivative_ticker_schema_fills_optional() -> None:
             pl.lit("binance-futures").alias("exchange"),
             pl.lit(2, dtype=pl.Int16).alias("exchange_id"),
             pl.lit(100, dtype=pl.Int64).alias("symbol_id"),
-            pl.lit(1, dtype=pl.Int32).alias("ingest_seq"),
             pl.lit(1, dtype=pl.Int32).alias("file_id"),
             pl.lit(1, dtype=pl.Int32).alias("file_line_number"),
             pl.lit("2024-05-01").str.strptime(pl.Date, "%Y-%m-%d").alias("date"),

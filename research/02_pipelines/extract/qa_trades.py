@@ -44,7 +44,6 @@ def _load_trades(symbol_id: int, start_ts_us: int, end_ts_us: int, ts_col: str) 
         "price_int",
         "qty_int",
         "trade_id",
-        "ingest_seq",
         "file_id",
         "file_line_number",
     ]
@@ -68,14 +67,12 @@ def _dedup_count(trades: pl.DataFrame) -> int | None:
 
 
 def _choose_order_columns(trades: pl.DataFrame, ts_col: str) -> tuple[list[str], str]:
-    if "ingest_seq" in trades.columns and trades["ingest_seq"].null_count() < trades.height:
-        return ["ingest_seq"], "ingest_seq"
     if (
         "file_id" in trades.columns
         and "file_line_number" in trades.columns
         and trades["file_id"].null_count() < trades.height
     ):
-        return ["file_id", "file_line_number"], "file_id,file_line_number"
+        git return ["file_id", "file_line_number"], "file_id,file_line_number"
     return [ts_col], ts_col
 
 

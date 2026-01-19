@@ -573,7 +573,7 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help=(
             "Skip global sort and assume updates are already ordered by "
-            "ts_local_us, ingest_seq, file_line_number"
+            "ts_local_us, file_id, file_line_number"
         ),
     )
     l2_state_checkpoint.set_defaults(func=cmd_l2_state_checkpoint_build)

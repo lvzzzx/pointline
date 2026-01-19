@@ -26,7 +26,7 @@ from pointline.validation_utils import with_expected_exchange_id
 # - Delta Lake (via Parquet) does not support unsigned integer types UInt16 and UInt32
 # - These are automatically converted to signed types (Int16 and Int32) when written
 # - Use Int16 instead of UInt16 for exchange_id
-# - Use Int32 instead of UInt32 for symbol_id, ingest_seq, file_id
+# - Use Int32 instead of UInt32 for symbol_id, file_id
 # - UInt8 is supported and maps to TINYINT
 #
 # This schema is the single source of truth - all code should use these types directly.
@@ -37,7 +37,6 @@ QUOTES_SCHEMA: dict[str, pl.DataType] = {
     "symbol_id": pl.Int64,  # Match dim_symbol's symbol_id type
     "ts_local_us": pl.Int64,
     "ts_exch_us": pl.Int64,
-    "ingest_seq": pl.Int32,  # Delta Lake stores as Int32 (not UInt32)
     "bid_px_int": pl.Int64,
     "bid_sz_int": pl.Int64,
     "ask_px_int": pl.Int64,

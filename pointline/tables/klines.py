@@ -26,7 +26,6 @@ KLINE_SCHEMA: dict[str, pl.DataType] = {
     "taker_buy_quote_qty": pl.Float64,
     "file_id": pl.Int32,
     "file_line_number": pl.Int32,
-    "ingest_seq": pl.Int32,
 }
 
 RAW_KLINE_COLUMNS = [

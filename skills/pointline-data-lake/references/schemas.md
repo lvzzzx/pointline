@@ -155,7 +155,7 @@ Tracks ingestion status per Bronze file. Enables idempotent re-runs, provides au
 
 **Lineage Guarantees:**
 - Silver tables **must** include `file_id` and `file_line_number`.
-- `ingest_seq` is derived from `file_line_number` to ensure deterministic ordering.
+- `file_line_number` provides deterministic ordering within each source file.
 - Full lineage (source file path) is retrieved by joining Silver tables with `silver.ingest_manifest` on `file_id`.
 
 ---
@@ -173,7 +173,6 @@ Silver tables are the canonical research foundation. They are normalized, typed 
 - `symbol_id` (i64): Stable identifier from `dim_symbol`
 - `ts_local_us` (i64): Primary replay timeline (arrival time)
 - `ts_exch_us` (i64): Exchange time if available
-- `ingest_seq` (i32): Stable ordering within file
 - `file_id` (i32): Lineage tracking (join with `ingest_manifest`)
 - `file_line_number` (i32): Lineage tracking (deterministic ordering)
 
@@ -197,7 +196,6 @@ Incremental Level 2 order book updates from Tardis `incremental_book_L2`. Update
 | symbol_id | i64 | partitioned by (not stored in Parquet files) |
 | ts_local_us | i64 | primary replay timeline |
 | ts_exch_us | i64 | exchange time if available |
-| ingest_seq | i32 | stable ordering within file |
 | is_snapshot | bool | snapshot row marker |
 | side | u8 | 0=bid, 1=ask |
 | price_int | i64 | fixed-point ticks |
@@ -214,7 +212,7 @@ Incremental Level 2 order book updates from Tardis `incremental_book_L2`. Update
 - If a new snapshot appears after incremental updates, **reset book state** before applying it.
 
 **Reconstruction Order (per symbol, per day):** Apply updates in strict order:
-`(ts_local_us ASC, ingest_seq ASC, file_id ASC, file_line_number ASC)`.
+`(ts_local_us ASC, file_id ASC, file_line_number ASC)`.
 Ingest must write sorted files within each `exchange/date/symbol_id` partition to avoid a
 global sort at replay time.
 
@@ -235,7 +233,6 @@ Full top-25 order book snapshots from Tardis `book_snapshot_25`.
 | symbol_id | i64 | match dim_symbol type |
 | ts_local_us | i64 | primary replay timeline |
 | ts_exch_us | i64 | exchange time if available |
-| ingest_seq | i32 | stable ordering within file |
 | bids_px | list<i64> | length 25 (nulls for missing levels) |
 | bids_sz | list<i64> | length 25 (nulls for missing levels) |
 | asks_px | list<i64> | length 25 (nulls for missing levels) |
@@ -282,7 +279,6 @@ Trade executions from Tardis `trades` dataset.
 | symbol_id | i64 | |
 | ts_local_us | i64 | |
 | ts_exch_us | i64 | |
-| ingest_seq | i32 | |
 | trade_id | string | optional depending on venue |
 | side | u8 | 0=buy,1=sell,2=unknown |
 | price_int | i64 | fixed-point |
@@ -308,7 +304,6 @@ Top-of-book quotes from Tardis `quotes` dataset or derived from L2.
 | symbol_id | i64 | |
 | ts_local_us | i64 | |
 | ts_exch_us | i64 | |
-| ingest_seq | i32 | |
 | bid_px_int | i64 | fixed-point |
 | bid_sz_int | i64 | fixed-point |
 | ask_px_int | i64 | fixed-point |
@@ -346,7 +341,6 @@ Derivative market data including mark/index, funding, open interest, etc.
 | symbol_id | i64 | |
 | ts_local_us | i64 | |
 | ts_exch_us | i64 | |
-| ingest_seq | i32 | |
 | mark_px | f64 | keep float to preserve precision |
 | index_px | f64 | keep float to preserve precision |
 | last_px | f64 | keep float to preserve precision |
@@ -377,7 +371,6 @@ Liquidation events from Tardis `liquidations` dataset.
 | symbol_id | i64 | |
 | ts_local_us | i64 | |
 | ts_exch_us | i64 | |
-| ingest_seq | i32 | |
 | liq_id | string | |
 | side | u8 | |
 | price_int | i64 | fixed-point |
@@ -403,7 +396,6 @@ Options chain data, typically cross-sectional and heavy. Store updates per contr
 | option_symbol_id | i64 | contract |
 | ts_local_us | i64 | |
 | ts_exch_us | i64 | |
-| ingest_seq | i32 | |
 | option_type | u8 | call/put |
 | strike_int | i64 | fixed-point |
 | expiry_ts_us | i64 | |
@@ -446,7 +438,6 @@ Vendor-provided 1h OHLCV bars from Binance public data (Spot + USD-M futures).
 | taker_buy_quote_qty | f64 | taker buy quote volume |
 | file_id | i32 | lineage tracking |
 | file_line_number | i32 | lineage tracking |
-| ingest_seq | i32 | deterministic ordering within file |
 
 **Notes:**
 - Interval-specific tables are used (e.g., `silver.kline_1h`); additional intervals
@@ -504,7 +495,6 @@ Full-depth book checkpoints to accelerate incremental replay over long ranges.
 | bids | list<struct<price_int: i64, size_int: i64>> | descending by price |
 | asks | list<struct<price_int: i64, size_int: i64>> | ascending by price |
 | file_id | i32 | lineage tracking |
-| ingest_seq | i32 | stable ordering within file |
 | file_line_number | i32 | deterministic ordering |
 | checkpoint_kind | string | optional (`periodic` or `snapshot`) |
 
@@ -603,11 +593,10 @@ Most Silver tables include these standard columns:
 | `symbol_id` | i64 | Stable identifier from `dim_symbol` |
 | `ts_local_us` | i64 | Primary replay timeline (arrival time) |
 | `ts_exch_us` | i64 | Exchange time if available |
-| `ingest_seq` | i32 | Stable ordering within file |
 | `file_id` | i32 | Lineage tracking (join with `ingest_manifest`) |
 | `file_line_number` | i32 | Lineage tracking (deterministic ordering) |
 
-**Stable Ordering Key:** `(exchange_id, symbol_id, date, ts_local_us, ingest_seq)`
+**Stable Ordering Key:** `(exchange_id, symbol_id, date, ts_local_us, file_id, file_line_number)`
 
 ---
 
@@ -627,8 +616,8 @@ Most Silver tables include these standard columns:
 - Instead, rely on **Z-Ordering** (or local sorting) within the daily partition to cluster data by `symbol_id`.
 
 **Data Organization inside partitions:**
-- **Z-Order / Cluster by:** `(symbol_id, ingest_seq)`
-- or **Sort by:** `(symbol_id, ts_local_us, ingest_seq)`
+- **Z-Order / Cluster by:** `(symbol_id, ts_local_us)`
+- or **Sort by:** `(symbol_id, ts_local_us, file_id, file_line_number)`
 
 This boosts pruning for specific symbols without creating thousands of tiny partition directories.
 
@@ -646,7 +635,7 @@ For datasets like `options_chain` where a single day is massive:
 Delta Lake (via Parquet) does not support unsigned integer types `UInt16` and `UInt32`. These are automatically converted to signed types (`Int16` and `Int32`) when written.
 
 - Use `Int16` instead of `UInt16` for `exchange_id`
-- Use `Int32` instead of `UInt32` for `ingest_seq`, `file_id`, `flags`
+- Use `Int32` instead of `UInt32` for `file_id`, `file_line_number`, `flags`
 - Use `Int64` for `symbol_id` to match `dim_symbol`
 - `UInt8` is supported and maps to TINYINT (use for `side`, `asset_type`)
 

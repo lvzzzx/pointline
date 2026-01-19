@@ -14,11 +14,10 @@ and the `silver.l2_updates` update rules used in this repository.
 ## 2. Non-negotiable Semantics
 
 - **Replay timeline:** `ts_local_us` (arrival time) only.
-- **Stable ordering (per symbol):** `(ts_local_us, ingest_seq)` ascending.
-  If multiple files per symbol/day are possible, add `file_id` and `file_line_number`.
+- **Stable ordering (per symbol):** `(ts_local_us, file_id, file_line_number)` ascending.
 - **Ingest-ordered writes:** `silver.l2_updates` is partitioned by
   `exchange/date/symbol_id` and written sorted by
-  `(ts_local_us, ingest_seq, file_id, file_line_number)` within each partition.
+  `(ts_local_us, file_id, file_line_number)` within each partition.
   Replay may skip a global sort only when this invariant is guaranteed.
 - **Single-symbol replay:** the engine operates on one `exchange_id + symbol_id` stream
   at a time; callers must filter before replay.
@@ -53,7 +52,6 @@ Responsibilities:
 ```rust
 struct L2Update {
     ts_local_us: i64,
-    ingest_seq: i32,
     file_line_number: i32,
     is_snapshot: bool,
     side: u8,        // 0 = bid, 1 = ask
@@ -69,7 +67,6 @@ struct OrderBook {
 
 struct StreamPos {
     ts_local_us: i64,
-    ingest_seq: i32,
     file_line_number: i32,
     file_id: i32,
 }
@@ -90,8 +87,7 @@ struct ReplayConfig {
 }
 ```
 
-**Ordering key:** `(ts_local_us, ingest_seq)` ascending (single file per symbol/day).  
-If multiple files per symbol/day are possible, add `file_id` and `file_line_number`.
+**Ordering key:** `(ts_local_us, file_id, file_line_number)` ascending.  
 `StreamPos` captures the exact replay position for checkpoints and reproducibility.
 
 ### 5.2 Replay Function
@@ -173,7 +169,7 @@ researcher documentation.
 ## 9. Determinism Guardrails
 
 - Enforce sorted input; optionally assert monotonicity in debug mode.
-- Include `(file_id, ingest_seq, file_line_number)` in checkpoints to make replays
+- Include `(file_id, file_line_number)` in checkpoints to make replays
   provably reproducible.
 - Never use `ts_exch_us` for replay ordering.
 

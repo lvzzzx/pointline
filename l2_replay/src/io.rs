@@ -47,24 +47,19 @@ pub fn parquet_read_session_config() -> SessionConfig {
 }
 
 /// Constructs a lexicographical comparison expression to resume replay strictly after a given position.
-/// This handles cases where multiple updates have the same timestamp by checking ingest_seq,
-/// file_id, and file_line_number in order.
+/// This handles cases where multiple updates have the same timestamp by checking file_id and
+/// file_line_number in order.
 pub fn after_pos_expr(pos: &StreamPos) -> Expr {
     let ts = lit(pos.ts_local_us);
-    let ingest = lit(pos.ingest_seq);
     let file_id = lit(pos.file_id);
     let line = lit(pos.file_line_number);
 
     col("ts_local_us")
         .gt(ts.clone())
         .or(col("ts_local_us").eq(ts).and(
-            col("ingest_seq").gt(ingest.clone()).or(col("ingest_seq").eq(ingest).and(
-                col("file_id").gt(file_id.clone()).or(
-                    col("file_id")
-                        .eq(file_id)
-                        .and(col("file_line_number").gt(line)),
-                ),
-            )),
+            col("file_id")
+                .gt(file_id.clone())
+                .or(col("file_id").eq(file_id).and(col("file_line_number").gt(line))),
         ))
 }
 
@@ -140,12 +135,10 @@ pub async fn latest_checkpoint(
         col("bids"),
         col("asks"),
         col("file_id"),
-        col("ingest_seq"),
         col("file_line_number"),
     ])?;
     df = df.sort(vec![
         col("ts_local_us").sort(false, true),
-        col("ingest_seq").sort(false, true),
         col("file_id").sort(false, true),
         col("file_line_number").sort(false, true),
     ])?;
@@ -163,7 +156,6 @@ pub async fn latest_checkpoint(
     let row = 0;
     let ts = get_i64(batch, "ts_local_us", row)?;
     let file_id = get_i32(batch, "file_id", row)?;
-    let ingest_seq = get_i32(batch, "ingest_seq", row)?;
     let file_line_number = get_i32(batch, "file_line_number", row)?;
 
     let bids = get_levels(batch, "bids", row)?;
@@ -172,7 +164,6 @@ pub async fn latest_checkpoint(
     Ok(Some(Checkpoint {
         ts_local_us: ts,
         file_id,
-        ingest_seq,
         file_line_number,
         bids,
         asks,
@@ -273,7 +264,6 @@ pub async fn build_updates_df(
 
     df = df.select(vec![
         col("ts_local_us"),
-        col("ingest_seq"),
         col("file_line_number"),
         col("is_snapshot"),
         col("side"),
@@ -376,7 +366,6 @@ pub async fn build_checkpoint_updates_df(
             lit(symbol_id).alias("symbol_id")
         },
         col("ts_local_us"),
-        col("ingest_seq"),
         col("file_line_number"),
         col("is_snapshot"),
         col("side"),
@@ -387,7 +376,6 @@ pub async fn build_checkpoint_updates_df(
     if !assume_sorted {
         df = df.sort(vec![
             col("ts_local_us").sort(true, true),
-            col("ingest_seq").sort(true, true),
             col("file_id").sort(true, true),
             col("file_line_number").sort(true, true),
         ])?;

@@ -161,7 +161,6 @@ def test_normalize_book_snapshots_schema():
         "symbol_id": [100, 100],
         "ts_local_us": [base_ts, base_ts + 1_000_000],
         "ts_exch_us": [base_ts + 100_000, base_ts + 1_100_000],
-        "ingest_seq": [1, 2],
         "bids_px": [[50000.0, None] * 12 + [None], [50001.0, None] * 12 + [None]],
         "bids_sz": [[0.1, None] * 12 + [None], [0.2, None] * 12 + [None]],
         "asks_px": [[50000.5, None] * 12 + [None], [50001.5, None] * 12 + [None]],

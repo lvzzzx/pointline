@@ -90,7 +90,6 @@ pub async fn snapshot_at_delta(
         book.seed_from_levels(&checkpoint.bids, &checkpoint.asks);
         min_pos = Some(StreamPos {
             ts_local_us: checkpoint.ts_local_us,
-            ingest_seq: checkpoint.ingest_seq,
             file_line_number: checkpoint.file_line_number,
             file_id: checkpoint.file_id,
         });
@@ -165,7 +164,6 @@ pub async fn replay_between_delta(
         book.seed_from_levels(&checkpoint.bids, &checkpoint.asks);
         min_pos = Some(StreamPos {
             ts_local_us: checkpoint.ts_local_us,
-            ingest_seq: checkpoint.ingest_seq,
             file_line_number: checkpoint.file_line_number,
             file_id: checkpoint.file_id,
         });
@@ -195,7 +193,6 @@ pub async fn replay_between_delta(
         Field::new("exchange_id", DataType::Int16, false),
         Field::new("symbol_id", DataType::Int64, false),
         Field::new("ts_local_us", DataType::Int64, false),
-        Field::new("ingest_seq", DataType::Int32, false),
         Field::new("file_line_number", DataType::Int32, false),
         Field::new("file_id", DataType::Int32, false),
         Field::new("bids", DataType::List(Arc::new(list_field.clone())), true),
@@ -205,7 +202,6 @@ pub async fn replay_between_delta(
     let mut exchange_id_builder = Int16Builder::new();
     let mut symbol_id_builder = Int64Builder::new();
     let mut ts_builder = Int64Builder::new();
-    let mut ingest_seq_builder = Int32Builder::new();
     let mut file_line_builder = Int32Builder::new();
     let mut file_id_builder = Int32Builder::new();
 
@@ -272,7 +268,6 @@ pub async fn replay_between_delta(
                             exchange_id_builder.append_value(exchange_id);
                             symbol_id_builder.append_value(symbol_id);
                             ts_builder.append_value(pos.ts_local_us);
-                            ingest_seq_builder.append_value(pos.ingest_seq);
                             file_line_builder.append_value(pos.file_line_number);
                             file_id_builder.append_value(pos.file_id);
                             append_levels(&mut bids_builder, &bids);
@@ -298,7 +293,6 @@ pub async fn replay_between_delta(
 
             last_pos = Some(StreamPos {
                 ts_local_us: update.ts_local_us,
-                ingest_seq: update.ingest_seq,
                 file_line_number: update.file_line_number,
                 file_id: update.file_id,
             });
@@ -320,7 +314,6 @@ pub async fn replay_between_delta(
                 exchange_id_builder.append_value(exchange_id);
                 symbol_id_builder.append_value(symbol_id);
                 ts_builder.append_value(pos.ts_local_us);
-                ingest_seq_builder.append_value(pos.ingest_seq);
                 file_line_builder.append_value(pos.file_line_number);
                 file_id_builder.append_value(pos.file_id);
                 append_levels(&mut bids_builder, &bids);
@@ -360,7 +353,6 @@ pub async fn replay_between_delta(
         Arc::new(exchange_id_builder.finish()),
         Arc::new(symbol_id_builder.finish()),
         Arc::new(ts_builder.finish()),
-        Arc::new(ingest_seq_builder.finish()),
         Arc::new(file_line_builder.finish()),
         Arc::new(file_id_builder.finish()),
         Arc::new(bids_builder.finish()),
@@ -421,7 +413,7 @@ pub async fn build_state_checkpoints_delta(
     let mut book = OrderBook::default();
     let mut reset = SnapshotReset::default();
     let mut cadence = CadenceState::default();
-    let mut prev_key: Option<(i64, i32, i32, i32)> = None;
+    let mut prev_key: Option<(i64, i32, i32)> = None;
 
     // State for atomic processing
     let mut last_pos: Option<StreamPos> = None;
@@ -445,7 +437,6 @@ pub async fn build_state_checkpoints_delta(
             if validate_monotonic {
                 let key = (
                     update.ts_local_us,
-                    update.ingest_seq,
                     update.file_id,
                     update.file_line_number,
                 );
@@ -482,7 +473,6 @@ pub async fn build_state_checkpoints_delta(
                             bids,
                             asks,
                             file_id: pos.file_id,
-                            ingest_seq: pos.ingest_seq,
                             file_line_number: pos.file_line_number,
                             checkpoint_kind: "periodic".to_string(),
                         });
@@ -496,7 +486,6 @@ pub async fn build_state_checkpoints_delta(
 
             last_pos = Some(StreamPos {
                 ts_local_us: update.ts_local_us,
-                ingest_seq: update.ingest_seq,
                 file_line_number: update.file_line_number,
                 file_id: update.file_id,
             });
@@ -522,7 +511,6 @@ pub async fn build_state_checkpoints_delta(
                 bids,
                 asks,
                 file_id: pos.file_id,
-                ingest_seq: pos.ingest_seq,
                 file_line_number: pos.file_line_number,
                 checkpoint_kind: "periodic".to_string(),
             });

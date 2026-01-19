@@ -12,16 +12,15 @@ except ImportError:
 
 def test_lazy_scan_sort_collect_streaming(tmp_path):
     csv_path = tmp_path / "l2_updates_raw.csv"
-    csv_path.write_text("ts_local_us,ingest_seq\n2,1\n1,1\n1,1\n")
+    csv_path.write_text("ts_local_us\n2\n1\n1\n")
 
     lf = pl.scan_csv(csv_path).with_row_index("file_line_number", offset=1)
     df = (
-        lf.sort(["ts_local_us", "ingest_seq", "file_line_number"])
+        lf.sort(["ts_local_us", "file_line_number"])
         .collect(engine="streaming")
     )
 
     assert df["ts_local_us"].to_list() == [1, 1, 2]
-    assert df["ingest_seq"].to_list() == [1, 1, 1]
     assert df["file_line_number"].to_list() == [2, 3, 1]
 
 

@@ -23,7 +23,7 @@ from pointline.validation_utils import with_expected_exchange_id
 #
 # Delta Lake Integer Type Limitations:
 # - Use Int16 instead of UInt16 for exchange_id
-# - Use Int32 instead of UInt32 for ingest_seq, file_id, file_line_number
+# - Use Int32 instead of UInt32 for file_id, file_line_number
 # - Use Int64 for symbol_id to match dim_symbol
 # - UInt8 is supported and maps to TINYINT (use for side)
 #
@@ -35,7 +35,6 @@ L2_UPDATES_SCHEMA: dict[str, pl.DataType] = {
     "symbol_id": pl.Int64,
     "ts_local_us": pl.Int64,
     "ts_exch_us": pl.Int64,
-    "ingest_seq": pl.Int32,
     "side": pl.UInt8,       # 0=bid, 1=ask
     "price_int": pl.Int64,  # Fixed-point
     "size_int": pl.Int64,   # Fixed-point (absolute size)
