@@ -1,0 +1,19 @@
+# Fill this for each experiment.
+
+name: exp_YYYY-MM-DD_name
+lake_root:
+
+ts_col: ts_local_us
+
+symbols:
+  - exchange: deribit
+    symbol: BTC-PERPETUAL
+    symbol_id:
+    valid_from_ts:
+    valid_until_ts:
+
+date_range:
+  start:
+  end:
+
+params: {}
