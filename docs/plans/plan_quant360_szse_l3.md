@@ -90,7 +90,15 @@ pro = ts.pro_api()
 
 **Notes:**
 - Tushare doesn't provide tick_size/lot_size - use standard defaults
-- SZSE and SSE both use: tick_size=0.01 CNY, lot_size=100 shares
+- **SZSE and SSE both use:**
+  - **tick_size = 0.01 CNY** (1 fen, minimum price increment)
+  - **lot_size = 100 shares** (1 lot = 1手, standard trading unit)
+  - **IMPORTANT:** Regular trades MUST be in multiples of 100 shares
+  - **Exception:** Odd lots (<100 shares) allowed only when selling remaining shares
+- Use **tick-based encoding** for prices: `price_increment = 0.01`
+- Use **lot-based encoding** for quantities: `amount_increment = 100`
+  - This means `qty_int = 1` represents 100 shares
+  - `qty_int = 10` represents 1,000 shares
 - Special cases (ST stocks, etc.) can be handled with manual updates later
 
 ### 0.4 Implementation: Tushare Client Module
@@ -529,6 +537,26 @@ SZSE_L3_ORDERS_SCHEMA = {
 - `ts_local_us` - Arrival time timeline (use TransactTime as proxy for now)
 - Fixed-point encoding using `dim_symbol` increments
 
+**Quantity Encoding - LOT-BASED (100 shares per lot):**
+```
+Raw data: OrderQty = 500 shares
+Encoding: order_qty_int = 500 / 100 = 5
+Storage: order_qty_int = 5 (Int64)
+Decoding: order_qty = 5 * 100 = 500 shares
+
+Example values:
+- 100 shares → order_qty_int = 1
+- 500 shares → order_qty_int = 5
+- 1000 shares → order_qty_int = 10
+- 10000 shares → order_qty_int = 100
+```
+
+**IMPORTANT: Odd Lot Handling**
+- Regular orders: MUST be multiples of 100 shares (validate and warn)
+- Odd lots (<100 shares): Only allowed when selling remaining shares
+- If odd lot detected: Log warning but allow (encode as fractional, e.g., 50 shares → 0.5)
+- Most trades will be exact multiples of 100
+
 ### 1.2 Silver Table: `szse_l3_ticks` (Executions & Cancellations)
 
 **Purpose:** Trade executions and order cancellations
@@ -560,10 +588,22 @@ SZSE_L3_TICKS_SCHEMA = {
 - `bid_appl_seq_num` / `offer_appl_seq_num` - Link to orders in `szse_l3_orders`
 - `exec_type` - Fill (trade) or Cancel
 
+**Quantity Encoding - Same LOT-BASED as orders:**
+```
+Fill example: Qty = 300 shares
+Encoding: qty_int = 300 / 100 = 3
+Storage: qty_int = 3 (Int64)
+Decoding: qty = 3 * 100 = 300 shares
+```
+
 **Semantic Notes:**
 - Fill: Both bid_appl_seq_num and offer_appl_seq_num are non-zero
 - Cancel: One of bid_appl_seq_num or offer_appl_seq_num is non-zero
 - Market orders may execute immediately (appear only in ticks, not in book)
+- **Partial fills allowed:** A 500-share order can fill in multiple ticks:
+  - Tick 1: Qty=300 shares (qty_int=3)
+  - Tick 2: Qty=200 shares (qty_int=2)
+  - Both ticks reference the same order via appl_seq_num
 
 ## Phase 2: Bronze Layer Integration
 
@@ -632,6 +672,8 @@ def validate_orders(df: pl.DataFrame) -> pl.DataFrame:
     - ord_type in [1, 2]
     - price >= 0 (0 allowed for market orders)
     - order_qty > 0
+    - **CRITICAL: order_qty must be multiple of 100 (lot size)**
+      - Exception: Allow odd lots (<100) for specific cases (log warning)
     - ts_local_us monotonic within file
 
     Filter invalid rows, log warnings.
@@ -644,6 +686,21 @@ def encode_fixed_point_orders(
     """
     Encode price and order_qty to fixed-point integers.
     Join with dim_symbol to get price_increment and amount_increment.
+
+    **LOT-BASED ENCODING:**
+    - amount_increment = 100 shares (1 lot)
+    - qty_int = order_qty / 100
+    - Example: 500 shares → qty_int = 5
+    - Example: 100 shares → qty_int = 1
+    - Odd lots (e.g., 50 shares) → qty_int = 0.5 (stored as float temporarily,
+      then multiplied by 100 to get 50 in final encoding)
+
+    **IMPORTANT:** The encoding preserves the original quantity:
+    - Stored: order_qty_int = round(order_qty / amount_increment)
+    - Decoded: order_qty = order_qty_int * amount_increment
+    - For order_qty=500, amount_increment=100:
+      - order_qty_int = round(500 / 100) = 5
+      - Decoded: 5 * 100 = 500 shares ✓
     """
 
 def remap_enums(df: pl.DataFrame) -> pl.DataFrame:
@@ -675,6 +732,10 @@ def validate_ticks(df: pl.DataFrame) -> pl.DataFrame:
     - For fill: price_int > 0
     - For cancel: price_int == 0 is okay
     - qty_int > 0
+    - **CRITICAL: For fills, qty must be multiple of 100 (lot size)**
+      - Exception: Allow odd lots (<100) for partial fills/cancels (log warning)
+    - **Partial fills/cancels:** A 500-share order can be filled/cancelled in
+      multiple ticks (e.g., 300 + 200, or 100 + 100 + 100 + 100 + 100)
     """
 
 def remap_exec_type(df: pl.DataFrame) -> pl.DataFrame:
