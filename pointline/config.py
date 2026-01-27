@@ -151,6 +151,10 @@ EXCHANGE_MAP = {
     "bitmex": 24,
     "ftx": 25,  # Historical data only
     "dydx": 26,
+
+    # Chinese Stock Exchanges
+    "szse": 30,  # Shenzhen Stock Exchange
+    "sse": 31,   # Shanghai Stock Exchange
 }
 
 

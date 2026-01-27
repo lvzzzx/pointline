@@ -11,7 +11,7 @@ from pointline.cli.commands.dim_asset_stats import (
     cmd_dim_asset_stats_sync,
 )
 from pointline.cli.commands.config import cmd_config_set, cmd_config_show
-from pointline.cli.commands.dim_symbol import cmd_dim_symbol_sync
+from pointline.cli.commands.dim_symbol import cmd_dim_symbol_sync, cmd_dim_symbol_sync_tushare
 from pointline.cli.commands.download import cmd_download
 from pointline.cli.commands.ingest import cmd_ingest_discover, cmd_ingest_run
 from pointline.cli.commands.manifest import cmd_manifest_backfill_sha256, cmd_manifest_show
@@ -81,6 +81,32 @@ def build_parser() -> argparse.ArgumentParser:
         help="Perform a full history rebuild for the symbols in the source",
     )
     symbol_sync.set_defaults(func=cmd_dim_symbol_sync)
+
+    symbol_sync_tushare = symbol_sub.add_parser(
+        "sync-tushare", help="Sync Chinese stocks from Tushare to dim_symbol"
+    )
+    symbol_sync_tushare.add_argument(
+        "--exchange",
+        required=True,
+        choices=["szse", "sse", "all"],
+        help="Exchange to sync (szse=Shenzhen, sse=Shanghai, all=both)",
+    )
+    symbol_sync_tushare.add_argument(
+        "--include-delisted",
+        action="store_true",
+        help="Include delisted stocks",
+    )
+    symbol_sync_tushare.add_argument(
+        "--token",
+        default=os.getenv("TUSHARE_TOKEN", ""),
+        help="Tushare API token (or set TUSHARE_TOKEN env var)",
+    )
+    symbol_sync_tushare.add_argument(
+        "--table-path",
+        default=str(get_table_path("dim_symbol")),
+        help="Path to the dim_symbol Delta table",
+    )
+    symbol_sync_tushare.set_defaults(func=cmd_dim_symbol_sync_tushare)
 
     # --- Bronze ---
     bronze = subparsers.add_parser("bronze", help="Bronze layer utilities")
