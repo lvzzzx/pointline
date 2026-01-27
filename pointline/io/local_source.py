@@ -10,9 +10,22 @@ class LocalBronzeSource:
     Implementation of BronzeSource for local filesystem.
     Expects Hive-style partitioning under a vendor root (e.g., bronze/tardis).
     """
-    
-    def __init__(self, root_path: Path, vendor: str | None = None):
+
+    # Required Hive partition keys that must be present in bronze file paths
+    REQUIRED_PARTITIONS = {"exchange", "type", "date", "symbol"}
+
+    def __init__(self, root_path: Path, vendor: str | None = None, strict_validation: bool = True):
+        """
+        Initialize LocalBronzeSource.
+
+        Args:
+            root_path: Root path to scan for bronze files
+            vendor: Vendor name (inferred from root_path if None)
+            strict_validation: If True, raise error on missing required partitions.
+                              If False, use default values (for backward compatibility).
+        """
         self.root_path = root_path
+        self.strict_validation = strict_validation
         if vendor:
             self.vendor = vendor
         elif root_path.name != "bronze":
@@ -24,19 +37,33 @@ class LocalBronzeSource:
         """
         Scans storage for files matching the pattern within root_path.
         Extracts metadata from Hive partitions (exchange=X/date=Y) if present.
+
+        Raises:
+            ValueError: If strict_validation=True and required partitions are missing
         """
         for p in self.root_path.glob(glob_pattern):
             if not p.is_file():
                 continue
-                
+
             stat = p.stat()
             rel_path = p.relative_to(self.root_path)
-            
+
             # Extract metadata from path parts
             # Example: .../exchange=binance/type=quotes/date=2024-05-01/symbol=BTCUSDT/...
             meta = self._extract_metadata(p)
             vendor = self.vendor or (rel_path.parts[0] if rel_path.parts else "unknown")
-            
+
+            # Validate required partitions are present
+            if self.strict_validation:
+                missing = self.REQUIRED_PARTITIONS - meta.keys()
+                if missing:
+                    raise ValueError(
+                        f"Missing required Hive partitions: {missing} in path '{rel_path}'. "
+                        f"Expected partitions: {self.REQUIRED_PARTITIONS}. "
+                        f"Found partitions: {set(meta.keys())}. "
+                        f"Set strict_validation=False to use default values instead."
+                    )
+
             sha256 = self._compute_sha256(p)
             yield BronzeFileMetadata(
                 vendor=vendor,

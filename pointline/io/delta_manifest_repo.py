@@ -1,10 +1,11 @@
 from typing import List, Optional
+import fcntl
 import polars as pl
 from pathlib import Path
-from deltalake import DeltaTable, WriterProperties, write_deltalake
+from deltalake import DeltaTable, write_deltalake
 
 from pointline.io.protocols import IngestionManifestRepository, BronzeFileMetadata, IngestionResult
-from pointline.io.base_repository import BaseDeltaRepository
+from pointline.io.base_repository import BaseDeltaRepository, get_writer_properties
 from pointline.config import STORAGE_OPTIONS
 
 class DeltaManifestRepository(BaseDeltaRepository):
@@ -76,34 +77,35 @@ class DeltaManifestRepository(BaseDeltaRepository):
             existing_cols = [col for col in ordered_cols if col in df.columns]
             df = df.select(existing_cols)
             # Overwrite schema to add missing vendor column on older manifests.
-            writer_properties = None
-            if "compression" in STORAGE_OPTIONS:
-                writer_properties = WriterProperties(
-                    compression=STORAGE_OPTIONS["compression"].upper()
-                )
             write_deltalake(
                 self.table_path,
                 df.to_arrow(),
                 mode="overwrite",
                 schema_mode="overwrite",
-                writer_properties=writer_properties,
+                writer_properties=get_writer_properties(),
             )
 
     def resolve_file_id(self, meta: BronzeFileMetadata) -> int:
         """
         Gets existing ID or mints a new one.
         Persists 'pending' state if minting new ID to ensure stability.
+
+        Uses file locking to prevent race conditions when multiple processes
+        mint IDs concurrently.
+
+        Returns:
+            file_id: Integer file ID for this bronze file
         """
         try:
             dt = DeltaTable(self.table_path)
-            # Use SQL-like filter for efficiency if supported by engine, 
+            # Use SQL-like filter for efficiency if supported by engine,
             # but for robust Polars interop:
             df = pl.read_delta(self.table_path)
         except Exception:
             # Should exist due to _ensure_initialized, but safety net
             df = pl.DataFrame()
 
-        # 1. Check existing
+        # 1. Check existing (outside lock - read-only operation)
         # Filter by composite unique key
         existing = df.filter(
             (pl.col("vendor") == meta.vendor) &
@@ -118,59 +120,87 @@ class DeltaManifestRepository(BaseDeltaRepository):
         if not existing.is_empty():
             return existing.item(0, "file_id")
 
-        # 2. Mint New ID
-        if df.is_empty():
-            next_id = 1
-        else:
-            # Handle nulls if any
-            max_id = df.select(pl.col("file_id").max()).item()
-            next_id = (max_id if max_id is not None else 0) + 1
+        # 2. Mint New ID (with file lock to prevent concurrent minting)
+        lock_file = Path(self.table_path) / ".file_id_lock"
+        lock_file.parent.mkdir(parents=True, exist_ok=True)
 
-        # 3. Reserve (Write Pending)
-        # We write a minimal record to reserve the ID
-        # Schema definition is single source of truth - use explicit schema with Int32
-        pending_record = pl.DataFrame({
-            "file_id": [next_id],
-            "vendor": [meta.vendor],
-            "exchange": [meta.exchange],
-            "data_type": [meta.data_type],
-            "symbol": [meta.symbol],
-            "date": [meta.date],
-            "bronze_file_name": [meta.bronze_file_path],
-            "file_size_bytes": [meta.file_size_bytes],
-            "last_modified_ts": [meta.last_modified_ts],
-            "sha256": [meta.sha256],
-            "row_count": [0],
-            "ts_local_min_us": [0],
-            "ts_local_max_us": [0],
-            "ts_exch_min_us": [0],
-            "ts_exch_max_us": [0],
-            "ingested_at": [0],
-            "status": ["pending"],
-            "error_message": [None],
-        }, schema={
-            "file_id": pl.Int32,  # Delta Lake doesn't support UInt32, stores as Int32
-            "vendor": pl.Utf8,
-            "exchange": pl.Utf8,
-            "data_type": pl.Utf8,
-            "symbol": pl.Utf8,
-            "date": pl.Date,
-            "bronze_file_name": pl.Utf8,
-            "file_size_bytes": pl.Int64,
-            "last_modified_ts": pl.Int64,
-            "sha256": pl.Utf8,  # Nullable string
-            "row_count": pl.Int64,
-            "ts_local_min_us": pl.Int64,
-            "ts_local_max_us": pl.Int64,
-            "ts_exch_min_us": pl.Int64,
-            "ts_exch_max_us": pl.Int64,
-            "ingested_at": pl.Int64,
-            "status": pl.Utf8,
-            "error_message": pl.Utf8,  # Nullable string
-            })
+        with open(lock_file, "w") as lockf:
+            # Acquire exclusive lock (blocks until available)
+            fcntl.flock(lockf.fileno(), fcntl.LOCK_EX)
 
-        self.append(pending_record)
-        return next_id
+            try:
+                # Re-read inside lock (another process may have added it)
+                df = pl.read_delta(self.table_path)
+                existing = df.filter(
+                    (pl.col("vendor") == meta.vendor) &
+                    (pl.col("exchange") == meta.exchange) &
+                    (pl.col("data_type") == meta.data_type) &
+                    (pl.col("symbol") == meta.symbol) &
+                    (pl.col("date") == meta.date) &
+                    (pl.col("bronze_file_name") == meta.bronze_file_path) &
+                    (pl.col("sha256") == meta.sha256)
+                )
+
+                if not existing.is_empty():
+                    return existing.item(0, "file_id")
+
+                # Compute next ID
+                if df.is_empty():
+                    next_id = 1
+                else:
+                    # Handle nulls if any
+                    max_id = df.select(pl.col("file_id").max()).item()
+                    next_id = (max_id if max_id is not None else 0) + 1
+
+                # 3. Reserve (Write Pending)
+                # We write a minimal record to reserve the ID
+                # Schema definition is single source of truth - use explicit schema with Int32
+                pending_record = pl.DataFrame({
+                    "file_id": [next_id],
+                    "vendor": [meta.vendor],
+                    "exchange": [meta.exchange],
+                    "data_type": [meta.data_type],
+                    "symbol": [meta.symbol],
+                    "date": [meta.date],
+                    "bronze_file_name": [meta.bronze_file_path],
+                    "file_size_bytes": [meta.file_size_bytes],
+                    "last_modified_ts": [meta.last_modified_ts],
+                    "sha256": [meta.sha256],
+                    "row_count": [0],
+                    "ts_local_min_us": [0],
+                    "ts_local_max_us": [0],
+                    "ts_exch_min_us": [0],
+                    "ts_exch_max_us": [0],
+                    "ingested_at": [0],
+                    "status": ["pending"],
+                    "error_message": [None],
+                }, schema={
+                    "file_id": pl.Int32,  # Delta Lake doesn't support UInt32, stores as Int32
+                    "vendor": pl.Utf8,
+                    "exchange": pl.Utf8,
+                    "data_type": pl.Utf8,
+                    "symbol": pl.Utf8,
+                    "date": pl.Date,
+                    "bronze_file_name": pl.Utf8,
+                    "file_size_bytes": pl.Int64,
+                    "last_modified_ts": pl.Int64,
+                    "sha256": pl.Utf8,  # Nullable string
+                    "row_count": pl.Int64,
+                    "ts_local_min_us": pl.Int64,
+                    "ts_local_max_us": pl.Int64,
+                    "ts_exch_min_us": pl.Int64,
+                    "ts_exch_max_us": pl.Int64,
+                    "ingested_at": pl.Int64,
+                    "status": pl.Utf8,
+                    "error_message": pl.Utf8,  # Nullable string
+                    })
+
+                self.append(pending_record)
+                return next_id
+
+            finally:
+                # Release lock (happens automatically when file closes, but explicit for clarity)
+                fcntl.flock(lockf.fileno(), fcntl.LOCK_UN)
 
     def filter_pending(self, candidates: List[BronzeFileMetadata]) -> List[BronzeFileMetadata]:
         if not candidates:
