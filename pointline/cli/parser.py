@@ -13,7 +13,6 @@ from pointline.cli.commands.dim_asset_stats import (
 from pointline.cli.commands.config import cmd_config_set, cmd_config_show
 from pointline.cli.commands.dim_symbol import cmd_dim_symbol_sync
 from pointline.cli.commands.download import cmd_download
-from pointline.cli.commands.gold import cmd_l2_state_checkpoint_build
 from pointline.cli.commands.ingest import cmd_ingest_discover, cmd_ingest_run
 from pointline.cli.commands.manifest import cmd_manifest_backfill_sha256, cmd_manifest_show
 from pointline.cli.commands.symbol import cmd_symbol_search
@@ -525,57 +524,5 @@ def build_parser() -> argparse.ArgumentParser:
         help="Disable retention duration enforcement",
     )
     delta_vacuum.set_defaults(func=cmd_delta_vacuum)
-
-    # --- Gold ---
-    gold = subparsers.add_parser("gold", help="Gold table build utilities")
-    gold_sub = gold.add_subparsers(dest="gold_command")
-
-    l2_state_checkpoint = gold_sub.add_parser(
-        "l2-state-checkpoint",
-        help="Build gold.l2_state_checkpoint from silver.l2_updates",
-    )
-    l2_state_checkpoint.add_argument(
-        "--symbol-id",
-        required=True,
-        help="Single symbol_id value (required)",
-    )
-    l2_state_checkpoint.add_argument(
-        "--start-date",
-        required=True,
-        help="Start date YYYY-MM-DD (inclusive)",
-    )
-    l2_state_checkpoint.add_argument(
-        "--end-date",
-        required=True,
-        help="End date YYYY-MM-DD (inclusive)",
-    )
-    l2_state_checkpoint.add_argument(
-        "--checkpoint-every-us",
-        type=int,
-        default=60_000_000,
-        help=(
-            "Emit a checkpoint at this time cadence in microseconds (default: 60_000_000)"
-        ),
-    )
-    l2_state_checkpoint.add_argument(
-        "--checkpoint-every-updates",
-        type=int,
-        default=10_000,
-        help="Emit a checkpoint after this many updates (default: 10_000)",
-    )
-    l2_state_checkpoint.add_argument(
-        "--validate-monotonic",
-        action="store_true",
-        help="Fail if updates are not strictly ordered by replay key",
-    )
-    l2_state_checkpoint.add_argument(
-        "--assume-sorted",
-        action="store_true",
-        help=(
-            "Skip global sort and assume updates are already ordered by "
-            "ts_local_us, file_id, file_line_number"
-        ),
-    )
-    l2_state_checkpoint.set_defaults(func=cmd_l2_state_checkpoint_build)
 
     return parser

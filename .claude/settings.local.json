@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(tree:*)",
+      "Bash(wc:*)",
+      "Bash(ls:*)",
+      "Bash(find:*)",
+      "Bash(python -m pointline:*)",
+      "Bash(source:*)",
+      "Bash(pointline --help:*)",
+      "Bash(python -c:*)",
+      "Bash(pytest:*)",
+      "Bash(git add:*)"
+    ]
+  }
+}

@@ -7,9 +7,13 @@ produces interpretable 1-hour signals net of funding, fees, and slippage.
 Core thesis
 Short-horizon price discovery in crypto is dominated by perps (leverage,
 positioning, liquidation dynamics), while spot anchors value via the index/mark
-construction. The edge comes from jointly modeling spot liquidity and perp
-positioning/carry, then aggregating microstructure features conditionally by
-perp-state regimes.
+construction.
+
+**The Bridge:** Alpha exists in the tension between micro-scale events (seconds)
+and macro-scale price discovery (hours). A naive average of L2 features washes
+out signal ("The 1H Cliff"). Instead, we model the *cumulative impact* ("scar
+tissue") of microstructure battles—shocks, absorption, and persistence—to
+predict 1H returns net of carry.
 
 Data scope
 - Venue: Binance USDT-M futures + Binance index/spot methodology
@@ -35,24 +39,83 @@ feature aggregation -> 1h tradable signals (carry-aware).
 
 Feature families
 1) Spot anchor block (demand + reference)
-   - L2: spread, depth, OIB, slope, update intensity
-   - Trades: notional volume, trade imbalance
-   - Stability: tail spread, depth minima, OIB persistence
+   - L2 State: spread, depth, OIB (Order Imbalance), slope
+   - **Micro-to-Macro Bridge (The "Scar Tissue"):**
+     - `OIB_shock_count`: Count of 1s snapshots where OIB > threshold (e.g., 0.7).
+     - `OIB_persistence`: Duration of sustained imbalance (filter out spoofing).
+     - `Impulse_Response`: Correlation(OIB_t, Price_{t+k}) within the hour (did buyers win?).
+   - Stability: tail spread, depth minima
 
 2) Perp state block (positioning + carry)
-   - OI: level, dOI, dOI z-score, OI/volume
-   - Funding: level, change, acceleration, z-score
-   - Basis: mark-index and/or perp-spot spread, change, z-score
+   - **Open Interest (The "Fuel"):**
+     - `OI_Norm`: OI / 24h_Volume (Days to Cover). High = Fragile.
+     - `dOI_Type`: Classify 1H changes based on Price direction:
+       - Price Up + OI Up = **Long Build** (Aggressive)
+       - Price Down + OI Down = **Long Liquidation** (Forced)
+       - Price Down + OI Up = **Short Build** (Aggressive)
+       - Price Up + OI Down = **Short Squeeze** (Forced)
+     - `OI_Shock`: Z-score of dOI (is this a standard rebalance or a regime shift?).
+
+   - **Funding Rate (The "Cost" & "Sentiment"):**
+     - `Predicted_Funding_Z`: Z-score of the *real-time predicted* rate (Sentiment). 
+       - *Note:* Do not use settled rate for signal; it lags by up to 8h.
+     - `Funding_Acceleration`: `d(Predicted_Funding) / dt`. Rapid rises often mark local tops.
+     - `Carry_Yield`: Annualized `Settled_Funding` (The hurdle rate for any directional trade).
+
+   - **Basis:**
+     - `Basis_Fair`: (Mark - Index) / Index. (Pure perp demand).
+     - `Basis_Venue`: (Perp - Binance_Spot) / Binance_Spot. (Venue-specific dislocations).
 
 3) Cross-market interaction block (alpha candidates)
-   - OIB_gap: OIB_perp - OIB_spot
-   - Liquidity_gap: RelSpread_perp - RelSpread_spot, Depth_perp / Depth_spot
-   - Crowding: funding_z x OI_shock
-   - Fragility: OI_shock x tail_spread or OI_shock / depth
+   - `OIB_Divergence` (Snapshot): `OIB_spot - OIB_perp`.
+     - *Signal:* Positive = Bullish Divergence; Negative = Bearish Divergence.
+   - **Cross-Market Scar Tissue (Cumulative):**
+     - `Lead_Lag_Accumulator`: Count of 1s snapshots where `Spot_OIB > Thresh` but `Perp_OIB < Thresh`.
+       - *Insight:* Captures "Spot-led impulses" that vanish before the hourly close.
+     - `Basis_Dislocation_Duration`: Minutes per hour where `|Basis_Z| > 2.0`.
+       - *Insight:* Distinguishes persistent inefficiency (tradeable) from transient noise.
+   - `Liquidity_Ratio`: `Depth_perp / Depth_spot`.
+     - *Insight:* Low ratio (< 1.0) indicates perp liquidity is drying up relative to spot; often a **Volatility Precursor**.
+   - `Crowding_Ratio`: `OI_Shock / Volume_Shock`.
+     - *Insight:* If OI rises faster than Volume, positions are becoming "locked" (illiquid).
+   - `Cascade_Risk`: `dOI / Depth_perp`.
+     - *Insight:* Measures "Price impact if recent positioning tried to close immediately." High values = Liquidation Risk.
 
 4) Event and tail-risk labels
    - Liquidation spikes (forceOrder) as regime confirmation
    - Funding settlement windows as event-time features
+
+Data Alignment Strategy: State vs. Flow
+We face a "State vs. Flow" problem when combining continuous market states (OI, Funding) with discrete time bars.
+
+**The Problem:**
+- **Bars (Flow):** Aggregate activity *over* the hour (Open, High, Low, Close, Vol).
+- **Ticker (State):** Snapshots of the system state *at* specific moments (Funding, OI).
+
+**The Solution:**
+1. **For Signal (State variables):** Use **As-Of Join (Backward)**.
+   - *Logic:* Take the Last Known Value at `bar_close_ts`.
+   - *Reason:* This represents the state of the world *at the moment of decision*.
+   - *Implementation:* `join_asof(strategy="backward")` on `ts_local_us`.
+
+2. **For Cashflow (Settled Funding):** Use **Window Sum**.
+   - *Logic:* Sum all realized funding payments where `funding_ts` falls *within* `[bar_open, bar_close)`.
+   - *Reason:* This represents the actual cost incurred.
+
+3) The "Rollover" Edge Case:
+   - At 00:00, 08:00, 16:00 UTC, `predicted_funding_rate` resets to baseline.
+   - *Fix:* Mask `funding_acceleration` calculations at these exact timestamps to prevent artificial "crashes" in the signal.
+
+Sampling Methodology (V1 vs. Roadmap)
+**Current: 1s Time-Sampling**
+- *Method:* Snapshot the order book state at the top of every second (`t`, `t+1s`...).
+- *Justification:* 1s resolution is sufficient to capture "sustained pressure" (Regimes) for a 1H strategy. Events shorter than 1s are likely HFT noise irrelevant to our execution horizon.
+- *Constraint:* Uses "Last Known State" (Point-in-Time).
+
+**Future Upgrade: Volume Clocks**
+- *Concept:* Snapshot every `$N` notional traded (e.g., every $1M).
+- *Benefit:* Adapts to volatility. Fast markets = high sampling rate; Slow markets = low sampling rate.
+- *Why not V1?* significantly increases alignment complexity with time-based funding/tickers.
 
 Regime logic (ex-ante, no leakage)
 Define a small, interpretable regime set per 1-hour bar using only perp state

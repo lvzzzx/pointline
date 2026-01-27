@@ -1,0 +1,10 @@
+qa_report
+symbol_id: 1423466448
+start: 2024-05-01T00:00:00+00:00
+end: 2024-05-03T00:00:00+00:00
+rows: 11341172
+dup_trade_id: 0
+order_by: file_id,file_line_number
+non_monotonic_ts: 0
+mean_next_ret_buy: -1.1883037402382817e-06
+mean_next_ret_sell: 1.1855965415322496e-06
