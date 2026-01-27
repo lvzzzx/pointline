@@ -181,12 +181,14 @@ Silver tables are the canonical research foundation. They are normalized, typed 
 
 ---
 
-### 2.1 `silver.l2_updates`
+### 2.1 `silver.l2_updates` ⚠️ NOT YET IMPLEMENTED
+
+> **Note:** L2 order book functionality is planned for implementation in a separate stateful replay framework repository. This table schema is documented for future reference.
 
 Incremental Level 2 order book updates from Tardis `incremental_book_L2`. Updates are **absolute sizes** at a price level (not deltas).
 
-**Source:** Tardis `incremental_book_L2`  
-**Partitioned by:** `["exchange", "date", "symbol_id"]`
+**Source:** Tardis `incremental_book_L2`
+**Partitioned by:** `["exchange", "date", "symbol_id"]` (planned)
 
 | Column | Type | Notes |
 |---|---:|---|
@@ -470,19 +472,21 @@ Columns: `bid_px_01..bid_px_25`, `bid_sz_01..bid_sz_25`, `ask_px_01..ask_px_25`,
 
 Top-of-book quotes fast path (if treated as derived table).
 
-**Source:** Derived from `silver.quotes` or `silver.l2_updates`  
+**Source:** Derived from `silver.quotes` (or `silver.l2_updates` when implemented)  
 **Partitioned by:** `["exchange", "date"]`
 
 Same schema as `silver.quotes`.
 
 ---
 
-### 3.4 `gold.l2_state_checkpoint`
+### 3.4 `gold.l2_state_checkpoint` ⚠️ NOT YET IMPLEMENTED
+
+> **Note:** L2 order book functionality is planned for implementation in a separate stateful replay framework repository. This table schema is documented for future reference.
 
 Full-depth book checkpoints to accelerate incremental replay over long ranges.
 
-**Source:** Derived from `silver.l2_updates`  
-**Partitioned by:** `["exchange", "date"]`  
+**Source:** Derived from `silver.l2_updates` (planned)
+**Partitioned by:** `["exchange", "date"]` (planned)
 **Cluster/Z-order (recommended):** `["symbol_id", "ts_local_us"]`
 
 | Column | Type | Notes |
@@ -657,7 +661,7 @@ Delta Lake (via Parquet) does not support unsigned integer types `UInt16` and `U
 |---|---|---|---|
 | `dim_symbol` | Silver (Reference) | none | `symbol_id`, `exchange_id`, `exchange_symbol`, validity range |
 | `ingest_manifest` | Silver (Reference) | none | `vendor`, `exchange`, `data_type`, `date`, `status` |
-| `l2_updates` | Silver | `exchange`, `date`, `symbol_id` | `ts_local_us`, `symbol_id`, `price_int`, `size_int` |
+| `l2_updates` ⚠️ | Silver | `exchange`, `date`, `symbol_id` | ⚠️ **Planned** - Not yet implemented |
 | `book_snapshot_25` | Silver | `exchange`, `date` | `ts_local_us`, `symbol_id`, `bids_px`, `asks_px` |
 | `trades` | Silver | `exchange`, `date` | `ts_local_us`, `symbol_id`, `price_int`, `qty_int` |
 | `quotes` | Silver | `exchange`, `date` | `ts_local_us`, `symbol_id`, `bid_px_int`, `ask_px_int` |
@@ -668,7 +672,7 @@ Delta Lake (via Parquet) does not support unsigned integer types `UInt16` and `U
 | `kline_1h` | Silver | `exchange`, `date` | `ts_bucket_start_us`, `symbol_id`, OHLCV |
 | `book_snapshot_25_wide` | Gold | `exchange`, `date` | Wide format for legacy tools |
 | `tob_quotes` | Gold | `exchange`, `date` | Fast path for top-of-book |
-| `l2_state_checkpoint` | Gold | `exchange`, `date` | Checkpoints for replay |
+| `l2_state_checkpoint` ⚠️ | Gold | `exchange`, `date` | ⚠️ **Planned** - Not yet implemented |
 | `reflexivity_bars` | Gold | `exchange`, `date` | Dollar-bars with Spot/OI/Funding context |
 | `options_surface_grid` | Gold | `exchange`, `date` | Time-gridded options surface |
 

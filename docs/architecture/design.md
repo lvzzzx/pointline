@@ -90,8 +90,8 @@ Current scope decision:
 - Keep **Bronze (vendor raw)** + **Silver (canonical)** as the foundation.
 - Defer Gold adoption until a concrete need is identified.
 
-Additional replay accelerator (derived from `silver.l2_updates`):
-- `gold.l2_state_checkpoint` for full-depth replay checkpoints
+Additional replay accelerator (derived from `silver.l2_updates`) - **Planned for future implementation**:
+- `gold.l2_state_checkpoint` for full-depth replay checkpoints (not yet implemented)
 
 ---
 
@@ -170,26 +170,28 @@ Store both:
 
 ## 5) Silver schemas per Tardis dataset
 
+> **⚠️ Note:** Section 5.1 describes `l2_updates` table that is **not yet implemented**. L2 order book functionality is planned for implementation in a separate stateful replay framework repository. This section is retained as design documentation.
+
 **Schema Reference:** For complete column definitions, see [Schema Reference - Silver Tables](../schemas.md#silver-tables).
 
-**Related design:** For the Rust + PyO3 replay engine and build interfaces, see
+**Related design:** For the Rust + PyO3 replay engine and build interfaces (not yet implemented), see
 [`docs/architecture/l2_replay_engine.md`](l2_replay_engine.md).
 
-### 5.1 `l2_updates` (from `incremental_book_L2`)
+### 5.1 `l2_updates` (from `incremental_book_L2`) ⚠️ NOT YET IMPLEMENTED
 Tardis incremental L2 updates are **absolute sizes** at a price level (not deltas).
 - `size == 0` means delete the level.
 - `is_snapshot` marks snapshot rows.
 - If a new snapshot appears after incremental updates, **reset book state** before applying it.
 
-**Table:** `silver.l2_updates`  
+**Table:** `silver.l2_updates` (not yet implemented)
 **Schema:** See [Schema Reference - l2_updates](../schemas.md#21-silverl2_updates)
 
 **Optional convenience columns:**
 - `file_id` (lineage tracking)
 - `file_line_number` (lineage tracking)
 
-**Replay accelerator (Gold):**
-- `gold.l2_state_checkpoint` to jump close to a target time and replay forward
+**Replay accelerator (Gold) - Planned:**
+- `gold.l2_state_checkpoint` to jump close to a target time and replay forward (not yet implemented)
 - Partition by `exchange` + `date`, cluster/Z-order by `symbol_id` + `ts_local_us`; rebuilds should upsert scoped to `(exchange, date, symbol_id)`.
 
 #### 5.1.1 Build Recipes (Data Infra)
@@ -370,7 +372,7 @@ Options chain is typically cross-sectional and heavy. Store updates per contract
 - `exchange`
 - `date` (daily partitions, derived from `ts_local_us` in UTC)
 
-**`silver.l2_updates` (ingest-ordered for replay):**
+**`silver.l2_updates` (ingest-ordered for replay) - Not yet implemented:**
 - `exchange`
 - `date`
 - `symbol_id`
@@ -378,7 +380,7 @@ Options chain is typically cross-sectional and heavy. Store updates per contract
 This extra `symbol_id` partition makes replay ordering guarantees enforceable without a global
 sort, at the cost of more partitions (acceptable in development).
 
-**Path structure (l2_updates):**
+**Path structure (l2_updates - planned):**
 `/lake/silver/l2_updates/exchange=deribit/date=2025-12-28/symbol_id=1234/part-000-uuid.parquet`
 
 **Handling Massive Universes (e.g., Options):**
@@ -391,7 +393,7 @@ For datasets like `options_chain` where a single day is massive:
 
 ## 7) Book reconstruction rules (PIT correctness)
 
-### 7.1 Reconstructing L2 state from `l2_updates`
+### 7.1 Reconstructing L2 state from `l2_updates` (planned)
 Maintain:
 - `book_bids: map(price_int -> size_int)`
 - `book_asks: map(price_int -> size_int)`
@@ -427,7 +429,7 @@ This prevents lookahead bias from “future” book states.
 
 ### 8.1 The "Clock" Stream
 For true PIT replay, include a `clock` stream (e.g., 1s or 1m ticks).
-- **Why:** `l2_updates` only exist when market moves. A backtest iterating only on data updates will skip quiet periods, missing scheduled timer events (e.g., "close position at 16:00:00").
+- **Why:** `l2_updates` (when implemented) only exist when market moves. A backtest iterating only on data updates will skip quiet periods, missing scheduled timer events (e.g., "close position at 16:00:00").
 - **Implementation:** Union the data stream with a `clock` stream, sorted by `ts_local_us`.
 
 ---
@@ -520,8 +522,8 @@ Recommended patterns:
 - Use DuckDB for ad-hoc SQL over Delta Tables.
 - Use Polars LazyFrame scans (`pl.read_delta`) for feature pipelines.
 
-Core “safe” APIs (suggested):
-- `load_l2_updates(exchange, symbols, start, end)` -> wraps `deltalake` reader
+Core "safe" APIs (suggested):
+- `load_l2_updates(exchange, symbols, start, end)` -> wraps `deltalake` reader (planned)
 - `load_snapshots_top25(exchange, symbols, start, end)`
 - `load_trades(symbol_id, start_ts_us, end_ts_us)`
 - `asof_join(left, right, on="ts_local_us", by=["exchange_id","symbol_id"])`
@@ -546,7 +548,8 @@ pl.read_delta("/lake/silver/trades", version=None) \
 ### Dataset naming
 - Bronze mirrors Tardis dataset names.
 - Silver uses domain names:
-  - `l2_updates`, `book_snapshot_25`, `trades`, `quotes`, `book_ticker`, `derivative_ticker`, `liquidations`, `options_chain`
+  - `trades`, `quotes`, `book_snapshot_25`, `book_ticker`, `derivative_ticker`, `liquidations` (implemented)
+  - `l2_updates`, `options_chain` (planned)
 
 ### Timestamp units
 - Store `*_us` (microseconds) as int64 consistently

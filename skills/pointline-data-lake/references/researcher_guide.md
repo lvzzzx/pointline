@@ -130,7 +130,7 @@ print(trades)
 - **Gold:** derived tables for convenience (optional)
 
 **Partitioning:** Most Silver tables are partitioned by `exchange` and `date` (with `date`
-derived from `ts_local_us` in UTC). `silver.l2_updates` additionally partitions by
+derived from `ts_local_us` in UTC). The planned `silver.l2_updates` table would additionally partition by
 `symbol_id` to preserve replay ordering without a global sort.
 Example:
 `${LAKE_ROOT}/silver/trades/exchange=binance/date=2025-12-28/part-*.parquet`
@@ -141,7 +141,7 @@ Example:
 | trades | `${LAKE_ROOT}/silver/trades` | `exchange`, `date` | `ts_local_us`, `symbol_id`, `price_int`, `qty_int` |
 | quotes | `${LAKE_ROOT}/silver/quotes` | `exchange`, `date` | `ts_local_us`, `symbol_id`, `bid_px_int`, `ask_px_int` |
 | book_snapshot_25 | `${LAKE_ROOT}/silver/book_snapshot_25` | `exchange`, `date` | `ts_local_us`, `symbol_id`, `bids_px`, `asks_px` |
-| l2_updates | `${LAKE_ROOT}/silver/l2_updates` | `exchange`, `date`, `symbol_id` | `ts_local_us`, `symbol_id`, `side`, `price_int`, `size_int` |
+| l2_updates ⚠️ | `${LAKE_ROOT}/silver/l2_updates` | `exchange`, `date`, `symbol_id` | ⚠️ **Planned** - Not yet implemented |
 | dim_symbol | `${LAKE_ROOT}/silver/dim_symbol` | none | `symbol_id`, `exchange_id`, `exchange_symbol`, validity range |
 | ingest_manifest | `${LAKE_ROOT}/silver/ingest_manifest` | none | `vendor`, `exchange`, `data_type`, `date`, `status` |
 
@@ -278,13 +278,16 @@ pit_data = trades.join_asof(
 )
 ```
 
-### 6.2 Reconstruct Order Book
+### 6.2 Reconstruct Order Book (Future - Not Yet Implemented)
 To get the book state at time `T`:
 1.  Find the snapshot with max `ts_local_us <= T`.
-2.  Apply all `l2_updates` where `snapshot_ts < ts_local_us <= T`.
+2.  Apply all `l2_updates` (when implemented) where `snapshot_ts < ts_local_us <= T`.
 
-### 6.3 L2 Replay (Researcher Usage)
-Use the high-level L2 replay APIs. They automatically resolve metadata from the `symbol_id`.
+### 6.3 L2 Replay (Future - Not Yet Implemented)
+
+> **⚠️ Note:** L2 order book replay functionality is planned for implementation in a separate stateful replay framework repository. This section describes the planned API.
+
+Use the high-level L2 replay APIs (planned). They will automatically resolve metadata from the `symbol_id`.
 
 ```python
 from pointline import l2_replay
@@ -312,9 +315,8 @@ df = l2_replay.replay_between(
 - **exchange (string):** vendor name, used for partitioning. Auto-resolved by APIs when `symbol_id` is provided.
 - **exchange_id (i16):** stable numeric mapping used for joins.
 
-**Symbol name convenience:** you can provide `exchange` + `symbol` to `pointline.research` loaders.  
-If the symbol changed over time, the loader returns the **union of all matching `symbol_id` values** in the time range (or date range).
-If `exchange` is omitted, the lookup spans all exchanges and may return multiple IDs.
+**Symbol resolution required:** `pointline.research` loaders require explicit `symbol_id` values.
+Resolve IDs first (two-stage) to avoid cross-exchange ambiguity and handle SCD2 changes correctly.
 
 ### 7.2 Safe query template (DuckDB)
 ```sql
@@ -340,8 +342,7 @@ LOAD delta;
 - Use `pointline.research` helpers (`load_trades`, `scan_table`) instead of raw `pl.read_delta` where possible.
 - Provide `symbol_id` to ensure optimal partition pruning.
 - Keep joins on `exchange_id` + `symbol_id`.
-- Prefer `start_ts_us`/`end_ts_us` for replay-safe time filtering; date partitions are derived implicitly.
-- Only pass `start_date`/`end_date` to tables that include a `date` column (e.g., trades/quotes/l2_updates); others will raise.
+- `start_ts_us`/`end_ts_us` are required; date partitions are derived implicitly.
 
 ### 7.4 Common Mistakes
 - Using `ts_exch_us` for backtesting instead of `ts_local_us`.

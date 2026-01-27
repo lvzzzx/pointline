@@ -1,8 +1,10 @@
 # L2 Replay Engine (Rust + PyO3) Design
 
+> **⚠️ STATUS:** This is a design document for future implementation. L2 order book replay functionality is planned for implementation in a separate stateful replay framework repository. The columnar storage approach in this repository was identified as suboptimal for L2 replay performance.
+
 This document proposes a high-performance L2 order book replay engine with a Rust core and
 Python bindings (PyO3). It preserves Point-in-Time (PIT) semantics, deterministic ordering,
-and the `silver.l2_updates` update rules used in this repository.
+and the `silver.l2_updates` update rules documented in this repository's schema.
 
 ## 1. Goals
 
