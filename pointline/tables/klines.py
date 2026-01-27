@@ -6,6 +6,13 @@ from typing import Sequence
 
 import polars as pl
 
+from pointline.tables._base import (
+    exchange_id_validation_expr,
+    generic_resolve_symbol_ids,
+    generic_validate,
+    required_columns_validation_expr,
+    timestamp_validation_expr,
+)
 from pointline.validation_utils import with_expected_exchange_id
 
 KLINE_SCHEMA: dict[str, pl.DataType] = {
@@ -150,6 +157,92 @@ def encode_fixed_point(df: pl.DataFrame, dim_symbol: pl.DataFrame) -> pl.DataFra
     return result.drop(drop_cols)
 
 
+def decode_fixed_point(
+    df: pl.DataFrame,
+    dim_symbol: pl.DataFrame,
+    *,
+    keep_ints: bool = False,
+) -> pl.DataFrame:
+    """Decode fixed-point integers into float OHLC and volume columns using dim_symbol metadata.
+
+    Requires:
+    - df must have 'symbol_id' column
+    - df must have '*_px_int' and '*_qty_int' columns
+    - dim_symbol must have 'symbol_id', 'price_increment', 'amount_increment' columns
+
+    Returns DataFrame with open, high, low, close, volume, taker_buy_base_volume added (Float64).
+    By default, drops the *_int columns.
+    """
+    if "symbol_id" not in df.columns:
+        raise ValueError("decode_fixed_point: df must have 'symbol_id' column")
+
+    required_cols = [
+        "open_px_int",
+        "high_px_int",
+        "low_px_int",
+        "close_px_int",
+        "volume_qty_int",
+        "taker_buy_base_qty_int",
+    ]
+    missing = [c for c in required_cols if c not in df.columns]
+    if missing:
+        raise ValueError(f"decode_fixed_point: df missing columns: {missing}")
+
+    required_dims = ["symbol_id", "price_increment", "amount_increment"]
+    missing_dims = [c for c in required_dims if c not in dim_symbol.columns]
+    if missing_dims:
+        raise ValueError(f"decode_fixed_point: dim_symbol missing columns: {missing_dims}")
+
+    joined = df.join(
+        dim_symbol.select(["symbol_id", "price_increment", "amount_increment"]),
+        on="symbol_id",
+        how="left",
+    )
+
+    missing_ids = joined.filter(pl.col("price_increment").is_null())
+    if not missing_ids.is_empty():
+        missing_symbols = missing_ids.select("symbol_id").unique()
+        raise ValueError(
+            f"decode_fixed_point: {missing_symbols.height} symbol_ids not found in dim_symbol"
+        )
+
+    result = joined.with_columns(
+        [
+            pl.when(pl.col("open_px_int").is_not_null())
+            .then((pl.col("open_px_int") * pl.col("price_increment")).cast(pl.Float64))
+            .otherwise(None)
+            .alias("open"),
+            pl.when(pl.col("high_px_int").is_not_null())
+            .then((pl.col("high_px_int") * pl.col("price_increment")).cast(pl.Float64))
+            .otherwise(None)
+            .alias("high"),
+            pl.when(pl.col("low_px_int").is_not_null())
+            .then((pl.col("low_px_int") * pl.col("price_increment")).cast(pl.Float64))
+            .otherwise(None)
+            .alias("low"),
+            pl.when(pl.col("close_px_int").is_not_null())
+            .then((pl.col("close_px_int") * pl.col("price_increment")).cast(pl.Float64))
+            .otherwise(None)
+            .alias("close"),
+            pl.when(pl.col("volume_qty_int").is_not_null())
+            .then((pl.col("volume_qty_int") * pl.col("amount_increment")).cast(pl.Float64))
+            .otherwise(None)
+            .alias("volume"),
+            pl.when(pl.col("taker_buy_base_qty_int").is_not_null())
+            .then(
+                (pl.col("taker_buy_base_qty_int") * pl.col("amount_increment")).cast(pl.Float64)
+            )
+            .otherwise(None)
+            .alias("taker_buy_base_volume"),
+        ]
+    )
+
+    drop_cols = ["price_increment", "amount_increment"]
+    if not keep_ints:
+        drop_cols += required_cols
+    return result.drop(drop_cols)
+
+
 def normalize_klines_schema(df: pl.DataFrame) -> pl.DataFrame:
     """Ensure kline DataFrame matches the canonical schema and column order."""
     for col, dtype in KLINE_SCHEMA.items():
@@ -182,9 +275,10 @@ def validate_klines(df: pl.DataFrame) -> pl.DataFrame:
         raise ValueError(f"validate_klines: missing required columns: {missing}")
 
     df_with_expected = with_expected_exchange_id(df)
-    valid = df_with_expected.filter(
-        (pl.col("ts_bucket_start_us") > 0)
-        & (pl.col("ts_bucket_end_us") > 0)
+
+    combined_filter = (
+        timestamp_validation_expr("ts_bucket_start_us")
+        & timestamp_validation_expr("ts_bucket_end_us")
         & (pl.col("ts_bucket_end_us") > pl.col("ts_bucket_start_us"))
         & (pl.col("open_px_int") > 0)
         & (pl.col("high_px_int") > 0)
@@ -192,80 +286,48 @@ def validate_klines(df: pl.DataFrame) -> pl.DataFrame:
         & (pl.col("close_px_int") > 0)
         & (pl.col("high_px_int") >= pl.col("low_px_int"))
         & (pl.col("volume_qty_int") >= 0)
-        & (pl.col("exchange").is_not_null())
-        & (pl.col("exchange_id").is_not_null())
-        & (pl.col("symbol_id").is_not_null())
-        & (pl.col("exchange_id") == pl.col("expected_exchange_id"))
-    ).select(df.columns)
+        & required_columns_validation_expr(["exchange", "exchange_id", "symbol_id"])
+        & exchange_id_validation_expr()
+    )
 
-    if valid.height < df.height:
-        import warnings
+    rules = [
+        (
+            "ts_bucket_start_us",
+            pl.col("ts_bucket_start_us").is_null()
+            | (pl.col("ts_bucket_start_us") <= 0)
+            | (pl.col("ts_bucket_start_us") >= 2**63),
+        ),
+        (
+            "ts_bucket_end_us",
+            pl.col("ts_bucket_end_us").is_null()
+            | (pl.col("ts_bucket_end_us") <= 0)
+            | (pl.col("ts_bucket_end_us") >= 2**63),
+        ),
+        (
+            "invalid_bucket_order",
+            pl.col("ts_bucket_end_us") <= pl.col("ts_bucket_start_us"),
+        ),
+        ("open_px_int", pl.col("open_px_int").is_null() | (pl.col("open_px_int") <= 0)),
+        ("high_px_int", pl.col("high_px_int").is_null() | (pl.col("high_px_int") <= 0)),
+        ("low_px_int", pl.col("low_px_int").is_null() | (pl.col("low_px_int") <= 0)),
+        (
+            "close_px_int",
+            pl.col("close_px_int").is_null() | (pl.col("close_px_int") <= 0),
+        ),
+        ("high_lt_low", pl.col("high_px_int") < pl.col("low_px_int")),
+        ("volume_qty_int", pl.col("volume_qty_int").is_null() | (pl.col("volume_qty_int") < 0)),
+        ("exchange", pl.col("exchange").is_null()),
+        ("exchange_id", pl.col("exchange_id").is_null()),
+        ("symbol_id", pl.col("symbol_id").is_null()),
+        (
+            "exchange_id_mismatch",
+            pl.col("expected_exchange_id").is_null()
+            | (pl.col("exchange_id") != pl.col("expected_exchange_id")),
+        ),
+    ]
 
-        line_col = "file_line_number" if "file_line_number" in df.columns else "__row_nr"
-        df_with_line = df_with_expected
-        if line_col == "__row_nr":
-            df_with_line = (
-                df_with_expected.with_row_index("__row_nr")
-                if hasattr(df_with_expected, "with_row_index")
-                else df_with_expected.with_row_count("__row_nr")
-            )
-
-        rules = [
-            (
-                "ts_bucket_start_us",
-                pl.col("ts_bucket_start_us").is_null()
-                | (pl.col("ts_bucket_start_us") <= 0)
-                | (pl.col("ts_bucket_start_us") >= 2**63),
-            ),
-            (
-                "ts_bucket_end_us",
-                pl.col("ts_bucket_end_us").is_null()
-                | (pl.col("ts_bucket_end_us") <= 0)
-                | (pl.col("ts_bucket_end_us") >= 2**63),
-            ),
-            (
-                "invalid_bucket_order",
-                pl.col("ts_bucket_end_us") <= pl.col("ts_bucket_start_us"),
-            ),
-            ("open_px_int", pl.col("open_px_int").is_null() | (pl.col("open_px_int") <= 0)),
-            ("high_px_int", pl.col("high_px_int").is_null() | (pl.col("high_px_int") <= 0)),
-            ("low_px_int", pl.col("low_px_int").is_null() | (pl.col("low_px_int") <= 0)),
-            (
-                "close_px_int",
-                pl.col("close_px_int").is_null() | (pl.col("close_px_int") <= 0),
-            ),
-            ("high_lt_low", pl.col("high_px_int") < pl.col("low_px_int")),
-            ("volume_qty_int", pl.col("volume_qty_int").is_null() | (pl.col("volume_qty_int") < 0)),
-            ("exchange", pl.col("exchange").is_null()),
-            ("exchange_id", pl.col("exchange_id").is_null()),
-            ("symbol_id", pl.col("symbol_id").is_null()),
-            (
-                "exchange_id_mismatch",
-                pl.col("expected_exchange_id").is_null()
-                | (pl.col("exchange_id") != pl.col("expected_exchange_id")),
-            ),
-        ]
-
-        counts = df_with_line.select([rule.sum().alias(name) for name, rule in rules]).row(0)
-        breakdown = []
-        for (name, rule), count in zip(rules, counts):
-            if count:
-                sample = (
-                    df_with_line.filter(rule)
-                    .select(line_col)
-                    .head(5)
-                    .to_series()
-                    .to_list()
-                )
-                breakdown.append(f"{name}={count} lines={sample}")
-
-        detail = "; ".join(breakdown) if breakdown else "no rule breakdown available"
-        warnings.warn(
-            f"validate_klines: filtered {df.height - valid.height} invalid rows; {detail}",
-            UserWarning,
-        )
-
-    return valid
+    valid = generic_validate(df_with_expected, combined_filter, rules, "klines")
+    return valid.select(df.columns)
 
 
 def resolve_symbol_ids(
@@ -276,18 +338,21 @@ def resolve_symbol_ids(
     *,
     ts_col: str = "ts_bucket_start_us",
 ) -> pl.DataFrame:
-    """Resolve symbol_ids for kline data using as-of join with dim_symbol."""
-    from pointline.dim_symbol import resolve_symbol_ids as _resolve_symbol_ids
+    """Resolve symbol_ids for kline data using as-of join with dim_symbol.
 
-    result = data.clone()
-    if "exchange_id" not in result.columns:
-        result = result.with_columns(pl.lit(exchange_id, dtype=pl.Int16).alias("exchange_id"))
-    else:
-        result = result.with_columns(pl.col("exchange_id").cast(pl.Int16))
-    if "exchange_symbol" not in result.columns:
-        result = result.with_columns(pl.lit(exchange_symbol).alias("exchange_symbol"))
+    This is a wrapper around the generic symbol resolution function.
 
-    return _resolve_symbol_ids(result, dim_symbol, ts_col=ts_col)
+    Args:
+        data: DataFrame with timestamp column
+        dim_symbol: dim_symbol table in canonical schema
+        exchange_id: Exchange ID to use for all rows
+        exchange_symbol: Exchange symbol to use for all rows
+        ts_col: Timestamp column name (default: ts_bucket_start_us)
+
+    Returns:
+        DataFrame with symbol_id column added
+    """
+    return generic_resolve_symbol_ids(data, dim_symbol, exchange_id, exchange_symbol, ts_col=ts_col)
 
 
 def required_kline_columns() -> Sequence[str]:

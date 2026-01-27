@@ -17,6 +17,13 @@ from typing import Sequence
 
 import polars as pl
 
+from pointline.tables._base import (
+    exchange_id_validation_expr,
+    generic_resolve_symbol_ids,
+    generic_validate,
+    required_columns_validation_expr,
+    timestamp_validation_expr,
+)
 from pointline.validation_utils import with_expected_exchange_id
 
 # Schema definition matching design.md Section 5.3
@@ -49,27 +56,6 @@ TRADES_SCHEMA: dict[str, pl.DataType] = {
 SIDE_BUY = 0
 SIDE_SELL = 1
 SIDE_UNKNOWN = 2
-
-
-
-
-def _map_side_to_code(side: str | int | None) -> int:
-    """Map side string to u8 code: 0=buy, 1=sell, 2=unknown."""
-    if side is None:
-        return SIDE_UNKNOWN
-    
-    if isinstance(side, int):
-        if side in (0, 1, 2):
-            return side
-        return SIDE_UNKNOWN
-    
-    side_lower = str(side).lower().strip()
-    if side_lower in ("buy", "b", "0"):
-        return SIDE_BUY
-    elif side_lower in ("sell", "s", "1"):
-        return SIDE_SELL
-    else:
-        return SIDE_UNKNOWN
 
 
 def parse_tardis_trades_csv(df: pl.DataFrame) -> pl.DataFrame:
@@ -151,12 +137,25 @@ def parse_tardis_trades_csv(df: pl.DataFrame) -> pl.DataFrame:
             break
     
     if side_col:
-        result = result.with_columns(
-            pl.col(side_col)
-            .map_elements(_map_side_to_code, return_dtype=pl.UInt8)
-            .fill_null(SIDE_UNKNOWN)
-            .alias("side")
+        # Vectorized side encoding (replaces map_elements for 10-100x performance)
+        # Handle both integer and string side values
+        side_expr = pl.col(side_col)
+
+        # Try to cast to string for uniform processing (handles both int and string inputs)
+        side_str = side_expr.cast(pl.Utf8).str.to_lowercase().str.strip_chars()
+
+        # Map string values to codes
+        side_code = (
+            pl.when(side_str.is_in(["buy", "b", "0"]))
+            .then(pl.lit(SIDE_BUY, dtype=pl.UInt8))
+            .when(side_str.is_in(["sell", "s", "1"]))
+            .then(pl.lit(SIDE_SELL, dtype=pl.UInt8))
+            .when(side_str.is_in(["2"]))
+            .then(pl.lit(SIDE_UNKNOWN, dtype=pl.UInt8))
+            .otherwise(pl.lit(SIDE_UNKNOWN, dtype=pl.UInt8))
         )
+
+        result = result.with_columns(side_code.alias("side"))
     else:
         result = result.with_columns(pl.lit(SIDE_UNKNOWN, dtype=pl.UInt8).alias("side"))
     
@@ -236,7 +235,7 @@ def normalize_trades_schema(df: pl.DataFrame) -> pl.DataFrame:
 
 def validate_trades(df: pl.DataFrame) -> pl.DataFrame:
     """Apply quality checks to trades data.
-    
+
     Validates:
     - Non-negative price_int and qty_int
     - Valid timestamp ranges (reasonable values) for local and exchange times
@@ -244,12 +243,12 @@ def validate_trades(df: pl.DataFrame) -> pl.DataFrame:
     - Non-null required fields
     - Exchange column exists and is non-null
     - exchange_id matches normalized exchange
-    
+
     Returns filtered DataFrame (invalid rows removed) or raises on critical errors.
     """
     if df.is_empty():
         return df
-    
+
     # Check required columns
     required = [
         "price_int",
@@ -264,84 +263,50 @@ def validate_trades(df: pl.DataFrame) -> pl.DataFrame:
     missing = [c for c in required if c not in df.columns]
     if missing:
         raise ValueError(f"validate_trades: missing required columns: {missing}")
-    
-    # Filter invalid rows
+
+    # Build filter expression
     df_with_expected = with_expected_exchange_id(df)
-    valid = df_with_expected.filter(
-        (pl.col("price_int") > 0) &
-        (pl.col("qty_int") > 0) &
-        (pl.col("ts_local_us") > 0) &
-        (pl.col("ts_local_us") < 2**63) &
-        (pl.col("ts_exch_us") > 0) &
-        (pl.col("ts_exch_us") < 2**63) &
-        (pl.col("side").is_in([0, 1, 2])) &
-        (pl.col("exchange").is_not_null()) &
-        (pl.col("exchange_id").is_not_null()) &
-        (pl.col("symbol_id").is_not_null()) &
-        (pl.col("exchange_id") == pl.col("expected_exchange_id"))
-    ).select(df.columns)
-    
-    # Warn if rows were filtered
-    if valid.height < df.height:
-        import warnings
 
-        line_col = "file_line_number" if "file_line_number" in df.columns else "__row_nr"
-        df_with_line = df_with_expected
-        if line_col == "__row_nr":
-            df_with_line = (
-                df_with_expected.with_row_index("__row_nr")
-                if hasattr(df_with_expected, "with_row_index")
-                else df_with_expected.with_row_count("__row_nr")
-            )
+    combined_filter = (
+        (pl.col("price_int") > 0)
+        & (pl.col("qty_int") > 0)
+        & timestamp_validation_expr("ts_local_us")
+        & timestamp_validation_expr("ts_exch_us")
+        & (pl.col("side").is_in([0, 1, 2]))
+        & required_columns_validation_expr(["exchange", "exchange_id", "symbol_id"])
+        & exchange_id_validation_expr()
+    )
 
-        rules = [
-            ("price_int", pl.col("price_int").is_null() | (pl.col("price_int") <= 0)),
-            ("qty_int", pl.col("qty_int").is_null() | (pl.col("qty_int") <= 0)),
-            (
-                "ts_local_us",
-                pl.col("ts_local_us").is_null()
-                | (pl.col("ts_local_us") <= 0)
-                | (pl.col("ts_local_us") >= 2**63),
-            ),
-            (
-                "ts_exch_us",
-                pl.col("ts_exch_us").is_null()
-                | (pl.col("ts_exch_us") <= 0)
-                | (pl.col("ts_exch_us") >= 2**63),
-            ),
-            ("side", ~pl.col("side").is_in([0, 1, 2]) | pl.col("side").is_null()),
-            ("exchange", pl.col("exchange").is_null()),
-            ("exchange_id", pl.col("exchange_id").is_null()),
-            ("symbol_id", pl.col("symbol_id").is_null()),
-            (
-                "exchange_id_mismatch",
-                pl.col("expected_exchange_id").is_null()
-                | (pl.col("exchange_id") != pl.col("expected_exchange_id")),
-            ),
-        ]
+    # Define validation rules for diagnostics
+    rules = [
+        ("price_int", pl.col("price_int").is_null() | (pl.col("price_int") <= 0)),
+        ("qty_int", pl.col("qty_int").is_null() | (pl.col("qty_int") <= 0)),
+        (
+            "ts_local_us",
+            pl.col("ts_local_us").is_null()
+            | (pl.col("ts_local_us") <= 0)
+            | (pl.col("ts_local_us") >= 2**63),
+        ),
+        (
+            "ts_exch_us",
+            pl.col("ts_exch_us").is_null()
+            | (pl.col("ts_exch_us") <= 0)
+            | (pl.col("ts_exch_us") >= 2**63),
+        ),
+        ("side", ~pl.col("side").is_in([0, 1, 2]) | pl.col("side").is_null()),
+        ("exchange", pl.col("exchange").is_null()),
+        ("exchange_id", pl.col("exchange_id").is_null()),
+        ("symbol_id", pl.col("symbol_id").is_null()),
+        (
+            "exchange_id_mismatch",
+            pl.col("expected_exchange_id").is_null()
+            | (pl.col("exchange_id") != pl.col("expected_exchange_id")),
+        ),
+    ]
 
-        counts = df_with_line.select(
-            [rule.sum().alias(name) for name, rule in rules]
-        ).row(0)
-        breakdown = []
-        for (name, rule), count in zip(rules, counts):
-            if count:
-                sample = (
-                    df_with_line.filter(rule)
-                    .select(line_col)
-                    .head(5)
-                    .to_series()
-                    .to_list()
-                )
-                breakdown.append(f"{name}={count} lines={sample}")
-
-        detail = "; ".join(breakdown) if breakdown else "no rule breakdown available"
-        warnings.warn(
-            f"validate_trades: filtered {df.height - valid.height} invalid rows; {detail}",
-            UserWarning,
-        )
-    
-    return valid
+    # Use generic validation
+    valid = generic_validate(df_with_expected, combined_filter, rules, "trades")
+    return valid.select(df.columns)
 
 
 def encode_fixed_point(
@@ -468,35 +433,20 @@ def resolve_symbol_ids(
     ts_col: str = "ts_local_us",
 ) -> pl.DataFrame:
     """Resolve symbol_ids for trades data using as-of join with dim_symbol.
-    
-    This is a wrapper around the dim_symbol.resolve_symbol_ids function,
-    but adds exchange_id and exchange_symbol columns first if needed.
-    
+
+    This is a wrapper around the generic symbol resolution function.
+
     Args:
         data: DataFrame with ts_local_us (or ts_col) column
         dim_symbol: dim_symbol table in canonical schema
         exchange_id: Exchange ID to use for all rows
         exchange_symbol: Exchange symbol to use for all rows
         ts_col: Timestamp column name (default: ts_local_us)
-    
+
     Returns:
         DataFrame with symbol_id column added
     """
-    from pointline.dim_symbol import resolve_symbol_ids as _resolve_symbol_ids
-    
-    # Add exchange_id and exchange_symbol if not present
-    result = data.clone()
-    if "exchange_id" not in result.columns:
-        # Cast to match dim_symbol's exchange_id type (Int16, not UInt16)
-        result = result.with_columns(pl.lit(exchange_id, dtype=pl.Int16).alias("exchange_id"))
-    else:
-        # Ensure existing exchange_id matches dim_symbol type
-        result = result.with_columns(pl.col("exchange_id").cast(pl.Int16))
-    if "exchange_symbol" not in result.columns:
-        result = result.with_columns(pl.lit(exchange_symbol).alias("exchange_symbol"))
-    
-    # Use the dim_symbol function
-    return _resolve_symbol_ids(result, dim_symbol, ts_col=ts_col)
+    return generic_resolve_symbol_ids(data, dim_symbol, exchange_id, exchange_symbol, ts_col=ts_col)
 
 
 def required_trades_columns() -> Sequence[str]:

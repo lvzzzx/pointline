@@ -9,6 +9,13 @@ from typing import Sequence
 
 import polars as pl
 
+from pointline.tables._base import (
+    exchange_id_validation_expr,
+    generic_resolve_symbol_ids,
+    generic_validate,
+    required_columns_validation_expr,
+    timestamp_validation_expr,
+)
 from pointline.validation_utils import with_expected_exchange_id
 
 # Schema definition matching docs/schemas.md Section 2.6
@@ -157,15 +164,12 @@ def validate_derivative_ticker(df: pl.DataFrame) -> pl.DataFrame:
         raise ValueError(f"validate_derivative_ticker: missing required columns: {missing}")
 
     df_with_expected = with_expected_exchange_id(df)
-    valid = df_with_expected.filter(
-        (pl.col("ts_local_us") > 0)
-        & (pl.col("ts_local_us") < 2**63)
-        & (pl.col("ts_exch_us") > 0)
-        & (pl.col("ts_exch_us") < 2**63)
-        & (pl.col("exchange").is_not_null())
-        & (pl.col("exchange_id").is_not_null())
-        & (pl.col("symbol_id").is_not_null())
-        & (pl.col("exchange_id") == pl.col("expected_exchange_id"))
+
+    combined_filter = (
+        timestamp_validation_expr("ts_local_us")
+        & timestamp_validation_expr("ts_exch_us")
+        & required_columns_validation_expr(["exchange", "exchange_id", "symbol_id"])
+        & exchange_id_validation_expr()
         & pl.when(pl.col("mark_px").is_not_null())
         .then(pl.col("mark_px") > 0)
         .otherwise(True)
@@ -181,67 +185,34 @@ def validate_derivative_ticker(df: pl.DataFrame) -> pl.DataFrame:
         & pl.when(pl.col("funding_ts_us").is_not_null())
         .then(pl.col("funding_ts_us") > 0)
         .otherwise(True)
-    ).select(df.columns)
+    )
 
-    if valid.height < df.height:
-        import warnings
+    rules = [
+        ("ts_local_us", pl.col("ts_local_us").is_null() | (pl.col("ts_local_us") <= 0)),
+        ("ts_exch_us", pl.col("ts_exch_us").is_null() | (pl.col("ts_exch_us") <= 0)),
+        ("exchange", pl.col("exchange").is_null()),
+        ("exchange_id", pl.col("exchange_id").is_null()),
+        ("symbol_id", pl.col("symbol_id").is_null()),
+        (
+            "exchange_id_mismatch",
+            pl.col("expected_exchange_id").is_null()
+            | (pl.col("exchange_id") != pl.col("expected_exchange_id")),
+        ),
+        ("mark_px", pl.col("mark_px").is_not_null() & (pl.col("mark_px") <= 0)),
+        ("index_px", pl.col("index_px").is_not_null() & (pl.col("index_px") <= 0)),
+        ("last_px", pl.col("last_px").is_not_null() & (pl.col("last_px") <= 0)),
+        (
+            "open_interest",
+            pl.col("open_interest").is_not_null() & (pl.col("open_interest") < 0),
+        ),
+        (
+            "funding_ts_us",
+            pl.col("funding_ts_us").is_not_null() & (pl.col("funding_ts_us") <= 0),
+        ),
+    ]
 
-        line_col = "file_line_number" if "file_line_number" in df.columns else "__row_nr"
-        df_with_line = df_with_expected
-        if line_col == "__row_nr":
-            df_with_line = (
-                df_with_expected.with_row_index("__row_nr")
-                if hasattr(df_with_expected, "with_row_index")
-                else df_with_expected.with_row_count("__row_nr")
-            )
-
-        rules = [
-            ("ts_local_us", pl.col("ts_local_us").is_null() | (pl.col("ts_local_us") <= 0)),
-            ("ts_exch_us", pl.col("ts_exch_us").is_null() | (pl.col("ts_exch_us") <= 0)),
-            ("exchange", pl.col("exchange").is_null()),
-            ("exchange_id", pl.col("exchange_id").is_null()),
-            ("symbol_id", pl.col("symbol_id").is_null()),
-            (
-                "exchange_id_mismatch",
-                pl.col("expected_exchange_id").is_null()
-                | (pl.col("exchange_id") != pl.col("expected_exchange_id")),
-            ),
-            ("mark_px", pl.col("mark_px").is_not_null() & (pl.col("mark_px") <= 0)),
-            ("index_px", pl.col("index_px").is_not_null() & (pl.col("index_px") <= 0)),
-            ("last_px", pl.col("last_px").is_not_null() & (pl.col("last_px") <= 0)),
-            (
-                "open_interest",
-                pl.col("open_interest").is_not_null() & (pl.col("open_interest") < 0),
-            ),
-            (
-                "funding_ts_us",
-                pl.col("funding_ts_us").is_not_null() & (pl.col("funding_ts_us") <= 0),
-            ),
-        ]
-
-        counts = df_with_line.select(
-            [rule.sum().alias(name) for name, rule in rules]
-        ).row(0)
-        breakdown = []
-        for (name, rule), count in zip(rules, counts):
-            if count:
-                sample = (
-                    df_with_line.filter(rule)
-                    .select(line_col)
-                    .head(5)
-                    .to_series()
-                    .to_list()
-                )
-                breakdown.append(f"{name}={count} lines={sample}")
-
-        detail = "; ".join(breakdown) if breakdown else "no rule breakdown available"
-        warnings.warn(
-            f"validate_derivative_ticker: filtered {df.height - valid.height} invalid rows; "
-            f"{detail}",
-            UserWarning,
-        )
-
-    return valid
+    valid = generic_validate(df_with_expected, combined_filter, rules, "derivative_ticker")
+    return valid.select(df.columns)
 
 
 def resolve_symbol_ids(
@@ -252,18 +223,21 @@ def resolve_symbol_ids(
     *,
     ts_col: str = "ts_local_us",
 ) -> pl.DataFrame:
-    """Resolve symbol_ids for derivative_ticker data using as-of join with dim_symbol."""
-    from pointline.dim_symbol import resolve_symbol_ids as _resolve_symbol_ids
+    """Resolve symbol_ids for derivative_ticker data using as-of join with dim_symbol.
 
-    result = data.clone()
-    if "exchange_id" not in result.columns:
-        result = result.with_columns(pl.lit(exchange_id, dtype=pl.Int16).alias("exchange_id"))
-    else:
-        result = result.with_columns(pl.col("exchange_id").cast(pl.Int16))
-    if "exchange_symbol" not in result.columns:
-        result = result.with_columns(pl.lit(exchange_symbol).alias("exchange_symbol"))
+    This is a wrapper around the generic symbol resolution function.
 
-    return _resolve_symbol_ids(result, dim_symbol, ts_col=ts_col)
+    Args:
+        data: DataFrame with timestamp column
+        dim_symbol: dim_symbol table in canonical schema
+        exchange_id: Exchange ID to use for all rows
+        exchange_symbol: Exchange symbol to use for all rows
+        ts_col: Timestamp column name (default: ts_local_us)
+
+    Returns:
+        DataFrame with symbol_id column added
+    """
+    return generic_resolve_symbol_ids(data, dim_symbol, exchange_id, exchange_symbol, ts_col=ts_col)
 
 
 def required_derivative_ticker_columns() -> Sequence[str]:

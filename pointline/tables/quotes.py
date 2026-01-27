@@ -18,6 +18,13 @@ from typing import Iterable, Sequence
 
 import polars as pl
 
+from pointline.tables._base import (
+    exchange_id_validation_expr,
+    generic_resolve_symbol_ids,
+    generic_validate,
+    required_columns_validation_expr,
+    timestamp_validation_expr,
+)
 from pointline.validation_utils import with_expected_exchange_id
 
 # Schema definition matching design.md Section 5.4
@@ -136,66 +143,40 @@ def normalize_quotes_schema(df: pl.DataFrame) -> pl.DataFrame:
 
 def validate_quotes(df: pl.DataFrame) -> pl.DataFrame:
     """Apply quality checks to quotes data.
-    
+
     Validates:
     - Non-negative prices and sizes (when present)
     - Valid timestamp ranges (reasonable values) for local and exchange times
     - Crossed book check: bid_px_int < ask_px_int when both are present
     - At least one of bid or ask must be present (filter rows with both missing)
     - exchange_id matches normalized exchange
-    
+
     Returns filtered DataFrame (invalid rows removed) or raises on critical errors.
     """
     if df.is_empty():
         return df
-    
+
     # Check required columns
     required = [
-        "bid_px_int", "bid_sz_int", "ask_px_int", "ask_sz_int",
-        "ts_local_us", "ts_exch_us", "exchange", "exchange_id", "symbol_id"
+        "bid_px_int",
+        "bid_sz_int",
+        "ask_px_int",
+        "ask_sz_int",
+        "ts_local_us",
+        "ts_exch_us",
+        "exchange",
+        "exchange_id",
+        "symbol_id",
     ]
     missing = [c for c in required if c not in df.columns]
     if missing:
         raise ValueError(f"validate_quotes: missing required columns: {missing}")
-    
+
     df_with_expected = with_expected_exchange_id(df)
     combined_filter, rules = _quote_validation_rules(df_with_expected)
-    valid = df_with_expected.filter(combined_filter).select(df.columns)
-    
-    # Warn if rows were filtered
-    if valid.height < df.height:
-        import warnings
-        line_col = "file_line_number" if "file_line_number" in df.columns else "__row_nr"
-        df_with_line = df_with_expected
-        if line_col == "__row_nr":
-            df_with_line = (
-                df_with_expected.with_row_index("__row_nr")
-                if hasattr(df_with_expected, "with_row_index")
-                else df_with_expected.with_row_count("__row_nr")
-            )
 
-        counts = df_with_line.select(
-            [rule.sum().alias(name) for name, rule in rules]
-        ).row(0)
-        breakdown = []
-        for (name, rule), count in zip(rules, counts):
-            if count:
-                sample = (
-                    df_with_line.filter(rule)
-                    .select(line_col)
-                    .head(5)
-                    .to_series()
-                    .to_list()
-                )
-                breakdown.append(f"{name}={count} lines={sample}")
-
-        detail = "; ".join(breakdown) if breakdown else "no rule breakdown available"
-        warnings.warn(
-            f"validate_quotes: filtered {df.height - valid.height} invalid rows; {detail}",
-            UserWarning,
-        )
-    
-    return valid
+    valid = generic_validate(df_with_expected, combined_filter, rules, "quotes")
+    return valid.select(df.columns)
 
 
 def _quote_validation_rules(df: pl.DataFrame) -> tuple[pl.Expr, list[tuple[str, pl.Expr]]]:
@@ -262,18 +243,28 @@ def encode_fixed_point(
     dim_symbol: pl.DataFrame,
 ) -> pl.DataFrame:
     """Encode bid/ask prices and sizes as fixed-point integers using dim_symbol metadata.
-    
+
     Requires:
     - df must have 'symbol_id' column (from resolve_symbol_ids)
     - df must have 'bid_price', 'bid_amount', 'ask_price', 'ask_amount' columns
     - dim_symbol must have 'symbol_id', 'price_increment', 'amount_increment' columns
-    
+
     Computes:
     - bid_px_int = floor(bid_price / price_increment)
     - bid_sz_int = round(bid_amount / amount_increment)
     - ask_px_int = ceil(ask_price / price_increment)
     - ask_sz_int = round(ask_amount / amount_increment)
-    
+
+    Rounding Semantics (Conservative to Avoid False Crossed Books):
+    - Bids use floor (rounds DOWN): Ensures we never overstate bid prices
+    - Asks use ceil (rounds UP): Ensures we never understate ask prices
+    - This prevents false crossed books (bid >= ask) due to rounding errors
+    - Example: bid=100.123, ask=100.124 with increment=0.1 becomes:
+      * floor(100.123 / 0.1) = floor(1001.23) = 1001 → 100.1
+      * ceil(100.124 / 0.1) = ceil(1001.24) = 1002 → 100.2
+      * Result: bid=100.1 < ask=100.2 (correctly maintains spread)
+    - Without asymmetric rounding, both could round to 1001, creating a false cross
+
     Returns DataFrame with bid_px_int, bid_sz_int, ask_px_int, ask_sz_int columns added.
     """
     if "symbol_id" not in df.columns:
@@ -440,35 +431,20 @@ def resolve_symbol_ids(
     ts_col: str = "ts_local_us",
 ) -> pl.DataFrame:
     """Resolve symbol_ids for quotes data using as-of join with dim_symbol.
-    
-    This is a wrapper around the dim_symbol.resolve_symbol_ids function,
-    but adds exchange_id and exchange_symbol columns first if needed.
-    
+
+    This is a wrapper around the generic symbol resolution function.
+
     Args:
         data: DataFrame with ts_local_us (or ts_col) column
         dim_symbol: dim_symbol table in canonical schema
         exchange_id: Exchange ID to use for all rows
         exchange_symbol: Exchange symbol to use for all rows
         ts_col: Timestamp column name (default: ts_local_us)
-    
+
     Returns:
         DataFrame with symbol_id column added
     """
-    from pointline.dim_symbol import resolve_symbol_ids as _resolve_symbol_ids
-    
-    # Add exchange_id and exchange_symbol if not present
-    result = data.clone()
-    if "exchange_id" not in result.columns:
-        # Cast to match dim_symbol's exchange_id type (Int16, not UInt16)
-        result = result.with_columns(pl.lit(exchange_id, dtype=pl.Int16).alias("exchange_id"))
-    else:
-        # Ensure existing exchange_id matches dim_symbol type
-        result = result.with_columns(pl.col("exchange_id").cast(pl.Int16))
-    if "exchange_symbol" not in result.columns:
-        result = result.with_columns(pl.lit(exchange_symbol).alias("exchange_symbol"))
-    
-    # Use the dim_symbol function
-    return _resolve_symbol_ids(result, dim_symbol, ts_col=ts_col)
+    return generic_resolve_symbol_ids(data, dim_symbol, exchange_id, exchange_symbol, ts_col=ts_col)
 
 
 def required_quotes_columns() -> Sequence[str]:

@@ -29,7 +29,8 @@ from typing import Sequence
 
 import polars as pl
 
-from pointline.validation_utils import with_expected_exchange_id
+from pointline.tables._base import generic_resolve_symbol_ids
+from pointline.validation_utils import DataQualityWarning, with_expected_exchange_id
 
 # Schema definition matching design.md Section 5.2
 # 
@@ -293,7 +294,7 @@ def validate_book_snapshots(df: pl.DataFrame) -> pl.DataFrame:
         import warnings
         warnings.warn(
             f"validate_book_snapshots: filtered {result.height - valid.height} invalid rows",
-            UserWarning
+            DataQualityWarning
         )
     
     return valid
@@ -546,35 +547,20 @@ def resolve_symbol_ids(
     ts_col: str = "ts_local_us",
 ) -> pl.DataFrame:
     """Resolve symbol_ids for book snapshots data using as-of join with dim_symbol.
-    
-    This is a wrapper around the dim_symbol.resolve_symbol_ids function,
-    but adds exchange_id and exchange_symbol columns first if needed.
-    
+
+    This is a wrapper around the generic symbol resolution function.
+
     Args:
         data: DataFrame with ts_local_us (or ts_col) column
         dim_symbol: dim_symbol table in canonical schema
         exchange_id: Exchange ID to use for all rows
         exchange_symbol: Exchange symbol to use for all rows
         ts_col: Timestamp column name (default: ts_local_us)
-    
+
     Returns:
         DataFrame with symbol_id column added
     """
-    from pointline.dim_symbol import resolve_symbol_ids as _resolve_symbol_ids
-    
-    # Add exchange_id and exchange_symbol if not present
-    result = data.clone()
-    if "exchange_id" not in result.columns:
-        # Cast to match dim_symbol's exchange_id type (Int16, not UInt16)
-        result = result.with_columns(pl.lit(exchange_id, dtype=pl.Int16).alias("exchange_id"))
-    else:
-        # Ensure existing exchange_id matches dim_symbol type
-        result = result.with_columns(pl.col("exchange_id").cast(pl.Int16))
-    if "exchange_symbol" not in result.columns:
-        result = result.with_columns(pl.lit(exchange_symbol).alias("exchange_symbol"))
-    
-    # Use the dim_symbol function
-    return _resolve_symbol_ids(result, dim_symbol, ts_col=ts_col)
+    return generic_resolve_symbol_ids(data, dim_symbol, exchange_id, exchange_symbol, ts_col=ts_col)
 
 
 def required_book_snapshots_columns() -> Sequence[str]:
