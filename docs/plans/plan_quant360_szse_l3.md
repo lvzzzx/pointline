@@ -103,7 +103,7 @@ pro = ts.pro_api()
 
 ### 0.4 Implementation: Tushare Client Module
 
-**File:** `pointline/io/tushare/client.py` (NEW)
+**File:** `pointline/io/vendor/tushare/client.py` (NEW)
 
 ```python
 """Tushare API client for Chinese stock data."""
@@ -195,10 +195,10 @@ class TushareClient:
         return df
 ```
 
-**File:** `pointline/io/tushare/__init__.py` (NEW)
+**File:** `pointline/io/vendor/tushare/__init__.py` (NEW)
 
 ```python
-from pointline.io.tushare.client import TushareClient
+from pointline.io.vendor.tushare.client import TushareClient
 
 __all__ = ["TushareClient"]
 ```
@@ -229,7 +229,7 @@ def sync_tushare_symbols(
     from pointline.config import get_exchange_id, EXCHANGE_MAP
     from pointline.dim_symbol import scd2_upsert, read_dim_symbol_table
     from pointline.io.base_repository import BaseDeltaRepository
-    from pointline.io.tushare import TushareClient
+    from pointline.io.vendor.tushare import TushareClient
     from pointline.config import get_table_path
 
     # Initialize Tushare client

@@ -79,7 +79,7 @@ def cmd_dim_symbol_sync_tushare(args: argparse.Namespace) -> int:
     """Sync Chinese stock symbols from Tushare to dim_symbol."""
     from pointline.config import get_table_path
     from pointline.dim_symbol import scd2_upsert, read_dim_symbol_table, scd2_bootstrap
-    from pointline.io.tushare import TushareClient
+    from pointline.io.vendor.tushare import TushareClient
 
     try:
         # Initialize Tushare client
