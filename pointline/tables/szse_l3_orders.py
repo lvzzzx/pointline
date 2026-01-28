@@ -33,7 +33,7 @@ SZSE_L3_ORDERS_SCHEMA: dict[str, pl.DataType] = {
     "exchange": pl.Utf8,
     "exchange_id": pl.Int16,
     "symbol_id": pl.Int64,
-    "ts_local_us": pl.Int64,  # Arrival time (from TransactTime)
+    "ts_local_us": pl.Int64,  # Arrival time in UTC (converted from Asia/Shanghai TransactTime)
     "appl_seq_num": pl.Int64,  # Order ID (unique per day per symbol)
     "side": pl.UInt8,  # 0=buy, 1=sell
     "ord_type": pl.UInt8,  # 0=market, 1=limit
@@ -55,16 +55,18 @@ ORD_TYPE_LIMIT = 1
 
 def parse_quant360_timestamp(timestamp_str: str | int) -> int:
     """
-    Parse Quant360 timestamp format to microseconds.
+    Parse Quant360 timestamp format to microseconds UTC.
 
     Quant360 format: YYYYMMDDHHMMSSmmm (17 digits, milliseconds precision)
-    Example: 20240930091500000 → 2024-09-30 09:15:00.000
+    Timezone: Asia/Shanghai (UTC+8, no DST)
+
+    Example: 20240930091500000 → 2024-09-30 09:15:00.000 CST → 2024-09-30 01:15:00.000 UTC
 
     Args:
-        timestamp_str: Timestamp string or integer
+        timestamp_str: Timestamp string or integer in Asia/Shanghai timezone
 
     Returns:
-        Timestamp in microseconds (int64)
+        Timestamp in microseconds since epoch (UTC, int64)
     """
     ts_str = str(timestamp_str).strip()
 
@@ -82,11 +84,16 @@ def parse_quant360_timestamp(timestamp_str: str | int) -> int:
     second = int(ts_str[12:14])
     millisecond = int(ts_str[14:17])
 
-    # Convert to microseconds since epoch
-    from datetime import datetime
+    # Create datetime in Asia/Shanghai timezone, then convert to UTC
+    from datetime import datetime, timezone
+    from zoneinfo import ZoneInfo
 
-    dt = datetime(year, month, day, hour, minute, second, millisecond * 1000)
-    return int(dt.timestamp() * 1_000_000)
+    dt_shanghai = datetime(
+        year, month, day, hour, minute, second, millisecond * 1000,
+        tzinfo=ZoneInfo("Asia/Shanghai")
+    )
+    dt_utc = dt_shanghai.astimezone(timezone.utc)
+    return int(dt_utc.timestamp() * 1_000_000)
 
 
 def parse_quant360_orders_csv(df: pl.DataFrame) -> pl.DataFrame:
@@ -97,7 +104,7 @@ def parse_quant360_orders_csv(df: pl.DataFrame) -> pl.DataFrame:
     - Contactor, SendingTime, Price, ChannelNo, ExpirationType, ContactInfo, ConfirmID
 
     Returns DataFrame with columns:
-    - ts_local_us (i64) - from TransactTime
+    - ts_local_us (i64) - from TransactTime, converted to UTC microseconds
     - appl_seq_num (i64) - Order ID
     - side (u8) - 0=buy, 1=sell (remapped from Quant360's 1/2)
     - ord_type (u8) - 0=market, 1=limit (remapped from Quant360's 1/2)

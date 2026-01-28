@@ -38,7 +38,7 @@ SZSE_L3_TICKS_SCHEMA: dict[str, pl.DataType] = {
     "exchange": pl.Utf8,
     "exchange_id": pl.Int16,
     "symbol_id": pl.Int64,
-    "ts_local_us": pl.Int64,  # Arrival time (from TransactTime)
+    "ts_local_us": pl.Int64,  # Arrival time in UTC (converted from Asia/Shanghai TransactTime)
     "appl_seq_num": pl.Int64,  # Tick ID (unique per day per symbol)
     "bid_appl_seq_num": pl.Int64,  # Buy order ID (0 if N/A)
     "offer_appl_seq_num": pl.Int64,  # Sell order ID (0 if N/A)
@@ -63,7 +63,7 @@ def parse_quant360_ticks_csv(df: pl.DataFrame) -> pl.DataFrame:
     - SendingTime, ChannelNo, Amt, ExecType
 
     Returns DataFrame with columns:
-    - ts_local_us (i64) - from TransactTime
+    - ts_local_us (i64) - from TransactTime, converted to UTC microseconds
     - appl_seq_num (i64) - Tick ID
     - bid_appl_seq_num (i64) - Buy order ID (0 if N/A)
     - offer_appl_seq_num (i64) - Sell order ID (0 if N/A)
