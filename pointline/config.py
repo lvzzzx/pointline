@@ -101,6 +101,8 @@ TABLE_PATHS = {
     "book_snapshot_25": "silver/book_snapshot_25",
     "derivative_ticker": "silver/derivative_ticker",
     "kline_1h": "silver/kline_1h",
+    "szse_l3_orders": "silver/szse_l3_orders",
+    "szse_l3_ticks": "silver/szse_l3_ticks",
 }
 
 # Table registry for date column availability (used for safe filtering).
@@ -113,6 +115,8 @@ TABLE_HAS_DATE = {
     "book_snapshot_25": True,
     "derivative_ticker": True,
     "kline_1h": True,
+    "szse_l3_orders": True,
+    "szse_l3_ticks": True,
 }
 
 # Storage Settings
@@ -232,12 +236,16 @@ TYPE_MAP = {
     "perpetual": 1,
     "future": 2,
     "option": 3,
-    
+
     # Aliases (map to same values)
     "perp": 1,  # Common abbreviation for perpetual
     "swap": 1,  # Some exchanges call perpetuals "swaps"
     "futures": 2,  # Plural form
     "options": 3,  # Plural form
+
+    # Level 3 order book types (SZSE, SSE)
+    "l3_orders": 10,  # Individual order placements
+    "l3_ticks": 11,   # Trade executions and cancellations
 }
 
 
