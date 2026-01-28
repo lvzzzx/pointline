@@ -8,6 +8,8 @@ from pointline.services.book_snapshots_service import BookSnapshotsIngestionServ
 from pointline.services.derivative_ticker_service import DerivativeTickerIngestionService
 from pointline.services.klines_service import KlinesIngestionService
 from pointline.services.quotes_service import QuotesIngestionService
+from pointline.services.szse_l3_orders_service import SzseL3OrdersIngestionService
+from pointline.services.szse_l3_ticks_service import SzseL3TicksIngestionService
 from pointline.services.trades_service import TradesIngestionService
 
 TABLE_PARTITIONS = {
@@ -16,6 +18,8 @@ TABLE_PARTITIONS = {
     "book_snapshot_25": ["exchange", "date"],
     "derivative_ticker": ["exchange", "date"],
     "kline_1h": ["exchange", "date"],
+    "szse_l3_orders": ["exchange", "date"],
+    "szse_l3_ticks": ["exchange", "date"],
 }
 
 
@@ -54,4 +58,16 @@ def create_ingestion_service(data_type: str, manifest_repo):
             partition_by=["exchange", "date"],
         )
         return KlinesIngestionService(repo, dim_symbol_repo, manifest_repo)
+    if data_type == "l3_orders":
+        repo = BaseDeltaRepository(
+            get_table_path("szse_l3_orders"),
+            partition_by=["exchange", "date"],
+        )
+        return SzseL3OrdersIngestionService(repo, dim_symbol_repo, manifest_repo)
+    if data_type == "l3_ticks":
+        repo = BaseDeltaRepository(
+            get_table_path("szse_l3_ticks"),
+            partition_by=["exchange", "date"],
+        )
+        return SzseL3TicksIngestionService(repo, dim_symbol_repo, manifest_repo)
     raise ValueError(f"Unsupported data type: {data_type}")
