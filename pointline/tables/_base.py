@@ -108,7 +108,8 @@ def generic_validate(
         detail = "; ".join(breakdown) if breakdown else "no rule breakdown available"
         warnings.warn(
             f"validate_{table_name}: filtered {df.height - valid.height} invalid rows; {detail}",
-            DataQualityWarning, stacklevel=2,
+            DataQualityWarning,
+            stacklevel=2,
         )
 
     return valid

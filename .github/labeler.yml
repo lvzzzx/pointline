@@ -1,31 +1,46 @@
 # Auto-labeling rules for PRs based on changed files
+# Format for actions/labeler@v5
 
 'area: ETL':
-  - 'pointline/services/**'
-  - 'pointline/io/**'
+  - changed-files:
+    - any-glob-to-any-file: 'pointline/services/**'
+  - changed-files:
+    - any-glob-to-any-file: 'pointline/io/**'
 
 'area: schema':
-  - 'pointline/tables/**'
-  - 'docs/schemas.md'
+  - changed-files:
+    - any-glob-to-any-file: 'pointline/tables/**'
+  - changed-files:
+    - any-glob-to-any-file: 'docs/schemas.md'
 
 'area: research':
-  - 'research/**'
-  - 'pointline/research.py'
+  - changed-files:
+    - any-glob-to-any-file: 'research/**'
+  - changed-files:
+    - any-glob-to-any-file: 'pointline/research.py'
 
 'area: CLI':
-  - 'pointline/cli/**'
+  - changed-files:
+    - any-glob-to-any-file: 'pointline/cli/**'
 
 'area: config':
-  - 'pointline/config.py'
-  - 'pyproject.toml'
+  - changed-files:
+    - any-glob-to-any-file: 'pointline/config.py'
+  - changed-files:
+    - any-glob-to-any-file: 'pyproject.toml'
 
 'area: docs':
-  - 'docs/**'
-  - '*.md'
+  - changed-files:
+    - any-glob-to-any-file: 'docs/**'
+  - changed-files:
+    - any-glob-to-any-file: '**/*.md'
 
 'area: tests':
-  - 'tests/**'
+  - changed-files:
+    - any-glob-to-any-file: 'tests/**'
 
 'dependencies':
-  - 'pyproject.toml'
-  - 'requirements*.txt'
+  - changed-files:
+    - any-glob-to-any-file: 'pyproject.toml'
+  - changed-files:
+    - any-glob-to-any-file: 'requirements*.txt'

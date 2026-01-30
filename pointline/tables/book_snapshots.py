@@ -292,7 +292,8 @@ def validate_book_snapshots(df: pl.DataFrame) -> pl.DataFrame:
 
         warnings.warn(
             f"validate_book_snapshots: filtered {result.height - valid.height} invalid rows",
-            DataQualityWarning, stacklevel=2,
+            DataQualityWarning,
+            stacklevel=2,
         )
 
     return valid
