@@ -76,11 +76,7 @@ def _non_monotonic_ts(trades: pl.DataFrame, ts_col: str) -> tuple[int, str]:
     ):
         # Check monotonicity within each file; avoid cross-file ordering assumptions.
         diffs = trades.select(
-            pl.col(ts_col)
-            .sort_by("file_line_number")
-            .diff()
-            .over("file_id")
-            .alias("ts_diff")
+            pl.col(ts_col).sort_by("file_line_number").diff().over("file_id").alias("ts_diff")
         )["ts_diff"]
         return int(diffs.lt(0).fill_null(False).sum()), "per-file file_line_number"
     ordered = trades.sort(ts_col)
@@ -94,21 +90,15 @@ def _side_sanity(trades: pl.DataFrame) -> tuple[float | None, float | None]:
     if "price_int" not in trades.columns or "qty_int" not in trades.columns:
         return None, None
     # Use price changes between adjacent trades as a rough sanity check.
-    df = trades.select([
-        pl.col("side"),
-        pl.col("price_int").cast(pl.Float64).alias("price"),
-    ]).with_columns(pl.col("price").shift(-1).alias("price_next"))
+    df = trades.select(
+        [
+            pl.col("side"),
+            pl.col("price_int").cast(pl.Float64).alias("price"),
+        ]
+    ).with_columns(pl.col("price").shift(-1).alias("price_next"))
     df = df.with_columns(((pl.col("price_next") - pl.col("price")) / pl.col("price")).alias("ret"))
-    mean_buy = (
-        df.filter(pl.col("side") == SIDE_BUY)
-        .select(pl.col("ret").mean())
-        .item()
-    )
-    mean_sell = (
-        df.filter(pl.col("side") == SIDE_SELL)
-        .select(pl.col("ret").mean())
-        .item()
-    )
+    mean_buy = df.filter(pl.col("side") == SIDE_BUY).select(pl.col("ret").mean()).item()
+    mean_sell = df.filter(pl.col("side") == SIDE_SELL).select(pl.col("ret").mean()).item()
     return mean_buy, mean_sell
 
 

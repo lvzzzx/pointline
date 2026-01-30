@@ -1,9 +1,11 @@
+import contextlib
 import hashlib
+from collections.abc import Iterator
+from datetime import date, datetime
 from pathlib import Path
-from typing import Iterator
-from datetime import datetime, date
 
-from pointline.io.protocols import BronzeSource, BronzeFileMetadata
+from pointline.io.protocols import BronzeFileMetadata
+
 
 class LocalBronzeSource:
     """
@@ -73,7 +75,7 @@ class LocalBronzeSource:
                 date=meta.get("date", date(1970, 1, 1)),
                 bronze_file_path=str(rel_path),
                 file_size_bytes=stat.st_size,
-                last_modified_ts=int(stat.st_mtime * 1_000_000), # microseconds
+                last_modified_ts=int(stat.st_mtime * 1_000_000),  # microseconds
                 sha256=sha256,
             )
 
@@ -84,10 +86,8 @@ class LocalBronzeSource:
             if "=" in part:
                 key, val = part.split("=", 1)
                 if key == "date":
-                    try:
+                    with contextlib.suppress(ValueError):
                         meta[key] = datetime.strptime(val, "%Y-%m-%d").date()
-                    except ValueError:
-                        pass
                 else:
                     meta[key] = val
         return meta

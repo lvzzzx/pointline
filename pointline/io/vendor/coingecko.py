@@ -163,19 +163,23 @@ class CoinGeckoClient:
             batch = coin_ids[i : i + BATCH_SIZE]
             ids_param = ",".join(batch)
 
-            data = self._make_request("/coins/markets", params={"vs_currency": "usd", "ids": ids_param})
+            data = self._make_request(
+                "/coins/markets", params={"vs_currency": "usd", "ids": ids_param}
+            )
 
             for item in data:
-                results.append({
-                    "coin_id": item.get("id"),
-                    "symbol": item.get("symbol", "").upper(),
-                    "circulating_supply": item.get("circulating_supply"),
-                    "total_supply": item.get("total_supply"),
-                    "max_supply": item.get("max_supply"),
-                    "market_cap_usd": item.get("market_cap"),
-                    "fully_diluted_valuation_usd": item.get("fully_diluted_valuation"),
-                    "last_updated": item.get("last_updated"),
-                })
+                results.append(
+                    {
+                        "coin_id": item.get("id"),
+                        "symbol": item.get("symbol", "").upper(),
+                        "circulating_supply": item.get("circulating_supply"),
+                        "total_supply": item.get("total_supply"),
+                        "max_supply": item.get("max_supply"),
+                        "market_cap_usd": item.get("market_cap"),
+                        "fully_diluted_valuation_usd": item.get("fully_diluted_valuation"),
+                        "last_updated": item.get("last_updated"),
+                    }
+                )
 
         return results
 

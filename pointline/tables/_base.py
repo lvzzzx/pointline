@@ -6,11 +6,11 @@ This module provides common patterns shared across table modules to reduce dupli
 from __future__ import annotations
 
 import warnings
-from typing import Sequence
+from collections.abc import Sequence
 
 import polars as pl
 
-from pointline.validation_utils import DataQualityWarning, with_expected_exchange_id
+from pointline.validation_utils import DataQualityWarning
 
 
 def generic_resolve_symbol_ids(
@@ -100,17 +100,16 @@ def generic_validate(
 
         # Build breakdown with sample line numbers
         breakdown = []
-        for (name, rule), count in zip(validation_rules, counts):
+        for (name, rule), count in zip(validation_rules, counts, strict=False):
             if count:
-                sample = (
-                    df_with_line.filter(rule).select(line_col).head(5).to_series().to_list()
-                )
+                sample = df_with_line.filter(rule).select(line_col).head(5).to_series().to_list()
                 breakdown.append(f"{name}={count} lines={sample}")
 
         detail = "; ".join(breakdown) if breakdown else "no rule breakdown available"
         warnings.warn(
             f"validate_{table_name}: filtered {df.height - valid.height} invalid rows; {detail}",
             DataQualityWarning,
+            stacklevel=2,
         )
 
     return valid

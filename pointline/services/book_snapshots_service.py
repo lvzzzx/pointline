@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import gzip
 import logging
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import polars as pl
 
-from pointline.config import EXCHANGE_MAP, get_bronze_root, normalize_exchange, get_exchange_id
+from pointline.config import get_bronze_root, get_exchange_id, normalize_exchange
 from pointline.dim_symbol import check_coverage
 from pointline.io.protocols import (
     BronzeFileMetadata,
@@ -136,9 +136,7 @@ class BookSnapshotsIngestionService(BaseService):
 
             # 4. Quarantine check
             exchange_id = self._resolve_exchange_id(meta.exchange)
-            is_valid, error_msg = self._check_quarantine(
-                meta, dim_symbol, exchange_id, parsed_df
-            )
+            is_valid, error_msg = self._check_quarantine(meta, dim_symbol, exchange_id, parsed_df)
 
             if not is_valid:
                 logger.warning(f"File quarantined: {meta.bronze_file_path} - {error_msg}")
@@ -305,9 +303,7 @@ class BookSnapshotsIngestionService(BaseService):
             return True, ""
 
         missing_lines = missing.select("file_line_number").head(5).to_series().to_list()
-        mismatch_lines = (
-            mismatched_lines.select("file_line_number").head(5).to_series().to_list()
-        )
+        mismatch_lines = mismatched_lines.select("file_line_number").head(5).to_series().to_list()
         return (
             False,
             "post_ingest_validation_failed: "
@@ -385,8 +381,7 @@ class BookSnapshotsIngestionService(BaseService):
         if not has_coverage:
             # Determine specific reason
             rows = dim_symbol.filter(
-                (pl.col("exchange_id") == exchange_id)
-                & (pl.col("exchange_symbol") == meta.symbol)
+                (pl.col("exchange_id") == exchange_id) & (pl.col("exchange_symbol") == meta.symbol)
             )
 
             if rows.is_empty():
@@ -414,16 +409,18 @@ class BookSnapshotsIngestionService(BaseService):
         """Add exchange, exchange_id and date columns."""
         # Add exchange (string) for partitioning and human readability
         # Add exchange_id (Int16) for joins and compression
-        result = df.with_columns([
-            pl.lit(exchange, dtype=pl.Utf8).alias("exchange"),
-            pl.lit(exchange_id, dtype=pl.Int16).alias("exchange_id"),
-        ])
+        result = df.with_columns(
+            [
+                pl.lit(exchange, dtype=pl.Utf8).alias("exchange"),
+                pl.lit(exchange_id, dtype=pl.Int16).alias("exchange_id"),
+            ]
+        )
 
         # Derive date from ts_local_us (microseconds since epoch) in UTC
-        result = result.with_columns([
-            pl.from_epoch(pl.col("ts_local_us"), time_unit="us")
-            .cast(pl.Date)
-            .alias("date"),
-        ])
+        result = result.with_columns(
+            [
+                pl.from_epoch(pl.col("ts_local_us"), time_unit="us").cast(pl.Date).alias("date"),
+            ]
+        )
 
         return result

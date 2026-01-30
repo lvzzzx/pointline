@@ -13,7 +13,7 @@ Example:
 
 from __future__ import annotations
 
-from typing import Sequence
+from collections.abc import Sequence
 
 import polars as pl
 
@@ -27,7 +27,7 @@ from pointline.tables._base import (
 from pointline.validation_utils import with_expected_exchange_id
 
 # Schema definition matching design.md Section 5.3
-# 
+#
 # Delta Lake Integer Type Limitations:
 # - Delta Lake (via Parquet) does not support unsigned integer types UInt16 and UInt32
 # - These are automatically converted to signed types (Int16 and Int32) when written
@@ -60,16 +60,16 @@ SIDE_UNKNOWN = 2
 
 def parse_tardis_trades_csv(df: pl.DataFrame) -> pl.DataFrame:
     """Parse raw Tardis trades CSV format into normalized columns.
-    
+
     Tardis provides timestamps as microseconds since epoch (integers).
-    
+
     Handles common Tardis column name variations:
     - Timestamps: local_timestamp, timestamp, localTimestamp, etc.
     - Trade ID: trade_id, tradeId, id
     - Side: side, takerSide, taker_side
     - Price: price, tradePrice, trade_price
     - Quantity: amount, quantity, size, qty
-    
+
     Returns DataFrame with columns:
     - ts_local_us (i64): local timestamp in microseconds since epoch
     - ts_exch_us (i64): exchange timestamp in microseconds since epoch (nullable)
@@ -79,11 +79,11 @@ def parse_tardis_trades_csv(df: pl.DataFrame) -> pl.DataFrame:
     - qty (f64): trade quantity
     """
     result = df.clone()
-    
+
     # Find timestamp columns (flexible matching)
     ts_local_col = None
     ts_exch_col = None
-    
+
     for col in df.columns:
         col_lower = col.lower()
         if "timestamp" not in col_lower:
@@ -96,25 +96,21 @@ def parse_tardis_trades_csv(df: pl.DataFrame) -> pl.DataFrame:
             continue
         if ts_exch_col is None:
             ts_exch_col = col
-    
+
     # Parse local timestamp (required)
     # Tardis provides timestamps as microseconds since epoch (integers)
     if ts_local_col:
-        result = result.with_columns(
-            pl.col(ts_local_col).cast(pl.Int64).alias("ts_local_us")
-        )
+        result = result.with_columns(pl.col(ts_local_col).cast(pl.Int64).alias("ts_local_us"))
     else:
         raise ValueError("Could not find local_timestamp column in CSV")
-    
+
     # Parse exchange timestamp (optional)
     # Tardis provides timestamps as microseconds since epoch (integers)
     if ts_exch_col:
-        result = result.with_columns(
-            pl.col(ts_exch_col).cast(pl.Int64).alias("ts_exch_us")
-        )
+        result = result.with_columns(pl.col(ts_exch_col).cast(pl.Int64).alias("ts_exch_us"))
     else:
         result = result.with_columns(pl.lit(None, dtype=pl.Int64).alias("ts_exch_us"))
-    
+
     # Find trade_id column
     trade_id_col = None
     for col in df.columns:
@@ -122,12 +118,12 @@ def parse_tardis_trades_csv(df: pl.DataFrame) -> pl.DataFrame:
         if col_lower in ("trade_id", "tradeid", "id", "trade_id_str"):
             trade_id_col = col
             break
-    
+
     if trade_id_col:
         result = result.with_columns(pl.col(trade_id_col).cast(pl.Utf8).alias("trade_id"))
     else:
         result = result.with_columns(pl.lit(None, dtype=pl.Utf8).alias("trade_id"))
-    
+
     # Find side column
     side_col = None
     for col in df.columns:
@@ -135,7 +131,7 @@ def parse_tardis_trades_csv(df: pl.DataFrame) -> pl.DataFrame:
         if col_lower in ("side", "takerside", "taker_side", "takerSide"):
             side_col = col
             break
-    
+
     if side_col:
         # Vectorized side encoding (replaces map_elements for 10-100x performance)
         # Handle both integer and string side values
@@ -158,7 +154,7 @@ def parse_tardis_trades_csv(df: pl.DataFrame) -> pl.DataFrame:
         result = result.with_columns(side_code.alias("side"))
     else:
         result = result.with_columns(pl.lit(SIDE_UNKNOWN, dtype=pl.UInt8).alias("side"))
-    
+
     # Find price column
     price_col = None
     for col in df.columns:
@@ -166,12 +162,12 @@ def parse_tardis_trades_csv(df: pl.DataFrame) -> pl.DataFrame:
         if col_lower in ("price", "tradeprice", "trade_price", "tradePrice"):
             price_col = col
             break
-    
+
     if price_col:
         result = result.with_columns(pl.col(price_col).cast(pl.Float64).alias("price"))
     else:
         raise ValueError("Could not find price column in CSV")
-    
+
     # Find quantity column
     qty_col = None
     for col in df.columns:
@@ -179,12 +175,12 @@ def parse_tardis_trades_csv(df: pl.DataFrame) -> pl.DataFrame:
         if col_lower in ("amount", "quantity", "size", "qty", "volume"):
             qty_col = col
             break
-    
+
     if qty_col:
         result = result.with_columns(pl.col(qty_col).cast(pl.Float64).alias("qty"))
     else:
         raise ValueError("Could not find quantity/amount column in CSV")
-    
+
     # Select only the columns we need (preserve file_line_number if provided)
     select_cols = [
         "ts_local_us",
@@ -201,22 +197,21 @@ def parse_tardis_trades_csv(df: pl.DataFrame) -> pl.DataFrame:
 
 def normalize_trades_schema(df: pl.DataFrame) -> pl.DataFrame:
     """Cast to the canonical trades schema and select only schema columns.
-    
+
     Ensures all required columns exist and have correct types.
     Optional columns (trade_id, flags) are filled with None if missing.
     Drops any extra columns (e.g., original float columns, dim_symbol metadata).
     """
     # Optional columns that can be missing
     optional_columns = {"trade_id", "flags"}
-    
+
     # Check for missing required (non-optional) columns
     missing_required = [
-        col for col in TRADES_SCHEMA
-        if col not in df.columns and col not in optional_columns
+        col for col in TRADES_SCHEMA if col not in df.columns and col not in optional_columns
     ]
     if missing_required:
         raise ValueError(f"trades missing required columns: {missing_required}")
-    
+
     # Cast columns to schema types
     casts = []
     for col, dtype in TRADES_SCHEMA.items():
@@ -228,7 +223,7 @@ def normalize_trades_schema(df: pl.DataFrame) -> pl.DataFrame:
                 casts.append(pl.lit(None, dtype=dtype).alias(col))
             else:
                 raise ValueError(f"Required non-nullable column {col} is missing")
-    
+
     # Cast and select only schema columns (drops extra columns)
     return df.with_columns(casts).select(list(TRADES_SCHEMA.keys()))
 
@@ -317,32 +312,32 @@ def encode_fixed_point(
     qty_col: str = "qty",
 ) -> pl.DataFrame:
     """Encode price and quantity as fixed-point integers using dim_symbol metadata.
-    
+
     Requires:
     - df must have 'symbol_id' column (from resolve_symbol_ids)
     - dim_symbol must have 'symbol_id', 'price_increment', 'amount_increment' columns
-    
+
     Computes:
     - price_int = round(price / price_increment)
     - qty_int = round(qty / amount_increment)
-    
+
     Returns DataFrame with price_int and qty_int columns added.
     """
     if "symbol_id" not in df.columns:
         raise ValueError("encode_fixed_point: df must have 'symbol_id' column")
-    
+
     required_dims = ["symbol_id", "price_increment", "amount_increment"]
     missing = [c for c in required_dims if c not in dim_symbol.columns]
     if missing:
         raise ValueError(f"encode_fixed_point: dim_symbol missing columns: {missing}")
-    
+
     # Join to get increments
     joined = df.join(
         dim_symbol.select(["symbol_id", "price_increment", "amount_increment"]),
         on="symbol_id",
         how="left",
     )
-    
+
     # Check for missing symbol_ids
     missing_ids = joined.filter(pl.col("price_increment").is_null())
     if not missing_ids.is_empty():
@@ -350,13 +345,18 @@ def encode_fixed_point(
         raise ValueError(
             f"encode_fixed_point: {missing_symbols.height} symbol_ids not found in dim_symbol"
         )
-    
+
     # Encode to fixed-point
-    result = joined.with_columns([
-        (pl.col(price_col) / pl.col("price_increment")).round().cast(pl.Int64).alias("price_int"),
-        (pl.col(qty_col) / pl.col("amount_increment")).round().cast(pl.Int64).alias("qty_int"),
-    ])
-    
+    result = joined.with_columns(
+        [
+            (pl.col(price_col) / pl.col("price_increment"))
+            .round()
+            .cast(pl.Int64)
+            .alias("price_int"),
+            (pl.col(qty_col) / pl.col("amount_increment")).round().cast(pl.Int64).alias("qty_int"),
+        ]
+    )
+
     # Drop intermediate columns
     return result.drop(["price_increment", "amount_increment"])
 

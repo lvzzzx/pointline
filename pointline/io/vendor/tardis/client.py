@@ -57,9 +57,7 @@ class TardisClient:
             try:
                 resp.raise_for_status()
             except requests.HTTPError as exc:
-                raise RuntimeError(
-                    f"Tardis API error {resp.status_code}: {resp.text}"
-                ) from exc
+                raise RuntimeError(f"Tardis API error {resp.status_code}: {resp.text}") from exc
 
             return resp.json()
 

@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from pathlib import Path
-from typing import Iterable
 
 import requests
 
@@ -119,9 +119,7 @@ def download_binance_klines(
                 filename=filename,
             )
             url = f"{base_url.rstrip('/')}/{remote_path}"
-            partition_date = (
-                label if timeframe == "daily" else f"{label}-01"
-            )
+            partition_date = label if timeframe == "daily" else f"{label}-01"
             dest = _build_local_path(
                 download_dir=download_dir,
                 exchange=exchange,
@@ -224,10 +222,7 @@ def _build_remote_path(
     interval: str,
     filename: str,
 ) -> str:
-    return (
-        f"data/{market_path}/{timeframe}/klines/"
-        f"{symbol}/{interval}/{filename}"
-    )
+    return f"data/{market_path}/{timeframe}/klines/{symbol}/{interval}/{filename}"
 
 
 def _build_local_path(

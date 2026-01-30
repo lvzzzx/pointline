@@ -77,8 +77,7 @@ def cmd_dim_symbol_sync(args: argparse.Namespace) -> int:
 
 def cmd_dim_symbol_sync_tushare(args: argparse.Namespace) -> int:
     """Sync Chinese stock symbols from Tushare to dim_symbol."""
-    from pointline.config import get_table_path
-    from pointline.dim_symbol import scd2_upsert, read_dim_symbol_table, scd2_bootstrap
+    from pointline.dim_symbol import read_dim_symbol_table, scd2_bootstrap, scd2_upsert
     from pointline.io.vendor.tushare import TushareClient
 
     try:
@@ -97,8 +96,7 @@ def cmd_dim_symbol_sync_tushare(args: argparse.Namespace) -> int:
             df = client.get_sse_stocks(include_delisted=args.include_delisted)
         elif args.exchange.lower() == "all":
             df = client.get_all_stocks(
-                exchanges=["SZSE", "SSE"],
-                include_delisted=args.include_delisted
+                exchanges=["SZSE", "SSE"], include_delisted=args.include_delisted
             )
         else:
             print(f"Error: Invalid exchange '{args.exchange}'. Use 'szse', 'sse', or 'all'.")
@@ -128,60 +126,60 @@ def cmd_dim_symbol_sync_tushare(args: argparse.Namespace) -> int:
 
     # Map exchange_id
     from pointline.config import EXCHANGE_MAP
+
     szse_id = EXCHANGE_MAP.get("szse", 30)
     sse_id = EXCHANGE_MAP.get("sse", 31)
 
-    updates = df.with_columns([
-        # Remove exchange suffix from ts_code: "000001.SZ" -> "000001"
-        pl.col("symbol").alias("exchange_symbol"),
-
-        # Map exchange name
-        pl.when(pl.col("exchange") == "SZSE")
+    updates = df.with_columns(
+        [
+            # Remove exchange suffix from ts_code: "000001.SZ" -> "000001"
+            pl.col("symbol").alias("exchange_symbol"),
+            # Map exchange name
+            pl.when(pl.col("exchange") == "SZSE")
             .then(pl.lit("szse"))
             .when(pl.col("exchange") == "SSE")
             .then(pl.lit("sse"))
             .otherwise(pl.lit("unknown"))
             .alias("exchange"),
-
-        # Map exchange_id
-        pl.when(pl.col("exchange") == "SZSE")
+            # Map exchange_id
+            pl.when(pl.col("exchange") == "SZSE")
             .then(pl.lit(szse_id))
             .when(pl.col("exchange") == "SSE")
             .then(pl.lit(sse_id))
             .otherwise(pl.lit(0))
             .cast(pl.Int16)
             .alias("exchange_id"),
-
-        # Use name as base_asset
-        pl.col("name").alias("base_asset"),
-
-        # Fixed fields for Chinese A-shares
-        pl.lit("CNY").alias("quote_asset"),
-        pl.lit(0).cast(pl.UInt8).alias("asset_type"),  # spot stocks
-        pl.lit(0.01).alias("tick_size"),  # 1 fen
-        pl.lit(100.0).alias("lot_size"),  # 1 lot = 100 shares
-        pl.lit(0.01).alias("price_increment"),  # tick-based encoding
-        pl.lit(100.0).alias("amount_increment"),  # lot-based encoding
-        pl.lit(1.0).alias("contract_size"),
-
-        # Parse dates
-        pl.col("list_date").map_elements(
-            parse_tushare_date, return_dtype=pl.Int64
-        ).alias("valid_from_ts"),
-    ]).select([
-        "exchange_id",
-        "exchange",
-        "exchange_symbol",
-        "base_asset",
-        "quote_asset",
-        "asset_type",
-        "tick_size",
-        "lot_size",
-        "price_increment",
-        "amount_increment",
-        "contract_size",
-        "valid_from_ts",
-    ])
+            # Use name as base_asset
+            pl.col("name").alias("base_asset"),
+            # Fixed fields for Chinese A-shares
+            pl.lit("CNY").alias("quote_asset"),
+            pl.lit(0).cast(pl.UInt8).alias("asset_type"),  # spot stocks
+            pl.lit(0.01).alias("tick_size"),  # 1 fen
+            pl.lit(100.0).alias("lot_size"),  # 1 lot = 100 shares
+            pl.lit(0.01).alias("price_increment"),  # tick-based encoding
+            pl.lit(100.0).alias("amount_increment"),  # lot-based encoding
+            pl.lit(1.0).alias("contract_size"),
+            # Parse dates
+            pl.col("list_date")
+            .map_elements(parse_tushare_date, return_dtype=pl.Int64)
+            .alias("valid_from_ts"),
+        ]
+    ).select(
+        [
+            "exchange_id",
+            "exchange",
+            "exchange_symbol",
+            "base_asset",
+            "quote_asset",
+            "asset_type",
+            "tick_size",
+            "lot_size",
+            "price_increment",
+            "amount_increment",
+            "contract_size",
+            "valid_from_ts",
+        ]
+    )
 
     # Filter out unknown exchanges
     updates = updates.filter(pl.col("exchange_id") != 0)
@@ -217,11 +215,12 @@ def cmd_dim_symbol_sync_tushare(args: argparse.Namespace) -> int:
     print(f"  Total symbols in dim_symbol: {len(updated_dim)}")
 
     # Show summary by exchange
-    summary = updated_dim.filter(
-        pl.col("is_current")
-    ).groupby("exchange").agg(
-        pl.count().alias("count")
-    ).sort("exchange")
+    summary = (
+        updated_dim.filter(pl.col("is_current"))
+        .groupby("exchange")
+        .agg(pl.count().alias("count"))
+        .sort("exchange")
+    )
 
     print("\nCurrent symbols by exchange:")
     for row in summary.iter_rows(named=True):

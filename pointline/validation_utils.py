@@ -10,7 +10,9 @@ class DataQualityWarning(RuntimeWarning):
     issues are not easily suppressed by default warning filters. Data quality
     problems in ETL pipelines should be loud and visible.
     """
+
     pass
+
 
 _EXCHANGE_MAP_DF = pl.DataFrame(
     {
@@ -22,13 +24,10 @@ _EXCHANGE_MAP_DF = pl.DataFrame(
 
 def with_expected_exchange_id(df: pl.DataFrame) -> pl.DataFrame:
     """Attach expected_exchange_id using a join on normalized exchange."""
-    return (
-        df.with_columns(
-            pl.col("exchange")
-            .cast(pl.Utf8)
-            .str.to_lowercase()
-            .str.strip_chars()
-            .alias("_exchange_norm")
-        )
-        .join(_EXCHANGE_MAP_DF, left_on="_exchange_norm", right_on="exchange_norm", how="left")
-    )
+    return df.with_columns(
+        pl.col("exchange")
+        .cast(pl.Utf8)
+        .str.to_lowercase()
+        .str.strip_chars()
+        .alias("_exchange_norm")
+    ).join(_EXCHANGE_MAP_DF, left_on="_exchange_norm", right_on="exchange_norm", how="left")

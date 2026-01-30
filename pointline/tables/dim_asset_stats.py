@@ -63,7 +63,9 @@ def normalize_dim_asset_stats_schema(df: pl.DataFrame) -> pl.DataFrame:
     # Handle nullable columns (total_supply, max_supply, market_cap_usd, fully_diluted_valuation_usd)
     result = df.with_columns(
         [
-            pl.col(col).cast(dtype) if col not in ("total_supply", "max_supply", "market_cap_usd", "fully_diluted_valuation_usd")
+            pl.col(col).cast(dtype)
+            if col
+            not in ("total_supply", "max_supply", "market_cap_usd", "fully_diluted_valuation_usd")
             else pl.col(col).cast(dtype, strict=False)  # Allow nulls for these columns
             for col, dtype in SCHEMA.items()
         ]

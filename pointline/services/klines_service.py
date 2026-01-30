@@ -8,18 +8,18 @@ from pathlib import Path
 
 import polars as pl
 
-from pointline.config import get_bronze_root, normalize_exchange, get_exchange_id
+from pointline.config import get_bronze_root, get_exchange_id, normalize_exchange
 from pointline.dim_symbol import check_coverage
 from pointline.io.protocols import BronzeFileMetadata, IngestionManifestRepository, IngestionResult
 from pointline.io.vendor.binance import normalize_symbol
 from pointline.services.base_service import BaseService
 from pointline.tables.klines import (
+    RAW_KLINE_COLUMNS,
     encode_fixed_point,
     normalize_klines_schema,
     parse_binance_klines_csv,
     resolve_symbol_ids,
     validate_klines,
-    RAW_KLINE_COLUMNS,
 )
 
 logger = logging.getLogger(__name__)
@@ -67,7 +67,9 @@ class KlinesIngestionService(BaseService):
         if not bronze_path.exists():
             error_msg = f"Bronze file not found: {bronze_path}"
             logger.error(error_msg)
-            return IngestionResult(row_count=0, ts_local_min_us=0, ts_local_max_us=0, error_message=error_msg)
+            return IngestionResult(
+                row_count=0, ts_local_min_us=0, ts_local_max_us=0, error_message=error_msg
+            )
 
         try:
             raw_df = self._read_bronze_csv(bronze_path)
