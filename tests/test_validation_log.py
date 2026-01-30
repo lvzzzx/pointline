@@ -1,8 +1,9 @@
 """Tests for validation_log table and utilities."""
 
+from pathlib import Path
+
 import polars as pl
 import pytest
-from pathlib import Path
 
 from pointline.tables.validation_log import (
     VALIDATION_LOG_SCHEMA,

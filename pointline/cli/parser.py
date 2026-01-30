@@ -20,6 +20,7 @@ from pointline.cli.commands.validate import cmd_validate_quotes, cmd_validate_tr
 from pointline.cli.commands.validation import cmd_validation_show, cmd_validation_stats
 from pointline.config import TABLE_PATHS, get_bronze_root, get_table_path
 
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="pointline", description="Pointline data lake CLI")
     subparsers = parser.add_subparsers(dest="command")
