@@ -184,24 +184,12 @@ def _build_bars(config: PipelineConfig) -> pl.DataFrame:
             pl.col("price").last().alias("close"),
             pl.col("notional").filter(pl.col("is_large")).sum().alias("A_L"),
             pl.col("signed_notional").filter(pl.col("is_large")).sum().alias("N_L"),
-            pl.col("notional")
-            .filter(pl.col("is_large") & (pl.col("sign") > 0))
-            .sum()
-            .alias("B_L"),
-            pl.col("notional")
-            .filter(pl.col("is_large") & (pl.col("sign") < 0))
-            .sum()
-            .alias("S_L"),
+            pl.col("notional").filter(pl.col("is_large") & (pl.col("sign") > 0)).sum().alias("B_L"),
+            pl.col("notional").filter(pl.col("is_large") & (pl.col("sign") < 0)).sum().alias("S_L"),
             pl.col("notional").filter(pl.col("is_small")).sum().alias("A_S"),
             pl.col("signed_notional").filter(pl.col("is_small")).sum().alias("N_S"),
-            pl.col("notional")
-            .filter(pl.col("is_small") & (pl.col("sign") > 0))
-            .sum()
-            .alias("B_S"),
-            pl.col("notional")
-            .filter(pl.col("is_small") & (pl.col("sign") < 0))
-            .sum()
-            .alias("S_S"),
+            pl.col("notional").filter(pl.col("is_small") & (pl.col("sign") > 0)).sum().alias("B_S"),
+            pl.col("notional").filter(pl.col("is_small") & (pl.col("sign") < 0)).sum().alias("S_S"),
             pl.col("notional").top_k(1).sum().alias("top1_notional"),
             pl.col("notional").top_k(3).sum().alias("top3_notional"),
             pl.col("notional").top_k(5).sum().alias("top5_notional"),
@@ -242,9 +230,7 @@ def _add_features(df: pl.DataFrame, config: PipelineConfig) -> pl.DataFrame:
     df = df.with_columns(
         [
             (pl.col("N_L") / (pl.col("A") + eps)).alias("F_L1"),
-            ((pl.col("B_L") - pl.col("S_L")) / (pl.col("B_L") + pl.col("S_L") + eps)).alias(
-                "F_L2"
-            ),
+            ((pl.col("B_L") - pl.col("S_L")) / (pl.col("B_L") + pl.col("S_L") + eps)).alias("F_L2"),
             ((pl.col("N_L") - pl.col("N_S")) / (pl.col("A") + eps)).alias("F_D"),
             (pl.col("N").abs() / (pl.col("A") + eps)).alias("F_T"),
             (pl.col("A_L") / (pl.col("A") + eps)).alias("F_P"),

@@ -6,7 +6,7 @@ from typing import Any
 
 import polars as pl
 
-from pointline.config import EXCHANGE_MAP, TYPE_MAP, get_exchange_name, normalize_exchange
+from pointline.config import EXCHANGE_MAP, TYPE_MAP, get_exchange_name
 
 
 @dataclass(frozen=True)
@@ -32,9 +32,7 @@ def _parse_iso_to_us(value: str) -> int:
 
 def _resolve_exchange_id(exchange: str) -> int:
     if exchange not in EXCHANGE_MAP:
-        raise ValueError(
-            f"Exchange '{exchange}' not in EXCHANGE_MAP; update pointline.config"
-        )
+        raise ValueError(f"Exchange '{exchange}' not in EXCHANGE_MAP; update pointline.config")
     return EXCHANGE_MAP[exchange]
 
 
@@ -71,9 +69,7 @@ def _instrument_state(
     elif effective_ts is not None:
         valid_from_ts = effective_ts
     else:
-        raise ValueError(
-            f"Instrument {exchange_symbol} missing availableSince and effective_ts."
-        )
+        raise ValueError(f"Instrument {exchange_symbol} missing availableSince and effective_ts.")
 
     return TardisInstrument(
         exchange_symbol=exchange_symbol,
@@ -138,38 +134,34 @@ def _history_rows(
         return [{**current_payload, "valid_from_ts": state.valid_from_ts}]
 
     # Sort changes by 'until' descending (newest first)
-    sorted_changes = sorted(
-        changes, key=lambda item: _parse_iso_to_us(item["until"]), reverse=True
-    )
+    sorted_changes = sorted(changes, key=lambda item: _parse_iso_to_us(item["until"]), reverse=True)
 
     # We build the intervals from newest to oldest
     intervals: list[dict[str, Any]] = []
-    
+
     # The 'current' state is valid from the latest 'until' timestamp onward
     latest_until = _parse_iso_to_us(sorted_changes[0]["until"])
     intervals.append({**current_payload, "valid_from_ts": latest_until})
 
     # Work backwards
     running_state = dict(current_payload)
-    next_start_ts = latest_until
 
     for i, change in enumerate(sorted_changes):
         # This change describes the state valid UNTIL this change's 'until'
-        until_ts = _parse_iso_to_us(change["until"])
-        
+        _parse_iso_to_us(change["until"])
+
         # Apply the change to our running state to see what it was BEFORE this 'until'
         running_state = _apply_change_fields(running_state, change)
-        
-        # Determine the start of this interval: 
+
+        # Determine the start of this interval:
         # It's either the 'until' of the NEXT oldest change, or the availableSince (state.valid_from_ts)
         if i + 1 < len(sorted_changes):
             start_ts = _parse_iso_to_us(sorted_changes[i + 1]["until"])
         else:
             start_ts = state.valid_from_ts
-            
+
         # Add the interval [start_ts, next_start_ts)
         intervals.append({**running_state, "valid_from_ts": start_ts})
-        next_start_ts = start_ts
 
     # Reverse to return chronological order [oldest -> newest]
     return sorted(intervals, key=lambda x: x["valid_from_ts"])
@@ -188,9 +180,7 @@ def build_updates_from_instruments(
     rows: list[dict[str, Any]] = []
     for record in instruments:
         if rebuild:
-            rows.extend(
-                _history_rows(record, exchange_id=exchange_id, effective_ts=effective_ts)
-            )
+            rows.extend(_history_rows(record, exchange_id=exchange_id, effective_ts=effective_ts))
         else:
             state = _instrument_state(record, effective_ts=effective_ts)
             rows.append(

@@ -7,12 +7,10 @@ a Hive-style partitioned structure for ETL ingestion.
 from __future__ import annotations
 
 import gzip
-import os
 import re
 import subprocess
 from datetime import date, datetime
 from pathlib import Path
-from typing import Iterator
 
 
 def parse_quant360_filename(filename: str) -> dict[str, str] | None:
@@ -37,7 +35,7 @@ def parse_quant360_filename(filename: str) -> dict[str, str] | None:
     # Map exchange code to our exchange names
     exchange_map = {
         "SZ": "szse",  # Shenzhen Stock Exchange
-        "SH": "sse",   # Shanghai Stock Exchange
+        "SH": "sse",  # Shanghai Stock Exchange
     }
 
     return {

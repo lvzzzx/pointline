@@ -5,19 +5,20 @@ from __future__ import annotations
 import argparse
 import os
 
+from pointline.cli.commands.config import cmd_config_set, cmd_config_show
 from pointline.cli.commands.delta import cmd_delta_optimize, cmd_delta_vacuum
 from pointline.cli.commands.dim_asset_stats import (
     cmd_dim_asset_stats_backfill,
     cmd_dim_asset_stats_sync,
 )
-from pointline.cli.commands.config import cmd_config_set, cmd_config_show
 from pointline.cli.commands.dim_symbol import cmd_dim_symbol_sync, cmd_dim_symbol_sync_tushare
 from pointline.cli.commands.download import cmd_download
 from pointline.cli.commands.ingest import cmd_ingest_discover, cmd_ingest_run
 from pointline.cli.commands.manifest import cmd_manifest_backfill_sha256, cmd_manifest_show
 from pointline.cli.commands.symbol import cmd_symbol_search
 from pointline.cli.commands.validate import cmd_validate_quotes, cmd_validate_trades
-from pointline.config import LAKE_ROOT, TABLE_PATHS, get_bronze_root, get_table_path
+from pointline.config import TABLE_PATHS, get_bronze_root, get_table_path
+
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="pointline", description="Pointline data lake CLI")

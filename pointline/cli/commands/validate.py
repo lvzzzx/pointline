@@ -19,16 +19,24 @@ from pointline.cli.utils import (
 from pointline.config import get_exchange_id, get_table_path, normalize_exchange
 from pointline.tables.quotes import (
     QUOTES_SCHEMA,
-    encode_fixed_point as encode_quotes_fixed_point,
     normalize_quotes_schema,
     parse_tardis_quotes_csv,
+)
+from pointline.tables.quotes import (
+    encode_fixed_point as encode_quotes_fixed_point,
+)
+from pointline.tables.quotes import (
     resolve_symbol_ids as resolve_quotes_symbol_ids,
 )
 from pointline.tables.trades import (
     TRADES_SCHEMA,
-    encode_fixed_point as encode_trades_fixed_point,
     normalize_trades_schema,
     parse_tardis_trades_csv,
+)
+from pointline.tables.trades import (
+    encode_fixed_point as encode_trades_fixed_point,
+)
+from pointline.tables.trades import (
     resolve_symbol_ids as resolve_trades_symbol_ids,
 )
 
@@ -88,7 +96,7 @@ def cmd_validate_quotes(args: argparse.Namespace) -> int:
         raise ValueError("No ingested rows found for file_id")
 
     key_cols = ["file_id", "file_line_number"]
-    compare_cols = [col for col in QUOTES_SCHEMA.keys() if col not in key_cols]
+    compare_cols = [col for col in QUOTES_SCHEMA if col not in key_cols]
     (
         expected_count,
         ingested_count,
@@ -173,7 +181,7 @@ def cmd_validate_trades(args: argparse.Namespace) -> int:
         raise ValueError("No ingested rows found for file_id")
 
     key_cols = ["file_id", "file_line_number"]
-    compare_cols = [col for col in TRADES_SCHEMA.keys() if col not in key_cols]
+    compare_cols = [col for col in TRADES_SCHEMA if col not in key_cols]
     (
         expected_count,
         ingested_count,

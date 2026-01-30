@@ -5,7 +5,7 @@ This module keeps the implementation storage-agnostic; it operates on Polars Dat
 
 from __future__ import annotations
 
-from typing import Sequence
+from collections.abc import Sequence
 
 import polars as pl
 
@@ -79,9 +79,7 @@ def parse_tardis_derivative_ticker_csv(df: pl.DataFrame) -> pl.DataFrame:
     ]
     missing = [c for c in required_cols if c not in df.columns]
     if missing:
-        raise ValueError(
-            f"parse_tardis_derivative_ticker_csv: missing required columns: {missing}"
-        )
+        raise ValueError(f"parse_tardis_derivative_ticker_csv: missing required columns: {missing}")
 
     result = df.clone().with_columns(
         [
@@ -131,9 +129,7 @@ def normalize_derivative_ticker_schema(df: pl.DataFrame) -> pl.DataFrame:
         if col not in df.columns and col not in optional_columns
     ]
     if missing_required:
-        raise ValueError(
-            f"derivative_ticker missing required columns: {missing_required}"
-        )
+        raise ValueError(f"derivative_ticker missing required columns: {missing_required}")
 
     casts = []
     for col, dtype in DERIVATIVE_TICKER_SCHEMA.items():
@@ -170,15 +166,9 @@ def validate_derivative_ticker(df: pl.DataFrame) -> pl.DataFrame:
         & timestamp_validation_expr("ts_exch_us")
         & required_columns_validation_expr(["exchange", "exchange_id", "symbol_id"])
         & exchange_id_validation_expr()
-        & pl.when(pl.col("mark_px").is_not_null())
-        .then(pl.col("mark_px") > 0)
-        .otherwise(True)
-        & pl.when(pl.col("index_px").is_not_null())
-        .then(pl.col("index_px") > 0)
-        .otherwise(True)
-        & pl.when(pl.col("last_px").is_not_null())
-        .then(pl.col("last_px") > 0)
-        .otherwise(True)
+        & pl.when(pl.col("mark_px").is_not_null()).then(pl.col("mark_px") > 0).otherwise(True)
+        & pl.when(pl.col("index_px").is_not_null()).then(pl.col("index_px") > 0).otherwise(True)
+        & pl.when(pl.col("last_px").is_not_null()).then(pl.col("last_px") > 0).otherwise(True)
         & pl.when(pl.col("open_interest").is_not_null())
         .then(pl.col("open_interest") >= 0)
         .otherwise(True)

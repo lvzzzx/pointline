@@ -7,7 +7,7 @@ data - each row represents an individual order with a unique order ID (appl_seq_
 
 from __future__ import annotations
 
-from typing import Sequence
+from collections.abc import Sequence
 
 import polars as pl
 
@@ -89,8 +89,7 @@ def parse_quant360_timestamp(timestamp_str: str | int) -> int:
     from zoneinfo import ZoneInfo
 
     dt_shanghai = datetime(
-        year, month, day, hour, minute, second, millisecond * 1000,
-        tzinfo=ZoneInfo("Asia/Shanghai")
+        year, month, day, hour, minute, second, millisecond * 1000, tzinfo=ZoneInfo("Asia/Shanghai")
     )
     dt_utc = dt_shanghai.astimezone(timezone.utc)
     return int(dt_utc.timestamp() * 1_000_000)

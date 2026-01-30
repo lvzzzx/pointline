@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Sequence
+from collections.abc import Sequence
 
 import polars as pl
 
@@ -87,8 +87,7 @@ def parse_binance_klines_csv(df: pl.DataFrame) -> pl.DataFrame:
         ]
     )
     return parsed.filter(
-        pl.col("ts_bucket_start_us").is_not_null()
-        & pl.col("ts_bucket_end_us").is_not_null()
+        pl.col("ts_bucket_start_us").is_not_null() & pl.col("ts_bucket_end_us").is_not_null()
     )
 
 
@@ -125,10 +124,7 @@ def encode_fixed_point(df: pl.DataFrame, dim_symbol: pl.DataFrame) -> pl.DataFra
             .round()
             .cast(pl.Int64)
             .alias("high_px_int"),
-            (pl.col("low") / pl.col("price_increment"))
-            .round()
-            .cast(pl.Int64)
-            .alias("low_px_int"),
+            (pl.col("low") / pl.col("price_increment")).round().cast(pl.Int64).alias("low_px_int"),
             (pl.col("close") / pl.col("price_increment"))
             .round()
             .cast(pl.Int64)
@@ -229,9 +225,7 @@ def decode_fixed_point(
             .otherwise(None)
             .alias("volume"),
             pl.when(pl.col("taker_buy_base_qty_int").is_not_null())
-            .then(
-                (pl.col("taker_buy_base_qty_int") * pl.col("amount_increment")).cast(pl.Float64)
-            )
+            .then((pl.col("taker_buy_base_qty_int") * pl.col("amount_increment")).cast(pl.Float64))
             .otherwise(None)
             .alias("taker_buy_base_volume"),
         ]
@@ -370,7 +364,5 @@ def _ensure_raw_columns(df: pl.DataFrame) -> pl.DataFrame:
     if df.columns[: len(RAW_KLINE_COLUMNS)] == RAW_KLINE_COLUMNS:
         return df
 
-    rename_map = {
-        df.columns[i]: RAW_KLINE_COLUMNS[i] for i in range(len(RAW_KLINE_COLUMNS))
-    }
+    rename_map = {df.columns[i]: RAW_KLINE_COLUMNS[i] for i in range(len(RAW_KLINE_COLUMNS))}
     return df.rename(rename_map)

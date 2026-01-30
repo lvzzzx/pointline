@@ -25,7 +25,7 @@ Example:
 
 from __future__ import annotations
 
-from typing import Sequence
+from collections.abc import Sequence
 
 import polars as pl
 
@@ -33,7 +33,7 @@ from pointline.tables._base import generic_resolve_symbol_ids
 from pointline.validation_utils import DataQualityWarning, with_expected_exchange_id
 
 # Schema definition matching design.md Section 5.2
-# 
+#
 # Delta Lake Integer Type Limitations:
 # - Delta Lake (via Parquet) does not support unsigned integer types UInt16 and UInt32
 # - These are automatically converted to signed types (Int16 and Int32) when written
@@ -60,16 +60,16 @@ BOOK_SNAPSHOTS_SCHEMA: dict[str, pl.DataType] = {
 
 def parse_tardis_book_snapshots_csv(df: pl.DataFrame) -> pl.DataFrame:
     """Parse raw Tardis book snapshots CSV format into normalized columns.
-    
+
     Tardis provides timestamps as microseconds since epoch (integers).
     Tardis schema is standardized with exact column names:
     - exchange, symbol, timestamp, local_timestamp
     - asks[0..24].price, asks[0..24].amount
     - bids[0..24].price, bids[0..24].amount
-    
+
     Both timestamp and local_timestamp are always present (Tardis handles fallback internally).
     Missing levels may be empty strings or null.
-    
+
     Returns DataFrame with columns:
     - ts_local_us (i64): local timestamp in microseconds since epoch
     - ts_exch_us (i64): exchange timestamp in microseconds since epoch
@@ -83,15 +83,17 @@ def parse_tardis_book_snapshots_csv(df: pl.DataFrame) -> pl.DataFrame:
     missing = [c for c in required_cols if c not in df.columns]
     if missing:
         raise ValueError(f"parse_tardis_book_snapshots_csv: missing required columns: {missing}")
-    
+
     result = df.clone()
-    
+
     # Parse timestamps (both always present per Tardis spec)
-    result = result.with_columns([
-        pl.col("local_timestamp").cast(pl.Int64).alias("ts_local_us"),
-        pl.col("timestamp").cast(pl.Int64).alias("ts_exch_us"),
-    ])
-    
+    result = result.with_columns(
+        [
+            pl.col("local_timestamp").cast(pl.Int64).alias("ts_local_us"),
+            pl.col("timestamp").cast(pl.Int64).alias("ts_exch_us"),
+        ]
+    )
+
     # Find array columns: asks[0..24].price, asks[0..24].amount, bids[0..24].price,
     # bids[0..24].amount
     # Tardis uses exact naming: asks[0].price, asks[1].price, ..., asks[24].price
@@ -99,25 +101,22 @@ def parse_tardis_book_snapshots_csv(df: pl.DataFrame) -> pl.DataFrame:
     asks_amount_cols = [f"asks[{i}].amount" for i in range(25)]
     bids_price_cols = [f"bids[{i}].price" for i in range(25)]
     bids_amount_cols = [f"bids[{i}].amount" for i in range(25)]
-    
+
     # Check which columns exist (some may be missing if fewer than 25 levels)
     existing_asks_price = [c for c in asks_price_cols if c in df.columns]
     existing_asks_amount = [c for c in asks_amount_cols if c in df.columns]
     existing_bids_price = [c for c in bids_price_cols if c in df.columns]
     existing_bids_amount = [c for c in bids_amount_cols if c in df.columns]
-    
+
     if not existing_asks_price and not existing_bids_price:
         raise ValueError(
             "parse_tardis_book_snapshots_csv: no asks or bids price columns found. "
             "Expected asks[0].price, asks[1].price, ... or bids[0].price, bids[1].price, ..."
         )
-    
+
     # Cast existing level columns to float64, handling empty strings as null.
     level_cols = (
-        existing_asks_price
-        + existing_asks_amount
-        + existing_bids_price
-        + existing_bids_amount
+        existing_asks_price + existing_asks_amount + existing_bids_price + existing_bids_amount
     )
     if level_cols:
         result = result.with_columns(
@@ -133,18 +132,15 @@ def parse_tardis_book_snapshots_csv(df: pl.DataFrame) -> pl.DataFrame:
 
 def normalize_book_snapshots_schema(df: pl.DataFrame) -> pl.DataFrame:
     """Cast to the canonical book snapshots schema and select only schema columns.
-    
+
     Ensures all required columns exist and have correct types.
     Drops any extra columns (e.g., original float columns, dim_symbol metadata).
     """
     # Check for missing required columns
-    missing_required = [
-        col for col in BOOK_SNAPSHOTS_SCHEMA
-        if col not in df.columns
-    ]
+    missing_required = [col for col in BOOK_SNAPSHOTS_SCHEMA if col not in df.columns]
     if missing_required:
         raise ValueError(f"book_snapshots missing required columns: {missing_required}")
-    
+
     # Cast columns to schema types
     casts = []
     for col, dtype in BOOK_SNAPSHOTS_SCHEMA.items():
@@ -156,14 +152,14 @@ def normalize_book_snapshots_schema(df: pl.DataFrame) -> pl.DataFrame:
                 casts.append(pl.col(col).cast(dtype))
         else:
             raise ValueError(f"Required column {col} is missing")
-    
+
     # Cast and select only schema columns (drops extra columns)
     return df.with_columns(casts).select(list(BOOK_SNAPSHOTS_SCHEMA.keys()))
 
 
 def validate_book_snapshots(df: pl.DataFrame) -> pl.DataFrame:
     """Apply quality checks to book snapshots data.
-    
+
     Validates:
     - Required columns exist
     - List lengths are 25 (or pad/truncate to 25)
@@ -173,32 +169,38 @@ def validate_book_snapshots(df: pl.DataFrame) -> pl.DataFrame:
     - Non-negative sizes when present
     - Valid timestamp ranges (reasonable values)
     - exchange_id matches normalized exchange
-    
+
     Returns filtered DataFrame (invalid rows removed) or raises on critical errors.
     """
     if df.is_empty():
         return df
-    
+
     # Check required columns
     required = [
-        "bids_px", "bids_sz", "asks_px", "asks_sz",
-        "ts_local_us", "exchange", "exchange_id", "symbol_id"
+        "bids_px",
+        "bids_sz",
+        "asks_px",
+        "asks_sz",
+        "ts_local_us",
+        "exchange",
+        "exchange_id",
+        "symbol_id",
     ]
     missing = [c for c in required if c not in df.columns]
     if missing:
         raise ValueError(f"validate_book_snapshots: missing required columns: {missing}")
-    
+
     df_with_expected = with_expected_exchange_id(df)
     # Build validation filters
     filters = [
-        (pl.col("ts_local_us") > 0) &
-        (pl.col("ts_local_us") < 2**63) &
-        (pl.col("exchange").is_not_null()) &
-        (pl.col("exchange_id").is_not_null()) &
-        (pl.col("symbol_id").is_not_null()) &
-        (pl.col("exchange_id") == pl.col("expected_exchange_id"))
+        (pl.col("ts_local_us") > 0)
+        & (pl.col("ts_local_us") < 2**63)
+        & (pl.col("exchange").is_not_null())
+        & (pl.col("exchange_id").is_not_null())
+        & (pl.col("symbol_id").is_not_null())
+        & (pl.col("exchange_id") == pl.col("expected_exchange_id"))
     ]
-    
+
     # Ensure list lengths are 25 (pad with nulls if needed, truncate if longer)
     # Slice to max 25 elements, then pad with nulls if needed
     # Preserve the existing dtype (Int64 after encoding, Float64 before encoding)
@@ -218,15 +220,17 @@ def validate_book_snapshots(df: pl.DataFrame) -> pl.DataFrame:
         null_pad = pl.lit(None, dtype=inner_dtype).repeat_by(pl.lit(25))
         padded = pl.concat_list([sliced, null_pad]).list.slice(0, 25)
         return pl.when(col_expr.is_null()).then(null_pad).otherwise(padded)
-    
+
     # Normalize all list columns to length 25
-    result = df_with_expected.with_columns([
-        normalize_list_length("bids_px").alias("bids_px"),
-        normalize_list_length("bids_sz").alias("bids_sz"),
-        normalize_list_length("asks_px").alias("asks_px"),
-        normalize_list_length("asks_sz").alias("asks_sz"),
-    ])
-    
+    result = df_with_expected.with_columns(
+        [
+            normalize_list_length("bids_px").alias("bids_px"),
+            normalize_list_length("bids_sz").alias("bids_sz"),
+            normalize_list_length("asks_px").alias("asks_px"),
+            normalize_list_length("asks_sz").alias("asks_sz"),
+        ]
+    )
+
     # Validate bid prices are descending (bids_px[0] >= bids_px[1] >= ...)
     # Vectorized monotonicity check using list.diff on non-null values.
     def validate_bid_ordering() -> pl.Expr:
@@ -234,12 +238,8 @@ def validate_book_snapshots(df: pl.DataFrame) -> pl.DataFrame:
         bids = pl.col("bids_px").list.drop_nulls()
         diffs = bids.list.diff()
         max_diff = diffs.list.max()
-        return (
-            pl.when(max_diff.is_null())
-            .then(True)
-            .otherwise(max_diff <= 0)
-        )
-    
+        return pl.when(max_diff.is_null()).then(True).otherwise(max_diff <= 0)
+
     # Validate ask prices are ascending (asks_px[0] <= asks_px[1] <= ...)
     # Vectorized monotonicity check using list.diff on non-null values.
     def validate_ask_ordering() -> pl.Expr:
@@ -247,12 +247,8 @@ def validate_book_snapshots(df: pl.DataFrame) -> pl.DataFrame:
         asks = pl.col("asks_px").list.drop_nulls()
         diffs = asks.list.diff()
         min_diff = diffs.list.min()
-        return (
-            pl.when(min_diff.is_null())
-            .then(True)
-            .otherwise(min_diff >= 0)
-        )
-    
+        return pl.when(min_diff.is_null()).then(True).otherwise(min_diff >= 0)
+
     # Crossed book check: bids_px[i] < asks_px[i] at each level
     # Check that best bid < best ask (bids_px[0] < asks_px[0])
     def validate_crossed_book() -> pl.Expr:
@@ -264,39 +260,41 @@ def validate_book_snapshots(df: pl.DataFrame) -> pl.DataFrame:
             .then(best_bid < best_ask)
             .otherwise(True)
         )
-    
+
     # Non-negative sizes when present
     def validate_non_negative_sizes() -> pl.Expr:
         """Check that sizes are non-negative when present."""
         bid_sz_min = pl.col("bids_sz").list.min()
         ask_sz_min = pl.col("asks_sz").list.min()
-        return (
-            (bid_sz_min.is_null() | (bid_sz_min >= 0)) &
-            (ask_sz_min.is_null() | (ask_sz_min >= 0))
+        return (bid_sz_min.is_null() | (bid_sz_min >= 0)) & (
+            ask_sz_min.is_null() | (ask_sz_min >= 0)
         )
-    
-    filters.extend([
-        validate_bid_ordering(),
-        validate_ask_ordering(),
-        validate_crossed_book(),
-        validate_non_negative_sizes(),
-    ])
-    
+
+    filters.extend(
+        [
+            validate_bid_ordering(),
+            validate_ask_ordering(),
+            validate_crossed_book(),
+            validate_non_negative_sizes(),
+        ]
+    )
+
     # Combine all filters
     combined_filter = filters[0]
     for f in filters[1:]:
         combined_filter = combined_filter & f
-    
+
     valid = result.filter(combined_filter).select(df.columns)
-    
+
     # Warn if rows were filtered
     if valid.height < result.height:
         import warnings
+
         warnings.warn(
             f"validate_book_snapshots: filtered {result.height - valid.height} invalid rows",
-            DataQualityWarning
+            DataQualityWarning, stacklevel=2,
         )
-    
+
     return valid
 
 
@@ -305,24 +303,24 @@ def encode_fixed_point(
     dim_symbol: pl.DataFrame,
 ) -> pl.DataFrame:
     """Encode bid/ask prices and sizes as fixed-point integers using dim_symbol metadata.
-    
+
     Requires:
     - df must have 'symbol_id' column (from resolve_symbol_ids)
     - df must have raw level columns: asks[0..24].price/amount, bids[0..24].price/amount
     - dim_symbol must have 'symbol_id', 'price_increment', 'amount_increment' columns
-    
+
     Computes:
     - bids_px_int = [floor(price / price_increment) for price in bids_px]
     - bids_sz_int = [round(size / amount_increment) for size in bids_sz]
     - asks_px_int = [ceil(price / price_increment) for price in asks_px]
     - asks_sz_int = [round(size / amount_increment) for size in asks_sz]
-    
+
     Returns DataFrame with bids_px, bids_sz, asks_px, asks_sz as Int64 lists.
     Supports multiple symbol_id values by encoding per symbol and restoring row order.
     """
     if "symbol_id" not in df.columns:
         raise ValueError("encode_fixed_point: df must have 'symbol_id' column")
-    
+
     asks_price_cols = [f"asks[{i}].price" for i in range(25)]
     asks_amount_cols = [f"asks[{i}].amount" for i in range(25)]
     bids_price_cols = [f"bids[{i}].price" for i in range(25)]
@@ -331,15 +329,13 @@ def encode_fixed_point(
     has_raw_cols = any(col in df.columns for col in raw_cols)
 
     if not has_raw_cols:
-        raise ValueError(
-            "encode_fixed_point: df must contain raw level columns"
-        )
-    
+        raise ValueError("encode_fixed_point: df must contain raw level columns")
+
     required_dims = ["symbol_id", "price_increment", "amount_increment"]
     missing = [c for c in required_dims if c not in dim_symbol.columns]
     if missing:
         raise ValueError(f"encode_fixed_point: dim_symbol missing columns: {missing}")
-    
+
     # Join to get increments
     df_with_index = (
         df.with_row_index("__row_nr")
@@ -351,7 +347,7 @@ def encode_fixed_point(
         on="symbol_id",
         how="left",
     )
-    
+
     # Check for missing symbol_ids
     missing_ids = joined.filter(pl.col("price_increment").is_null())
     if not missing_ids.is_empty():
@@ -359,7 +355,7 @@ def encode_fixed_point(
         raise ValueError(
             f"encode_fixed_point: {missing_symbols.height} symbol_ids not found in dim_symbol"
         )
-    
+
     def encode_list(
         cols: list[str],
         existing_cols: list[str],
@@ -380,9 +376,7 @@ def encode_fixed_point(
                     scaled = scaled.round()
 
                 list_exprs.append(
-                    pl.when(pl.col(col).is_not_null())
-                    .then(scaled.cast(pl.Int64))
-                    .otherwise(None)
+                    pl.when(pl.col(col).is_not_null()).then(scaled.cast(pl.Int64)).otherwise(None)
                 )
             else:
                 list_exprs.append(pl.lit(None, dtype=pl.Int64))
@@ -501,26 +495,34 @@ def decode_fixed_point(
         amount_inc = group["amount_increment"][0]
         return group.with_columns(
             [
-                pl.col("bids_px").list.eval(
+                pl.col("bids_px")
+                .list.eval(
                     pl.when(pl.element().is_not_null())
                     .then((pl.element() * pl.lit(price_inc)).cast(pl.Float64))
                     .otherwise(None)
-                ).alias("bids_px"),
-                pl.col("bids_sz").list.eval(
+                )
+                .alias("bids_px"),
+                pl.col("bids_sz")
+                .list.eval(
                     pl.when(pl.element().is_not_null())
                     .then((pl.element() * pl.lit(amount_inc)).cast(pl.Float64))
                     .otherwise(None)
-                ).alias("bids_sz"),
-                pl.col("asks_px").list.eval(
+                )
+                .alias("bids_sz"),
+                pl.col("asks_px")
+                .list.eval(
                     pl.when(pl.element().is_not_null())
                     .then((pl.element() * pl.lit(price_inc)).cast(pl.Float64))
                     .otherwise(None)
-                ).alias("asks_px"),
-                pl.col("asks_sz").list.eval(
+                )
+                .alias("asks_px"),
+                pl.col("asks_sz")
+                .list.eval(
                     pl.when(pl.element().is_not_null())
                     .then((pl.element() * pl.lit(amount_inc)).cast(pl.Float64))
                     .otherwise(None)
-                ).alias("asks_sz"),
+                )
+                .alias("asks_sz"),
             ]
         )
 

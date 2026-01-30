@@ -21,7 +21,7 @@ def _read_config_file(path: Path) -> dict:
     try:
         return tomllib.loads(path.read_text(encoding="utf-8"))
     except Exception as exc:
-        warnings.warn(f"Failed to parse Pointline config at {path}: {exc}")
+        warnings.warn(f"Failed to parse Pointline config at {path}: {exc}", stacklevel=2)
         return {}
 
 
@@ -70,10 +70,7 @@ def set_config_lake_root(value: str | Path) -> Path:
     CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
     new_line = f"lake_root = {_format_toml_string(str(resolved))}"
 
-    if CONFIG_PATH.exists():
-        lines = CONFIG_PATH.read_text(encoding="utf-8").splitlines()
-    else:
-        lines = []
+    lines = CONFIG_PATH.read_text(encoding="utf-8").splitlines() if CONFIG_PATH.exists() else []
 
     updated = False
     pattern = re.compile(r"^\s*lake_root\s*=")
@@ -90,6 +87,7 @@ def set_config_lake_root(value: str | Path) -> Path:
 
     CONFIG_PATH.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return resolved
+
 
 # Table Registry (Table Name -> Relative Path from LAKE_ROOT)
 TABLE_PATHS = {
@@ -133,7 +131,6 @@ EXCHANGE_MAP = {
     "binance": 1,
     "binance-futures": 2,  # Preserved from original
     "coinbase": 3,
-    
     # Additional Spot Exchanges
     "kraken": 4,
     "okx": 5,  # Formerly OKEx
@@ -146,7 +143,6 @@ EXCHANGE_MAP = {
     "kucoin": 12,
     "binance-us": 13,
     "coinbase-pro": 14,  # Legacy Coinbase Pro
-    
     # Derivatives Exchanges
     "binance-coin-futures": 20,
     "deribit": 21,
@@ -155,23 +151,22 @@ EXCHANGE_MAP = {
     "bitmex": 24,
     "ftx": 25,  # Historical data only
     "dydx": 26,
-
     # Chinese Stock Exchanges
     "szse": 30,  # Shenzhen Stock Exchange
-    "sse": 31,   # Shanghai Stock Exchange
+    "sse": 31,  # Shanghai Stock Exchange
 }
 
 
 def normalize_exchange(exchange: str) -> str:
     """
     Normalize exchange name for consistent lookup.
-    
+
     Normalizes by lowercasing and trimming whitespace.
     This is the canonical normalization used before EXCHANGE_MAP lookup.
-    
+
     Args:
         exchange: Raw exchange name (may have mixed case, whitespace)
-        
+
     Returns:
         Normalized exchange string (lowercase, trimmed)
     """
@@ -181,16 +176,16 @@ def normalize_exchange(exchange: str) -> str:
 def get_exchange_id(exchange: str) -> int:
     """
     Get exchange_id for a given exchange name.
-    
+
     This is the canonical source of truth for exchange → exchange_id mapping.
     Normalizes the exchange name before lookup.
-    
+
     Args:
         exchange: Exchange name (will be normalized before lookup)
-        
+
     Returns:
         Exchange ID (Int16 compatible)
-        
+
     Raises:
         ValueError: If exchange is not found in EXCHANGE_MAP after normalization
     """
@@ -206,15 +201,15 @@ def get_exchange_id(exchange: str) -> int:
 def get_exchange_name(exchange_id: int) -> str:
     """
     Get normalized exchange name for a given exchange_id.
-    
+
     This is the reverse mapping of get_exchange_id().
-    
+
     Args:
         exchange_id: Exchange ID to look up
-        
+
     Returns:
         Normalized exchange name (e.g., "binance-futures")
-        
+
     Raises:
         ValueError: If exchange_id is not found in EXCHANGE_MAP
     """
@@ -236,16 +231,14 @@ TYPE_MAP = {
     "perpetual": 1,
     "future": 2,
     "option": 3,
-
     # Aliases (map to same values)
     "perp": 1,  # Common abbreviation for perpetual
     "swap": 1,  # Some exchanges call perpetuals "swaps"
     "futures": 2,  # Plural form
     "options": 3,  # Plural form
-
     # Level 3 order book types (SZSE, SSE)
     "l3_orders": 10,  # Individual order placements
-    "l3_ticks": 11,   # Trade executions and cancellations
+    "l3_ticks": 11,  # Trade executions and cancellations
 }
 
 
@@ -296,35 +289,32 @@ ASSET_TO_COINGECKO_MAP = {
 def get_coingecko_coin_id(base_asset: str) -> str | None:
     """
     Get CoinGecko coin_id for a given base_asset.
-    
+
     This is the canonical source of truth for base_asset → CoinGecko coin_id mapping.
-    
+
     Args:
         base_asset: Base asset ticker (e.g., "BTC", "ETH")
-        
+
     Returns:
         CoinGecko coin_id (e.g., "bitcoin", "ethereum") or None if not found
     """
     return ASSET_TO_COINGECKO_MAP.get(base_asset.upper())
 
 
-
-
-
 def get_table_path(table_name: str) -> Path:
     """
     Resolves the absolute path for a given table name.
-    
+
     Args:
         table_name: The name of the table to resolve.
-        
+
     Returns:
         Path: The absolute path to the table.
-        
+
     Raises:
         KeyError: If the table name is not registered in TABLE_PATHS.
     """
     if table_name not in TABLE_PATHS:
         raise KeyError(f"Table '{table_name}' not found in TABLE_PATHS registry.")
-    
+
     return LAKE_ROOT / TABLE_PATHS[table_name]

@@ -9,14 +9,8 @@ from pathlib import Path
 
 import polars as pl
 
-from pointline.config import get_bronze_root, normalize_exchange, get_exchange_id
+from pointline.config import get_bronze_root, get_exchange_id, normalize_exchange
 from pointline.dim_symbol import check_coverage
-from pointline.tables.derivative_ticker import (
-    normalize_derivative_ticker_schema,
-    parse_tardis_derivative_ticker_csv,
-    resolve_symbol_ids,
-    validate_derivative_ticker,
-)
 from pointline.io.protocols import (
     BronzeFileMetadata,
     IngestionManifestRepository,
@@ -24,6 +18,12 @@ from pointline.io.protocols import (
     TableRepository,
 )
 from pointline.services.base_service import BaseService
+from pointline.tables.derivative_ticker import (
+    normalize_derivative_ticker_schema,
+    parse_tardis_derivative_ticker_csv,
+    resolve_symbol_ids,
+    validate_derivative_ticker,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -54,9 +54,7 @@ class DerivativeTickerIngestionService(BaseService):
         if hasattr(self.repo, "append"):
             self.repo.append(result)
         else:
-            raise NotImplementedError(
-                "Repository must support append() for derivative_ticker"
-            )
+            raise NotImplementedError("Repository must support append() for derivative_ticker")
 
     def ingest_file(
         self,
@@ -94,13 +92,9 @@ class DerivativeTickerIngestionService(BaseService):
             dim_symbol = self.dim_symbol_repo.read_all()
             exchange_id = self._resolve_exchange_id(meta.exchange)
 
-            is_valid, error_msg = self._check_quarantine(
-                meta, dim_symbol, exchange_id, parsed_df
-            )
+            is_valid, error_msg = self._check_quarantine(meta, dim_symbol, exchange_id, parsed_df)
             if not is_valid:
-                logger.warning(
-                    f"File quarantined: {meta.bronze_file_path} - {error_msg}"
-                )
+                logger.warning(f"File quarantined: {meta.bronze_file_path} - {error_msg}")
                 return IngestionResult(
                     row_count=0,
                     ts_local_min_us=0,
@@ -225,8 +219,7 @@ class DerivativeTickerIngestionService(BaseService):
         )
         if not has_coverage:
             rows = dim_symbol.filter(
-                (pl.col("exchange_id") == exchange_id)
-                & (pl.col("exchange_symbol") == meta.symbol)
+                (pl.col("exchange_id") == exchange_id) & (pl.col("exchange_symbol") == meta.symbol)
             )
             if rows.is_empty():
                 return False, "missing_symbol"
@@ -254,9 +247,5 @@ class DerivativeTickerIngestionService(BaseService):
             ]
         )
         return result.with_columns(
-            [
-                pl.from_epoch(pl.col("ts_local_us"), time_unit="us")
-                .cast(pl.Date)
-                .alias("date")
-            ]
+            [pl.from_epoch(pl.col("ts_local_us"), time_unit="us").cast(pl.Date).alias("date")]
         )

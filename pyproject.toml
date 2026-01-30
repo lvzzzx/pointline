@@ -29,6 +29,11 @@ dev = [
 requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["pointline*"]
+exclude = ["tests*", "docs*", "research*", "conductor*", "skills*"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-v --strict-markers"
@@ -68,7 +73,10 @@ select = [
   "SIM",  # flake8-simplify
 ]
 ignore = [
-  "E501",  # line too long (handled by formatter)
+  "E501",    # line too long (handled by formatter)
+  "N806",    # variable in function should be lowercase (allow CONSTANTS)
+  "B904",    # exception chaining (optional style)
+  "SIM102",  # nested if (sometimes clearer as is)
 ]
 
 [tool.mypy]

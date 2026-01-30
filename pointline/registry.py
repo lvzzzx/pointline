@@ -2,13 +2,18 @@
 Registry for resolving symbol metadata.
 Acts as a read-only interface to the dim_symbol table.
 """
+
 from __future__ import annotations
 
 import logging
+from collections.abc import Iterable
+
 import polars as pl
+
 from pointline.dim_symbol import read_dim_symbol_table
 
 logger = logging.getLogger(__name__)
+
 
 def _read_dim_symbol() -> pl.DataFrame:
     """
@@ -58,30 +63,32 @@ def _read_dim_symbol() -> pl.DataFrame:
             }
         )
 
+
 def resolve_symbol(symbol_id: int) -> tuple[str, int, str]:
     """
     Resolves a symbol_id to its (exchange_name, exchange_id, exchange_symbol).
-    
+
     Args:
         symbol_id: The global symbol identifier.
-        
+
     Returns:
         tuple[str, int, str]: (normalized_exchange_name, exchange_id, exchange_symbol)
-        
+
     Raises:
         ValueError: If symbol_id is not found.
     """
     df = _read_dim_symbol()
     row = df.filter(pl.col("symbol_id") == symbol_id)
-    
+
     if row.height == 0:
         raise ValueError(f"Symbol ID {symbol_id} not found in dim_symbol registry.")
 
     exchange_id = row["exchange_id"][0]
     exchange_name = row["exchange"][0]
     exchange_symbol = row["exchange_symbol"][0]
-    
+
     return exchange_name, exchange_id, exchange_symbol
+
 
 def resolve_symbols(symbol_ids: Iterable[int]) -> list[str]:
     """
@@ -90,48 +97,49 @@ def resolve_symbols(symbol_ids: Iterable[int]) -> list[str]:
     """
     df = _read_dim_symbol()
     ids = list(symbol_ids)
-    
+
     matches = df.filter(pl.col("symbol_id").is_in(ids))
-        
+
     return matches.select("exchange").unique()["exchange"].to_list()
+
 
 def find_symbol(
     query: str | None = None,
     *,
     exchange: str | None = None,
     base_asset: str | None = None,
-    quote_asset: str | None = None
+    quote_asset: str | None = None,
 ) -> pl.DataFrame:
     """
     Find symbols matching search criteria.
-    
+
     Args:
         query: Fuzzy search string (matches against exchange_symbol, base_asset, quote_asset)
         exchange: Exact filter for exchange name (case-insensitive)
         base_asset: Exact filter for base asset (case-insensitive)
         quote_asset: Exact filter for quote asset (case-insensitive)
-        
+
     Returns:
         pl.DataFrame: DataFrame containing matching symbols with their IDs and metadata.
     """
     df = _read_dim_symbol()
-    
+
     if exchange:
         df = df.filter(pl.col("exchange").str.to_lowercase() == exchange.lower())
-        
+
     if base_asset:
         df = df.filter(pl.col("base_asset").str.to_lowercase() == base_asset.lower())
-        
+
     if quote_asset:
         df = df.filter(pl.col("quote_asset").str.to_lowercase() == quote_asset.lower())
-        
+
     if query:
         q = query.lower()
         # Case-insensitive contains search across descriptive fields
         df = df.filter(
-            pl.col("exchange_symbol").str.to_lowercase().str.contains(q) |
-            pl.col("base_asset").str.to_lowercase().str.contains(q) |
-            pl.col("quote_asset").str.to_lowercase().str.contains(q)
+            pl.col("exchange_symbol").str.to_lowercase().str.contains(q)
+            | pl.col("base_asset").str.to_lowercase().str.contains(q)
+            | pl.col("quote_asset").str.to_lowercase().str.contains(q)
         )
-        
+
     return df

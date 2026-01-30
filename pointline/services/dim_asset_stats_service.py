@@ -8,13 +8,13 @@ import polars as pl
 from deltalake.exceptions import CommitFailedError
 
 from pointline.config import get_coingecko_coin_id, get_table_path
+from pointline.io.base_repository import BaseDeltaRepository
+from pointline.io.vendor.coingecko import CoinGeckoClient
+from pointline.services.base_service import BaseService
 from pointline.tables.dim_asset_stats import (
     normalize_dim_asset_stats_schema,
     required_dim_asset_stats_columns,
 )
-from pointline.io.base_repository import BaseDeltaRepository
-from pointline.io.vendor.coingecko import CoinGeckoClient
-from pointline.services.base_service import BaseService
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 class DimAssetStatsService(BaseService):
     """
     Orchestrates daily updates for the dim_asset_stats table from CoinGecko API.
-    
+
     Uses MERGE operations on (base_asset, date) key for idempotent updates.
     """
 
@@ -138,7 +138,9 @@ class DimAssetStatsService(BaseService):
                     )
                     raise
 
-                logger.warning(f"Conflict detected (attempt {attempt}/{self.max_retries}). Retrying...")
+                logger.warning(
+                    f"Conflict detected (attempt {attempt}/{self.max_retries}). Retrying..."
+                )
                 time.sleep(0.1 * attempt)  # Simple backoff
 
     def sync_daily(self, target_date: date, base_assets: list[str] | None = None) -> None:
@@ -157,10 +159,12 @@ class DimAssetStatsService(BaseService):
             try:
                 dim_symbol = pl.read_delta(str(get_table_path("dim_symbol")))
                 # Get current symbols only
-                current_symbols = dim_symbol.filter(pl.col("is_current") == True)
+                current_symbols = dim_symbol.filter(pl.col("is_current"))
                 base_assets = current_symbols["base_asset"].unique().to_list()
                 # Filter to only those with CoinGecko mappings
-                base_assets = [asset for asset in base_assets if get_coingecko_coin_id(asset) is not None]
+                base_assets = [
+                    asset for asset in base_assets if get_coingecko_coin_id(asset) is not None
+                ]
             except Exception as e:
                 logger.warning(f"Could not read dim_symbol to get base_assets: {e}")
                 base_assets = []
@@ -189,19 +193,25 @@ class DimAssetStatsService(BaseService):
                         return None
                     return float(val)
 
-                stats_data.append({
-                    "base_asset": base_asset,
-                    "date": target_date,
-                    "coingecko_coin_id": coin_id,
-                    "circulating_supply": to_float_or_none(stats.get("circulating_supply")),
-                    "total_supply": to_float_or_none(stats.get("total_supply")),
-                    "max_supply": to_float_or_none(stats.get("max_supply")),  # None for uncapped
-                    "market_cap_usd": to_float_or_none(stats.get("market_cap_usd")),
-                    "fully_diluted_valuation_usd": to_float_or_none(stats.get("fully_diluted_valuation_usd")),
-                    "updated_at_ts": updated_at_ts,
-                    "fetched_at_ts": fetched_at_ts,
-                    "source": "coingecko",
-                })
+                stats_data.append(
+                    {
+                        "base_asset": base_asset,
+                        "date": target_date,
+                        "coingecko_coin_id": coin_id,
+                        "circulating_supply": to_float_or_none(stats.get("circulating_supply")),
+                        "total_supply": to_float_or_none(stats.get("total_supply")),
+                        "max_supply": to_float_or_none(
+                            stats.get("max_supply")
+                        ),  # None for uncapped
+                        "market_cap_usd": to_float_or_none(stats.get("market_cap_usd")),
+                        "fully_diluted_valuation_usd": to_float_or_none(
+                            stats.get("fully_diluted_valuation_usd")
+                        ),
+                        "updated_at_ts": updated_at_ts,
+                        "fetched_at_ts": fetched_at_ts,
+                        "source": "coingecko",
+                    }
+                )
             except Exception as e:
                 logger.error(f"Failed to fetch stats for {base_asset} ({coin_id}): {e}")
                 continue
@@ -214,7 +224,9 @@ class DimAssetStatsService(BaseService):
         df = pl.DataFrame(stats_data)
         self.update(df)
 
-    def sync_date_range(self, start_date: date, end_date: date, base_assets: list[str] | None = None) -> None:
+    def sync_date_range(
+        self, start_date: date, end_date: date, base_assets: list[str] | None = None
+    ) -> None:
         """
         Sync asset stats for a date range.
 
@@ -226,7 +238,7 @@ class DimAssetStatsService(BaseService):
             end_date: End date (inclusive)
             base_assets: Optional list of base assets to sync
         """
-        from datetime import timedelta, datetime
+        from datetime import timedelta
 
         # Try to use chart endpoint if API key is available (much faster)
         if self.coingecko_client.api_key:
@@ -269,14 +281,17 @@ class DimAssetStatsService(BaseService):
             base_assets: Optional list of base assets to sync
         """
         from datetime import datetime, timedelta
-        from pointline.config import get_coingecko_coin_id, get_table_path
+
+        from pointline.config import get_coingecko_coin_id
 
         if base_assets is None:
             try:
                 dim_symbol = pl.read_delta(str(get_table_path("dim_symbol")))
-                current_symbols = dim_symbol.filter(pl.col("is_current") == True)
+                current_symbols = dim_symbol.filter(pl.col("is_current"))
                 base_assets = current_symbols["base_asset"].unique().to_list()
-                base_assets = [asset for asset in base_assets if get_coingecko_coin_id(asset) is not None]
+                base_assets = [
+                    asset for asset in base_assets if get_coingecko_coin_id(asset) is not None
+                ]
             except Exception as e:
                 logger.warning(f"Could not read dim_symbol to get base_assets: {e}")
                 base_assets = []
@@ -334,21 +349,29 @@ class DimAssetStatsService(BaseService):
 
                 for day, supply in daily_supplies.items():
                     if start_date <= day <= end_date:
-                        updated_at_ts = int(datetime.combine(day, datetime.min.time()).timestamp() * 1_000_000)
+                        updated_at_ts = int(
+                            datetime.combine(day, datetime.min.time()).timestamp() * 1_000_000
+                        )
 
-                        stats_data.append({
-                            "base_asset": base_asset,
-                            "date": day,
-                            "coingecko_coin_id": coin_id,
-                            "circulating_supply": supply,
-                            "total_supply": float(current_stats["total_supply"]) if current_stats and current_stats.get("total_supply") else None,
-                            "max_supply": float(current_stats["max_supply"]) if current_stats and current_stats.get("max_supply") else None,
-                            "market_cap_usd": None,  # Would need historical market data endpoint
-                            "fully_diluted_valuation_usd": None,  # Would need historical market data endpoint
-                            "updated_at_ts": updated_at_ts,
-                            "fetched_at_ts": fetched_at_ts,
-                            "source": "coingecko",
-                        })
+                        stats_data.append(
+                            {
+                                "base_asset": base_asset,
+                                "date": day,
+                                "coingecko_coin_id": coin_id,
+                                "circulating_supply": supply,
+                                "total_supply": float(current_stats["total_supply"])
+                                if current_stats and current_stats.get("total_supply")
+                                else None,
+                                "max_supply": float(current_stats["max_supply"])
+                                if current_stats and current_stats.get("max_supply")
+                                else None,
+                                "market_cap_usd": None,  # Would need historical market data endpoint
+                                "fully_diluted_valuation_usd": None,  # Would need historical market data endpoint
+                                "updated_at_ts": updated_at_ts,
+                                "fetched_at_ts": fetched_at_ts,
+                                "source": "coingecko",
+                            }
+                        )
 
                 logger.info(f"Processed {len(daily_supplies)} days for {base_asset}")
 

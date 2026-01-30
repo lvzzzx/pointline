@@ -38,7 +38,7 @@ Example:
 from __future__ import annotations
 
 import hashlib
-from typing import Sequence
+from collections.abc import Sequence
 
 import polars as pl
 
@@ -130,13 +130,13 @@ def normalize_dim_symbol_schema(df: pl.DataFrame) -> pl.DataFrame:
     # Derive exchange from exchange_id if missing
     if "exchange" not in df.columns and "exchange_id" in df.columns:
         # Create reverse mapping: exchange_id -> exchange name
-        id_to_exchange = {
-            v: get_exchange_name(v) for v in EXCHANGE_MAP.values()
-        }
-        exchange_map = pl.DataFrame({
-            "exchange_id": list(id_to_exchange.keys()),
-            "exchange": list(id_to_exchange.values()),
-        })
+        id_to_exchange = {v: get_exchange_name(v) for v in EXCHANGE_MAP.values()}
+        exchange_map = pl.DataFrame(
+            {
+                "exchange_id": list(id_to_exchange.keys()),
+                "exchange": list(id_to_exchange.values()),
+            }
+        )
         df = df.join(exchange_map, on="exchange_id", how="left")
         # If some exchange_ids don't have a mapping, fill with None
         # (shouldn't happen in practice)
@@ -201,24 +201,20 @@ def scd2_upsert(
     if "exchange" not in updates.columns and "exchange_id" in updates.columns:
         from pointline.config import EXCHANGE_MAP, get_exchange_name
 
-        id_to_exchange = {
-            v: get_exchange_name(v) for v in EXCHANGE_MAP.values()
-        }
-        exchange_map = pl.DataFrame({
-            "exchange_id": list(id_to_exchange.keys()),
-            "exchange": list(id_to_exchange.values()),
-        })
-        updates = updates.join(exchange_map, on="exchange_id", how="left")
-        updates = updates.with_columns(
-            pl.col("exchange").fill_null("unknown")
+        id_to_exchange = {v: get_exchange_name(v) for v in EXCHANGE_MAP.values()}
+        exchange_map = pl.DataFrame(
+            {
+                "exchange_id": list(id_to_exchange.keys()),
+                "exchange": list(id_to_exchange.values()),
+            }
         )
+        updates = updates.join(exchange_map, on="exchange_id", how="left")
+        updates = updates.with_columns(pl.col("exchange").fill_null("unknown"))
 
     current = dim_symbol.filter(pl.col("is_current") == True)  # noqa: E712
     current_for_join = current.rename({"symbol_id": "symbol_id_cur"})
 
-    joined = updates.join(
-        current_for_join, on=list(NATURAL_KEY_COLS), how="left", suffix="_cur"
-    )
+    joined = updates.join(current_for_join, on=list(NATURAL_KEY_COLS), how="left", suffix="_cur")
 
     is_new = pl.col("symbol_id_cur").is_null()
     is_changed = is_new | _as_boolean_change_mask(joined)
@@ -231,9 +227,7 @@ def scd2_upsert(
     changed_keys = changed_updates.select(list(NATURAL_KEY_COLS)).unique()
 
     closed_rows = (
-        current.join(
-            changed_updates, on=list(NATURAL_KEY_COLS), how="inner", suffix="_upd"
-        )
+        current.join(changed_updates, on=list(NATURAL_KEY_COLS), how="inner", suffix="_upd")
         .with_columns(
             pl.col("valid_from_ts_upd").cast(pl.Int64).alias("_close_at_ts"),
         )
@@ -245,11 +239,9 @@ def scd2_upsert(
         .drop("_close_at_ts")
     )
 
-    new_rows = (
-        changed_updates.with_columns(
-            pl.lit(DEFAULT_VALID_UNTIL_TS_US).cast(pl.Int64).alias("valid_until_ts"),
-            pl.lit(True).alias("is_current"),
-        )
+    new_rows = changed_updates.with_columns(
+        pl.lit(DEFAULT_VALID_UNTIL_TS_US).cast(pl.Int64).alias("valid_until_ts"),
+        pl.lit(True).alias("is_current"),
     )
     new_rows = assign_symbol_id_hash(new_rows)
     new_rows = normalize_dim_symbol_schema(new_rows)
@@ -262,13 +254,13 @@ def scd2_upsert(
 
     closed_rows = normalize_dim_symbol_schema(closed_rows)
     new_rows = normalize_dim_symbol_schema(new_rows)
-    
+
     # Ensure all DataFrames have columns in the same order (SCHEMA order)
     schema_cols = list(SCHEMA.keys())
     dim_symbol_kept = dim_symbol_kept.select(schema_cols)
     closed_rows = closed_rows.select(schema_cols)
     new_rows = new_rows.select(schema_cols)
-    
+
     result = pl.concat([dim_symbol_kept, closed_rows, new_rows], how="vertical")
     return normalize_dim_symbol_schema(result)
 
@@ -385,18 +377,15 @@ def check_coverage(
     # Note: This assumes strict equality (no gaps, no overlaps).
     # If overlaps are allowed but cover the gap, a more complex merge is needed.
     # For SCD2, we usually enforce strict contiguity (end == next_start).
-    
+
     # We only care about gaps *within* the requested window [start_ts, end_ts].
     # But checking the whole sorted set of overlapping rows is safer/simpler.
-    
+
     prev_ends = rows["valid_until_ts"][:-1]
     next_starts = rows["valid_from_ts"][1:]
-    
-    # Check if any gap exists
-    if (prev_ends != next_starts).any():
-        return False
 
-    return True
+    # Check if any gap exists
+    return not (prev_ends != next_starts).any()
 
 
 def resolve_symbol_ids(

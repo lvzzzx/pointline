@@ -13,22 +13,19 @@ Example:
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Sequence
 from decimal import Decimal
-from typing import Iterable, Sequence
 
 import polars as pl
 
 from pointline.tables._base import (
-    exchange_id_validation_expr,
     generic_resolve_symbol_ids,
     generic_validate,
-    required_columns_validation_expr,
-    timestamp_validation_expr,
 )
 from pointline.validation_utils import with_expected_exchange_id
 
 # Schema definition matching design.md Section 5.4
-# 
+#
 # Delta Lake Integer Type Limitations:
 # - Delta Lake (via Parquet) does not support unsigned integer types UInt16 and UInt32
 # - These are automatically converted to signed types (Int16 and Int32) when written
@@ -55,15 +52,15 @@ QUOTES_SCHEMA: dict[str, pl.DataType] = {
 
 def parse_tardis_quotes_csv(df: pl.DataFrame) -> pl.DataFrame:
     """Parse raw Tardis quotes CSV format into normalized columns.
-    
+
     Tardis provides timestamps as microseconds since epoch (integers).
     Tardis schema is standardized with exact column names:
     - exchange, symbol, timestamp, local_timestamp
     - bid_price, bid_amount, ask_price, ask_amount
-    
+
     Both timestamp and local_timestamp are always present (Tardis handles fallback internally).
     Bid/ask fields may be empty when there are no bids or asks.
-    
+
     Returns DataFrame with columns:
     - ts_local_us (i64): local timestamp in microseconds since epoch
     - ts_exch_us (i64): exchange timestamp in microseconds since epoch
@@ -77,30 +74,34 @@ def parse_tardis_quotes_csv(df: pl.DataFrame) -> pl.DataFrame:
     missing = [c for c in required_cols if c not in df.columns]
     if missing:
         raise ValueError(f"parse_tardis_quotes_csv: missing required columns: {missing}")
-    
+
     result = df.clone()
-    
+
     # Parse timestamps (both always present per Tardis spec)
-    result = result.with_columns([
-        pl.col("local_timestamp").cast(pl.Int64).alias("ts_local_us"),
-        pl.col("timestamp").cast(pl.Int64).alias("ts_exch_us"),
-    ])
-    
+    result = result.with_columns(
+        [
+            pl.col("local_timestamp").cast(pl.Int64).alias("ts_local_us"),
+            pl.col("timestamp").cast(pl.Int64).alias("ts_exch_us"),
+        ]
+    )
+
     # Parse bid/ask fields (may be empty)
     # Tardis uses exact column names: bid_price, bid_amount, ask_price, ask_amount
     bid_ask_cols = ["bid_price", "bid_amount", "ask_price", "ask_amount"]
     missing_bid_ask = [c for c in bid_ask_cols if c not in df.columns]
     if missing_bid_ask:
         raise ValueError(f"parse_tardis_quotes_csv: missing bid/ask columns: {missing_bid_ask}")
-    
+
     # Cast to float64, handling empty strings as null
-    result = result.with_columns([
-        pl.col("bid_price").cast(pl.Float64, strict=False),
-        pl.col("bid_amount").cast(pl.Float64, strict=False),
-        pl.col("ask_price").cast(pl.Float64, strict=False),
-        pl.col("ask_amount").cast(pl.Float64, strict=False),
-    ])
-    
+    result = result.with_columns(
+        [
+            pl.col("bid_price").cast(pl.Float64, strict=False),
+            pl.col("bid_amount").cast(pl.Float64, strict=False),
+            pl.col("ask_price").cast(pl.Float64, strict=False),
+            pl.col("ask_amount").cast(pl.Float64, strict=False),
+        ]
+    )
+
     # Select only the columns we need (preserve file_line_number if provided)
     select_cols = [
         "ts_local_us",
@@ -117,18 +118,15 @@ def parse_tardis_quotes_csv(df: pl.DataFrame) -> pl.DataFrame:
 
 def normalize_quotes_schema(df: pl.DataFrame) -> pl.DataFrame:
     """Cast to the canonical quotes schema and select only schema columns.
-    
+
     Ensures all required columns exist and have correct types.
     Drops any extra columns (e.g., original float columns, dim_symbol metadata).
     """
     # Check for missing required columns
-    missing_required = [
-        col for col in QUOTES_SCHEMA
-        if col not in df.columns
-    ]
+    missing_required = [col for col in QUOTES_SCHEMA if col not in df.columns]
     if missing_required:
         raise ValueError(f"quotes missing required columns: {missing_required}")
-    
+
     # Cast columns to schema types
     casts = []
     for col, dtype in QUOTES_SCHEMA.items():
@@ -136,7 +134,7 @@ def normalize_quotes_schema(df: pl.DataFrame) -> pl.DataFrame:
             casts.append(pl.col(col).cast(dtype))
         else:
             raise ValueError(f"Required column {col} is missing")
-    
+
     # Cast and select only schema columns (drops extra columns)
     return df.with_columns(casts).select(list(QUOTES_SCHEMA.keys()))
 
@@ -269,24 +267,24 @@ def encode_fixed_point(
     """
     if "symbol_id" not in df.columns:
         raise ValueError("encode_fixed_point: df must have 'symbol_id' column")
-    
+
     required_cols = ["bid_price", "bid_amount", "ask_price", "ask_amount"]
     missing = [c for c in required_cols if c not in df.columns]
     if missing:
         raise ValueError(f"encode_fixed_point: df missing columns: {missing}")
-    
+
     required_dims = ["symbol_id", "price_increment", "amount_increment"]
     missing = [c for c in required_dims if c not in dim_symbol.columns]
     if missing:
         raise ValueError(f"encode_fixed_point: dim_symbol missing columns: {missing}")
-    
+
     # Join to get increments
     joined = df.join(
         dim_symbol.select(["symbol_id", "price_increment", "amount_increment"]),
         on="symbol_id",
         how="left",
     )
-    
+
     # Check for missing symbol_ids
     missing_ids = joined.filter(pl.col("price_increment").is_null())
     if not missing_ids.is_empty():
@@ -294,27 +292,29 @@ def encode_fixed_point(
         raise ValueError(
             f"encode_fixed_point: {missing_symbols.height} symbol_ids not found in dim_symbol"
         )
-    
+
     # Encode to fixed-point (handle nulls - preserve null for empty bid/ask)
-    result = joined.with_columns([
-        pl.when(pl.col("bid_price").is_not_null())
-        .then((pl.col("bid_price") / pl.col("price_increment")).floor().cast(pl.Int64))
-        .otherwise(None)
-        .alias("bid_px_int"),
-        pl.when(pl.col("bid_amount").is_not_null())
-        .then((pl.col("bid_amount") / pl.col("amount_increment")).round().cast(pl.Int64))
-        .otherwise(None)
-        .alias("bid_sz_int"),
-        pl.when(pl.col("ask_price").is_not_null())
-        .then((pl.col("ask_price") / pl.col("price_increment")).ceil().cast(pl.Int64))
-        .otherwise(None)
-        .alias("ask_px_int"),
-        pl.when(pl.col("ask_amount").is_not_null())
-        .then((pl.col("ask_amount") / pl.col("amount_increment")).round().cast(pl.Int64))
-        .otherwise(None)
-        .alias("ask_sz_int"),
-    ])
-    
+    result = joined.with_columns(
+        [
+            pl.when(pl.col("bid_price").is_not_null())
+            .then((pl.col("bid_price") / pl.col("price_increment")).floor().cast(pl.Int64))
+            .otherwise(None)
+            .alias("bid_px_int"),
+            pl.when(pl.col("bid_amount").is_not_null())
+            .then((pl.col("bid_amount") / pl.col("amount_increment")).round().cast(pl.Int64))
+            .otherwise(None)
+            .alias("bid_sz_int"),
+            pl.when(pl.col("ask_price").is_not_null())
+            .then((pl.col("ask_price") / pl.col("price_increment")).ceil().cast(pl.Int64))
+            .otherwise(None)
+            .alias("ask_px_int"),
+            pl.when(pl.col("ask_amount").is_not_null())
+            .then((pl.col("ask_amount") / pl.col("amount_increment")).round().cast(pl.Int64))
+            .otherwise(None)
+            .alias("ask_sz_int"),
+        ]
+    )
+
     # Drop intermediate columns
     return result.drop(["price_increment", "amount_increment"])
 
