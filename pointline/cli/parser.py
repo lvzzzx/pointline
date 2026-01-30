@@ -17,6 +17,7 @@ from pointline.cli.commands.ingest import cmd_ingest_discover, cmd_ingest_run
 from pointline.cli.commands.manifest import cmd_manifest_backfill_sha256, cmd_manifest_show
 from pointline.cli.commands.symbol import cmd_symbol_search
 from pointline.cli.commands.validate import cmd_validate_quotes, cmd_validate_trades
+from pointline.cli.commands.validation import cmd_validation_show, cmd_validation_stats
 from pointline.config import LAKE_ROOT, TABLE_PATHS, get_bronze_root, get_table_path
 
 def build_parser() -> argparse.ArgumentParser:
@@ -434,6 +435,60 @@ def build_parser() -> argparse.ArgumentParser:
         help="Report what would change without writing",
     )
     manifest_backfill.set_defaults(func=cmd_manifest_backfill_sha256)
+
+    # --- Validation ---
+    validation = subparsers.add_parser("validation", help="Validation log utilities")
+    validation_sub = validation.add_subparsers(dest="validation_command")
+
+    validation_show = validation_sub.add_parser("show", help="Show validation log information")
+    validation_show.add_argument(
+        "--validation-log-path",
+        default=str(get_table_path("validation_log")),
+        help="Path to the validation log table",
+    )
+    validation_show.add_argument(
+        "--detailed",
+        action="store_true",
+        help="Show detailed validation records instead of summary",
+    )
+    validation_show.add_argument(
+        "--status",
+        choices=["passed", "failed"],
+        help="Filter by validation status",
+    )
+    validation_show.add_argument(
+        "--table",
+        help="Filter by table name (e.g., trades, quotes)",
+    )
+    validation_show.add_argument(
+        "--failed-only",
+        action="store_true",
+        help="Show only failed validations",
+    )
+    validation_show.add_argument(
+        "--passed-only",
+        action="store_true",
+        help="Show only passed validations",
+    )
+    validation_show.add_argument(
+        "--limit",
+        type=int,
+        help="Limit number of records shown (detailed mode only)",
+    )
+    validation_show.add_argument(
+        "--show-mismatches",
+        action="store_true",
+        help="Show mismatch samples for failed validations (detailed mode only)",
+    )
+    validation_show.set_defaults(func=cmd_validation_show)
+
+    validation_stats = validation_sub.add_parser("stats", help="Show validation statistics")
+    validation_stats.add_argument(
+        "--validation-log-path",
+        default=str(get_table_path("validation_log")),
+        help="Path to the validation log table",
+    )
+    validation_stats.set_defaults(func=cmd_validation_stats)
 
     # --- Assets ---
     assets = subparsers.add_parser("assets", help="Asset stats utilities")
