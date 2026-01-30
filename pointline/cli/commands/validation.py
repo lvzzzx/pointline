@@ -94,16 +94,20 @@ def cmd_validation_show(args: argparse.Namespace) -> int:
 
     else:
         # Show summary statistics
-        summary = df.group_by(["table_name", "validation_status"]).agg(
-            [
-                pl.len().alias("count"),
-                pl.col("expected_rows").sum().alias("total_expected_rows"),
-                pl.col("ingested_rows").sum().alias("total_ingested_rows"),
-                pl.col("missing_rows").sum().alias("total_missing_rows"),
-                pl.col("extra_rows").sum().alias("total_extra_rows"),
-                pl.col("mismatched_rows").sum().alias("total_mismatched_rows"),
-            ]
-        ).sort(["table_name", "validation_status"])
+        summary = (
+            df.group_by(["table_name", "validation_status"])
+            .agg(
+                [
+                    pl.len().alias("count"),
+                    pl.col("expected_rows").sum().alias("total_expected_rows"),
+                    pl.col("ingested_rows").sum().alias("total_ingested_rows"),
+                    pl.col("missing_rows").sum().alias("total_missing_rows"),
+                    pl.col("extra_rows").sum().alias("total_extra_rows"),
+                    pl.col("mismatched_rows").sum().alias("total_mismatched_rows"),
+                ]
+            )
+            .sort(["table_name", "validation_status"])
+        )
 
         print("Validation Summary by Table and Status:")
         print(summary)
@@ -164,9 +168,7 @@ def cmd_validation_stats(args: argparse.Namespace) -> int:
                         (pl.col("validation_status") == "passed").sum().alias("passed"),
                     ]
                 )
-                .with_columns(
-                    ((pl.col("passed") / pl.col("total")) * 100).alias("pass_rate")
-                )
+                .with_columns(((pl.col("passed") / pl.col("total")) * 100).alias("pass_rate"))
                 .sort("pass_rate", descending=False)
             )
 

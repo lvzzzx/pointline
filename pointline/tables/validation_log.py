@@ -87,7 +87,9 @@ def create_validation_record(
         ValueError: If validation_status is not "passed" or "failed"
     """
     if validation_status not in ("passed", "failed"):
-        raise ValueError(f"validation_status must be 'passed' or 'failed', got: {validation_status}")
+        raise ValueError(
+            f"validation_status must be 'passed' or 'failed', got: {validation_status}"
+        )
 
     # Generate validation_id using current timestamp in microseconds
     validation_id = int(time.time() * 1_000_000)
@@ -137,7 +139,9 @@ def normalize_validation_log_schema(df: pl.DataFrame) -> pl.DataFrame:
     optional_columns = {"mismatch_sample"}
 
     missing_required = [
-        col for col in VALIDATION_LOG_SCHEMA if col not in df.columns and col not in optional_columns
+        col
+        for col in VALIDATION_LOG_SCHEMA
+        if col not in df.columns and col not in optional_columns
     ]
     if missing_required:
         raise ValueError(f"validation_log missing required columns: {missing_required}")

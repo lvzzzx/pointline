@@ -80,12 +80,14 @@ def test_create_validation_record_passed():
 
 def test_create_validation_record_failed():
     """Test creating a validation record for a failed validation."""
-    mismatch_sample = pl.DataFrame({
-        "file_id": [123, 123],
-        "file_line_number": [10, 20],
-        "price_int_exp": [50000000, 60000000],
-        "price_int_ing": [50000001, 60000001],
-    })
+    mismatch_sample = pl.DataFrame(
+        {
+            "file_id": [123, 123],
+            "file_line_number": [10, 20],
+            "price_int_exp": [50000000, 60000000],
+            "price_int_ing": [50000001, 60000001],
+        }
+    )
 
     record = create_validation_record(
         file_id=123,
@@ -128,21 +130,23 @@ def test_create_validation_record_invalid_status():
 
 def test_normalize_validation_log_schema():
     """Test normalization of validation_log DataFrame."""
-    df = pl.DataFrame({
-        "validation_id": [1714557600000000],
-        "file_id": [123],
-        "table_name": ["trades"],
-        "validated_at": [1714557600000000],
-        "validation_status": ["passed"],
-        "expected_rows": [10000],
-        "ingested_rows": [10000],
-        "missing_rows": [0],
-        "extra_rows": [0],
-        "mismatched_rows": [0],
-        "mismatch_sample": [None],
-        "validation_duration_ms": [1234],
-        "extra_column": ["should be dropped"],
-    })
+    df = pl.DataFrame(
+        {
+            "validation_id": [1714557600000000],
+            "file_id": [123],
+            "table_name": ["trades"],
+            "validated_at": [1714557600000000],
+            "validation_status": ["passed"],
+            "expected_rows": [10000],
+            "ingested_rows": [10000],
+            "missing_rows": [0],
+            "extra_rows": [0],
+            "mismatched_rows": [0],
+            "mismatch_sample": [None],
+            "validation_duration_ms": [1234],
+            "extra_column": ["should be dropped"],
+        }
+    )
 
     normalized = normalize_validation_log_schema(df)
 
@@ -157,11 +161,13 @@ def test_normalize_validation_log_schema():
 
 def test_normalize_validation_log_schema_missing_required():
     """Test that missing required columns raise ValueError."""
-    df = pl.DataFrame({
-        "validation_id": [1714557600000000],
-        "file_id": [123],
-        # Missing table_name
-    })
+    df = pl.DataFrame(
+        {
+            "validation_id": [1714557600000000],
+            "file_id": [123],
+            # Missing table_name
+        }
+    )
 
     with pytest.raises(ValueError, match="missing required columns"):
         normalize_validation_log_schema(df)
@@ -169,20 +175,22 @@ def test_normalize_validation_log_schema_missing_required():
 
 def test_normalize_validation_log_schema_missing_optional():
     """Test that missing optional columns (mismatch_sample) are filled with None."""
-    df = pl.DataFrame({
-        "validation_id": [1714557600000000],
-        "file_id": [123],
-        "table_name": ["trades"],
-        "validated_at": [1714557600000000],
-        "validation_status": ["passed"],
-        "expected_rows": [10000],
-        "ingested_rows": [10000],
-        "missing_rows": [0],
-        "extra_rows": [0],
-        "mismatched_rows": [0],
-        # Missing mismatch_sample (optional)
-        "validation_duration_ms": [1234],
-    })
+    df = pl.DataFrame(
+        {
+            "validation_id": [1714557600000000],
+            "file_id": [123],
+            "table_name": ["trades"],
+            "validated_at": [1714557600000000],
+            "validation_status": ["passed"],
+            "expected_rows": [10000],
+            "ingested_rows": [10000],
+            "missing_rows": [0],
+            "extra_rows": [0],
+            "mismatched_rows": [0],
+            # Missing mismatch_sample (optional)
+            "validation_duration_ms": [1234],
+        }
+    )
 
     normalized = normalize_validation_log_schema(df)
 
@@ -248,12 +256,14 @@ def test_validation_record_persistence(tmp_path: Path):
 def test_validation_record_with_large_mismatch_sample():
     """Test handling of large mismatch samples."""
     # Create a large mismatch sample
-    large_sample = pl.DataFrame({
-        "file_id": list(range(100)),
-        "file_line_number": list(range(100)),
-        "price_int_exp": [50000000] * 100,
-        "price_int_ing": [50000001] * 100,
-    })
+    large_sample = pl.DataFrame(
+        {
+            "file_id": list(range(100)),
+            "file_line_number": list(range(100)),
+            "price_int_exp": [50000000] * 100,
+            "price_int_ing": [50000001] * 100,
+        }
+    )
 
     record = create_validation_record(
         file_id=123,

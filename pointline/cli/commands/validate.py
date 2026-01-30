@@ -121,7 +121,9 @@ def cmd_validate_quotes(args: argparse.Namespace) -> int:
     validation_duration_ms = end_time_ms - start_time_ms
 
     # Determine validation status
-    validation_status = "passed" if (missing_count == 0 and extra_count == 0 and mismatch_count == 0) else "failed"
+    validation_status = (
+        "passed" if (missing_count == 0 and extra_count == 0 and mismatch_count == 0) else "failed"
+    )
 
     # Create validation record
     validation_record = create_validation_record(
@@ -245,7 +247,9 @@ def cmd_validate_trades(args: argparse.Namespace) -> int:
     validation_duration_ms = end_time_ms - start_time_ms
 
     # Determine validation status
-    validation_status = "passed" if (missing_count == 0 and extra_count == 0 and mismatch_count == 0) else "failed"
+    validation_status = (
+        "passed" if (missing_count == 0 and extra_count == 0 and mismatch_count == 0) else "failed"
+    )
 
     # Create validation record
     validation_record = create_validation_record(
