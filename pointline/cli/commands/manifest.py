@@ -63,9 +63,7 @@ def cmd_manifest_show(args: argparse.Namespace) -> int:
 
         if "exchange" in df.columns:
             exchange_summary = (
-                df.group_by("exchange")
-                .agg(pl.len().alias("count"))
-                .sort("count", descending=True)
+                df.group_by("exchange").agg(pl.len().alias("count")).sort("count", descending=True)
             )
             if exchange_summary.height > 0:
                 print("\nexchange counts:")

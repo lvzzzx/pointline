@@ -132,9 +132,7 @@ def cmd_ingest_run(args: argparse.Namespace) -> int:
             if status == "success":
                 print(f"✓ {file_meta.bronze_file_path}: {result.row_count} rows")
             elif status == "quarantined":
-                print(
-                    f"⚠ {file_meta.bronze_file_path}: QUARANTINED - {result.error_message}"
-                )
+                print(f"⚠ {file_meta.bronze_file_path}: QUARANTINED - {result.error_message}")
             else:
                 print(f"✗ {file_meta.bronze_file_path}: FAILED - {result.error_message}")
 

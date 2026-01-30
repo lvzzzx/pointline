@@ -1,6 +1,7 @@
 """Tushare API client for Chinese stock data."""
 
 from __future__ import annotations
+
 import os
 from typing import Literal
 
@@ -24,9 +25,7 @@ class TushareClient:
         try:
             import tushare as ts
         except ImportError:
-            raise ImportError(
-                "tushare package required. Install with: pip install tushare"
-            )
+            raise ImportError("tushare package required. Install with: pip install tushare")
 
         token = token or os.getenv("TUSHARE_TOKEN")
         if not token:
@@ -69,7 +68,7 @@ class TushareClient:
             exchange=exchange or "",
             list_status=list_status or "",
             fields="ts_code,symbol,name,area,industry,fullname,enname,"
-                   "market,exchange,list_status,list_date,delist_date,is_hs",
+            "market,exchange,list_status,list_date,delist_date,is_hs",
         )
 
         # Convert to Polars
@@ -147,8 +146,7 @@ class TushareClient:
         dfs = []
         for exchange in exchanges:
             df = self.get_stock_basic(
-                exchange=exchange,
-                list_status=None if include_delisted else "L"
+                exchange=exchange, list_status=None if include_delisted else "L"
             )
             dfs.append(df)
 

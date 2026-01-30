@@ -138,9 +138,7 @@ class SzseL3OrdersIngestionService(BaseService):
 
             # 4. Quarantine check
             exchange_id = self._resolve_exchange_id(meta.exchange)
-            is_valid, error_msg = self._check_quarantine(
-                meta, dim_symbol, exchange_id, parsed_df
-            )
+            is_valid, error_msg = self._check_quarantine(meta, dim_symbol, exchange_id, parsed_df)
 
             if not is_valid:
                 logger.warning(f"File quarantined: {meta.bronze_file_path} - {error_msg}")
@@ -281,8 +279,7 @@ class SzseL3OrdersIngestionService(BaseService):
         if not has_coverage:
             # Determine specific reason
             rows = dim_symbol.filter(
-                (pl.col("exchange_id") == exchange_id)
-                & (pl.col("exchange_symbol") == meta.symbol)
+                (pl.col("exchange_id") == exchange_id) & (pl.col("exchange_symbol") == meta.symbol)
             )
 
             if rows.is_empty():

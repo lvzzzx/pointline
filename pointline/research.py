@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Sequence
 from datetime import date, datetime, timezone
 from pathlib import Path
-from typing import Iterable, Sequence
 
 import polars as pl
 
@@ -33,7 +33,7 @@ def scan_table(
 ) -> pl.LazyFrame:
     """
     Return a filtered LazyFrame for a Delta table.
-    
+
     Requires symbol_id + time range. Exchange partitions are derived from symbol_id
     for pruning.
     Timestamps are applied to the selected time column and implicitly prune
@@ -170,9 +170,7 @@ def _apply_filters(
         ids = [symbol_id] if isinstance(symbol_id, int) else list(symbol_id)
         resolved = resolve_symbols(ids)
         if not resolved:
-            raise ValueError(
-                "scan_table: symbol_id values not found in dim_symbol registry"
-            )
+            raise ValueError("scan_table: symbol_id values not found in dim_symbol registry")
         exchanges_to_filter.extend(resolved)
 
         # Apply symbol_id filter
@@ -180,20 +178,16 @@ def _apply_filters(
 
     # 2. Apply unique exchange filters
     if exchanges_to_filter:
-        unique_exchanges = sorted(list(set(exchanges_to_filter)))
+        unique_exchanges = sorted(set(exchanges_to_filter))
         lf = lf.filter(pl.col("exchange").is_in(unique_exchanges))
 
     # 3. Apply Date Filters
     if start_date is not None or end_date is not None:
-        if table_name is not None:
-            table_has_date = TABLE_HAS_DATE.get(table_name)
-        else:
-            table_has_date = None
-        if table_has_date is False:
-            if not date_filter_is_implicit:
-                raise ValueError(
-                    "scan_table: start_date/end_date provided but table has no 'date' column"
-                )
+        table_has_date = TABLE_HAS_DATE.get(table_name) if table_name is not None else None
+        if table_has_date is False and not date_filter_is_implicit:
+            raise ValueError(
+                "scan_table: start_date/end_date provided but table has no 'date' column"
+            )
         if table_has_date is None and "date" not in lf.schema:
             if not date_filter_is_implicit:
                 raise ValueError(
@@ -221,16 +215,11 @@ def _apply_filters(
     return lf
 
 
-
-
 def _derive_date_bounds_from_ts(
     start_ts_us: int | None, end_ts_us: int | None
 ) -> tuple[date | None, date | None]:
     start_date = _ts_us_to_date(start_ts_us) if start_ts_us is not None else None
-    if end_ts_us is None:
-        end_date = None
-    else:
-        end_date = _ts_us_to_date(max(end_ts_us - 1, 0))
+    end_date = None if end_ts_us is None else _ts_us_to_date(max(end_ts_us - 1, 0))
     return start_date, end_date
 
 
@@ -240,9 +229,7 @@ def _ts_us_to_date(value: int) -> date:
 
 def _validate_ts_col(ts_col: str) -> None:
     if ts_col not in {"ts_local_us", "ts_exch_us"}:
-        raise ValueError(
-            "scan_table: ts_col must be 'ts_local_us' or 'ts_exch_us'"
-        )
+        raise ValueError("scan_table: ts_col must be 'ts_local_us' or 'ts_exch_us'")
 
 
 def _validate_ts_range(start_ts_us: int | None, end_ts_us: int | None) -> None:

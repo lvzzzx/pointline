@@ -1,7 +1,8 @@
-import polars as pl
 from datetime import date
 from pathlib import Path
-from typing import Optional
+
+import polars as pl
+
 from pointline.config import STORAGE_OPTIONS
 
 
@@ -18,15 +19,16 @@ def get_writer_properties():
         return WriterProperties(compression=STORAGE_OPTIONS["compression"].upper())
     return None
 
+
 class BaseDeltaRepository:
     """
     Base implementation for Delta Lake repositories using Polars and delta-rs.
     """
-    
+
     def __init__(self, table_path: str | Path, partition_by: list[str] | None = None):
         """
         Initializes the repository with a specific table path.
-        
+
         Args:
             table_path: The physical path to the Delta table.
             partition_by: Optional list of column names to partition by (e.g., ["exchange", "date"]).
@@ -34,16 +36,16 @@ class BaseDeltaRepository:
         """
         self.table_path = str(table_path)
         self.partition_by = partition_by
-        
+
     def read_all(self) -> pl.DataFrame:
         """
         Reads the entire Delta table into a Polars DataFrame.
-        
+
         Returns:
             pl.DataFrame: The table content.
         """
         return pl.read_delta(self.table_path)
-        
+
     def write_full(self, df: pl.DataFrame) -> None:
         """
         Writes the DataFrame to the Delta table, overwriting any existing data.
@@ -67,7 +69,7 @@ class BaseDeltaRepository:
             arrow_table,
             mode="overwrite",
             partition_by=self.partition_by,
-            writer_properties=get_writer_properties()
+            writer_properties=get_writer_properties(),
         )
 
     def append(self, df: pl.DataFrame) -> None:
@@ -93,7 +95,7 @@ class BaseDeltaRepository:
             arrow_table,
             mode="append",
             partition_by=self.partition_by,
-            writer_properties=get_writer_properties()
+            writer_properties=get_writer_properties(),
         )
 
     def overwrite_partition(
@@ -113,10 +115,7 @@ class BaseDeltaRepository:
         """
         from deltalake import write_deltalake
 
-        if isinstance(data, pl.DataFrame):
-            arrow_data = data.to_arrow()
-        else:
-            arrow_data = data
+        arrow_data = data.to_arrow() if isinstance(data, pl.DataFrame) else data
 
         write_deltalake(
             self.table_path,
@@ -176,7 +175,7 @@ class BaseDeltaRepository:
             partition_filters=partition_filters,
             target_size=target_file_size,
         )
-        
+
     def merge(self, df: pl.DataFrame, keys: list[str], use_native_merge: bool = True) -> None:
         """
         Merges updates into the table based on primary keys.
@@ -257,10 +256,7 @@ class BaseDeltaRepository:
 
             # Perform anti-join to remove existing records that are being updated
             # Then concatenate with the new data
-            updated = pl.concat([
-                current.join(df.select(keys), on=keys, how="anti"),
-                df
-            ])
+            updated = pl.concat([current.join(df.select(keys), on=keys, how="anti"), df])
             self.write_full(updated)
         except TableNotFoundError:
             # If table doesn't exist, perform a full write

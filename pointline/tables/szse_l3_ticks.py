@@ -11,7 +11,7 @@ Tick Types:
 
 from __future__ import annotations
 
-from typing import Sequence
+from collections.abc import Sequence
 
 import polars as pl
 
@@ -283,10 +283,7 @@ def encode_fixed_point(
     result = joined.with_columns(
         [
             (pl.col("price") / pl.col("price_increment")).round().cast(pl.Int64).alias("price_int"),
-            (pl.col("qty") / pl.col("amount_increment"))
-            .round()
-            .cast(pl.Int64)
-            .alias("qty_int"),
+            (pl.col("qty") / pl.col("amount_increment")).round().cast(pl.Int64).alias("qty_int"),
         ]
     )
 
@@ -339,9 +336,7 @@ def decode_fixed_point(
     result = joined.with_columns(
         [
             (pl.col("price_int") * pl.col("price_increment")).cast(pl.Float64).alias("price"),
-            (pl.col("qty_int") * pl.col("amount_increment"))
-            .cast(pl.Int64)
-            .alias("qty"),
+            (pl.col("qty_int") * pl.col("amount_increment")).cast(pl.Int64).alias("qty"),
         ]
     )
 

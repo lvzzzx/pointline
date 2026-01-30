@@ -164,18 +164,30 @@ def test_resolve_symbol_ids_sorts_by_keys():
 
     resolved = resolve_symbol_ids(data, dim)
 
-    assert resolved.filter(
-        (pl.col("exchange_symbol") == "ETH-PERPETUAL") & (pl.col("ts_local_us") == 160)
-    )["tick_size"][0] == 2.0
-    assert resolved.filter(
-        (pl.col("exchange_symbol") == "BTC-PERPETUAL") & (pl.col("ts_local_us") == 210)
-    )["tick_size"][0] == 1.0
-    assert resolved.filter(
-        (pl.col("exchange_symbol") == "ETH-PERPETUAL") & (pl.col("ts_local_us") == 120)
-    )["tick_size"][0] == 0.2
-    assert resolved.filter(
-        (pl.col("exchange_symbol") == "BTC-PERPETUAL") & (pl.col("ts_local_us") == 50)
-    )["symbol_id"][0] is None
+    assert (
+        resolved.filter(
+            (pl.col("exchange_symbol") == "ETH-PERPETUAL") & (pl.col("ts_local_us") == 160)
+        )["tick_size"][0]
+        == 2.0
+    )
+    assert (
+        resolved.filter(
+            (pl.col("exchange_symbol") == "BTC-PERPETUAL") & (pl.col("ts_local_us") == 210)
+        )["tick_size"][0]
+        == 1.0
+    )
+    assert (
+        resolved.filter(
+            (pl.col("exchange_symbol") == "ETH-PERPETUAL") & (pl.col("ts_local_us") == 120)
+        )["tick_size"][0]
+        == 0.2
+    )
+    assert (
+        resolved.filter(
+            (pl.col("exchange_symbol") == "BTC-PERPETUAL") & (pl.col("ts_local_us") == 50)
+        )["symbol_id"][0]
+        is None
+    )
 
 
 def test_assign_symbol_id_hash_determinism():
@@ -183,16 +195,18 @@ def test_assign_symbol_id_hash_determinism():
     # The hash for (1, "BTC-PERPETUAL", 100) with blake2b(4 bytes) should be stable
     dim = scd2_bootstrap(df)
     symbol_id = dim["symbol_id"][0]
-    
+
     # Asserting the specific value to ensure we don't break existing IDs
     assert symbol_id == 3019004731
     assert dim["symbol_id"].dtype == pl.Int64
-    
+
     # Test with multiple rows
-    df_multi = pl.concat([
-        _base_updates(100),
-        _base_updates(200),
-    ])
+    df_multi = pl.concat(
+        [
+            _base_updates(100),
+            _base_updates(200),
+        ]
+    )
     dim_multi = scd2_bootstrap(df_multi)
     assert dim_multi.height == 2
     assert dim_multi["symbol_id"][0] == 3019004731
@@ -209,17 +223,27 @@ def test_upsert_empty_updates_returns_original():
 
 def test_upsert_multiple_symbols_mixed_changes():
     # Symbol 1: change, Symbol 2: new, Symbol 3: no change
-    dim = pl.concat([
-        _base_updates(100),  # Symbol 1 (ID 1)
-        _base_updates(100).with_columns(pl.lit("ETH-PERPETUAL").alias("exchange_symbol")),  # Symbol 3
-    ])
+    dim = pl.concat(
+        [
+            _base_updates(100),  # Symbol 1 (ID 1)
+            _base_updates(100).with_columns(
+                pl.lit("ETH-PERPETUAL").alias("exchange_symbol")
+            ),  # Symbol 3
+        ]
+    )
     dim = scd2_bootstrap(dim)
 
-    updates = pl.concat([
-        _base_updates(200, tick_size=1.0),  # Change Symbol 1
-        _base_updates(200).with_columns(pl.lit("SOL-PERPETUAL").alias("exchange_symbol")),  # New Symbol 2
-        _base_updates(200).with_columns(pl.lit("ETH-PERPETUAL").alias("exchange_symbol")),  # No change Symbol 3
-    ])
+    updates = pl.concat(
+        [
+            _base_updates(200, tick_size=1.0),  # Change Symbol 1
+            _base_updates(200).with_columns(
+                pl.lit("SOL-PERPETUAL").alias("exchange_symbol")
+            ),  # New Symbol 2
+            _base_updates(200).with_columns(
+                pl.lit("ETH-PERPETUAL").alias("exchange_symbol")
+            ),  # No change Symbol 3
+        ]
+    )
 
     dim2 = scd2_upsert(dim, updates)
 
@@ -246,7 +270,7 @@ def test_upsert_multiple_symbols_mixed_changes():
 def test_upsert_custom_valid_from_col():
     dim = scd2_bootstrap(_base_updates(100))
     updates = _base_updates(200, tick_size=1.0).rename({"valid_from_ts": "event_time"})
-    
+
     dim2 = scd2_upsert(dim, updates, valid_from_col="event_time")
     assert dim2.height == 2
     assert dim2.filter(pl.col("is_current"))["valid_from_ts"][0] == 200
@@ -254,6 +278,7 @@ def test_upsert_custom_valid_from_col():
 
 def test_upsert_missing_columns_raises_error():
     import pytest
+
     dim = scd2_bootstrap(_base_updates(100))
     bad_updates = pl.DataFrame({"exchange_id": [1]})
     with pytest.raises(ValueError, match="missing required columns"):
@@ -261,15 +286,17 @@ def test_upsert_missing_columns_raises_error():
 
 
 def test_normalize_schema_missing_columns_raises_error():
-    from pointline.dim_symbol import normalize_dim_symbol_schema
     import pytest
+
+    from pointline.dim_symbol import normalize_dim_symbol_schema
+
     bad_df = pl.DataFrame({"exchange_id": [1]})
     with pytest.raises(ValueError, match="missing required columns"):
         normalize_dim_symbol_schema(bad_df)
 
 
 def test_check_coverage_logic():
-    from pointline.dim_symbol import SCHEMA, assign_symbol_id_hash, check_coverage
+    from pointline.dim_symbol import SCHEMA, check_coverage
 
     # Range [100, 200)
 
@@ -317,9 +344,7 @@ def test_check_coverage_logic():
     )
     from pointline.dim_symbol import normalize_dim_symbol_schema
 
-    dim_multi = pl.concat(
-        [normalize_dim_symbol_schema(v1), normalize_dim_symbol_schema(v2)]
-    )
+    dim_multi = pl.concat([normalize_dim_symbol_schema(v1), normalize_dim_symbol_schema(v2)])
     assert check_coverage(dim_multi, 1, "BTC-PERPETUAL", 100, 200) is True
 
     # Case 6: Two rows, GAP [100, 140) and [150, DEFAULT)
@@ -328,9 +353,7 @@ def test_check_coverage_logic():
         pl.lit(False).alias("is_current"),
         pl.lit(123).alias("symbol_id"),
     )
-    dim_gap = pl.concat(
-        [normalize_dim_symbol_schema(v1_gap), normalize_dim_symbol_schema(v2)]
-    )
+    dim_gap = pl.concat([normalize_dim_symbol_schema(v1_gap), normalize_dim_symbol_schema(v2)])
     assert check_coverage(dim_gap, 1, "BTC-PERPETUAL", 100, 200) is False
 
     # Case 7: Two rows, OVERLAP [100, 160) and [150, DEFAULT)

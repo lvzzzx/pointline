@@ -7,8 +7,9 @@ import hashlib
 import inspect
 import re
 import time
+from collections.abc import Iterable, Sequence
+from datetime import date
 from pathlib import Path
-from typing import Iterable, Sequence
 
 import polars as pl
 
@@ -133,9 +134,7 @@ def add_metadata(df: pl.DataFrame, exchange: str, exchange_id: int) -> pl.DataFr
     )
     return result.with_columns(
         [
-            pl.from_epoch(pl.col("ts_local_us"), time_unit="us")
-            .cast(pl.Date)
-            .alias("date"),
+            pl.from_epoch(pl.col("ts_local_us"), time_unit="us").cast(pl.Date).alias("date"),
         ]
     )
 
@@ -169,14 +168,10 @@ def compare_expected_vs_ingested(
         pl.col("_present_exp").is_null() & pl.col("_present_ing").is_not_null()
     )
 
-    comparisons = [
-        pl.col(f"{col}_exp").eq_missing(pl.col(f"{col}_ing")) for col in compare_cols
-    ]
+    comparisons = [pl.col(f"{col}_exp").eq_missing(pl.col(f"{col}_ing")) for col in compare_cols]
     all_equal = pl.all_horizontal(comparisons)
     mismatched = joined.filter(
-        pl.col("_present_exp").is_not_null()
-        & pl.col("_present_ing").is_not_null()
-        & ~all_equal
+        pl.col("_present_exp").is_not_null() & pl.col("_present_ing").is_not_null() & ~all_equal
     )
 
     mismatch_sample = mismatched.select(

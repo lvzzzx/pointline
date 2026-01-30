@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import os
+from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
-from typing import Callable
 
 from tardis_dev import datasets
+
 from pointline.config import get_bronze_root
 
 
@@ -51,9 +52,7 @@ def download_tardis_datasets(
 
 
 def _build_get_filename(template: str) -> Callable[[str, str, datetime, str, str], str]:
-    def _get_filename(
-        exchange: str, data_type: str, date: datetime, symbol: str, fmt: str
-    ) -> str:
+    def _get_filename(exchange: str, data_type: str, date: datetime, symbol: str, fmt: str) -> str:
         date_str = date.strftime("%Y-%m-%d")
         path = template.format(
             exchange=exchange,
