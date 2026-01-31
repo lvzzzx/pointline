@@ -140,10 +140,7 @@ def build_dim_symbol_updates_from_stock_basic_cn(df: pl.DataFrame) -> pl.DataFra
     else:
         exchange_id_col = exchange_id_expr
 
-    if "exchange" in df.columns:
-        exchange_col = pl.col("exchange")
-    else:
-        exchange_col = exchange_expr
+    exchange_col = pl.col("exchange") if "exchange" in df.columns else exchange_expr
 
     if "exchange_symbol" in df.columns:
         exchange_symbol_col = pl.col("exchange_symbol")
