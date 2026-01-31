@@ -34,8 +34,15 @@ class TushareClient:
                 "Get token from: https://tushare.pro/user/token"
             )
 
-        ts.set_token(token)
-        self.pro = ts.pro_api()
+        self.pro = ts.pro_api(token)
+        # Optional monkey patch for custom Tushare gateway.
+        # Enable via TUSHARE_MONKEY_PATCH (default: on) and set TUSHARE_HTTP_URL if needed.
+        monkey_patch = os.getenv("TUSHARE_MONKEY_PATCH", "1").lower() not in {"0", "false", "no"}
+        if monkey_patch:
+            self.pro._DataApi__token = token
+            http_url = os.getenv("TUSHARE_HTTP_URL", "").strip()
+            if http_url:
+                self.pro._DataApi__http_url = http_url
         self._ts = ts
 
     def get_stock_basic(
