@@ -245,6 +245,9 @@ class DerivativeTickerIngestionService(BaseService):
 
         The date column is derived from ts_local_us in the exchange's local timezone,
         ensuring that one trading day maps to exactly one partition.
+
+        Raises:
+            ValueError: If exchange is not registered in EXCHANGE_TIMEZONES
         """
         result = df.with_columns(
             [
@@ -252,7 +255,15 @@ class DerivativeTickerIngestionService(BaseService):
                 pl.lit(exchange_id, dtype=pl.Int16).alias("exchange_id"),
             ]
         )
-        exchange_tz = get_exchange_timezone(exchange)
+
+        # Validate exchange has explicit timezone mapping (fail fast to prevent mispartitioning)
+        try:
+            exchange_tz = get_exchange_timezone(exchange, strict=True)
+        except ValueError as e:
+            raise ValueError(
+                f"Cannot add metadata for exchange '{exchange}' (exchange_id={exchange_id}): {e}"
+            ) from e
+
         return result.with_columns(
             [
                 pl.from_epoch(pl.col("ts_local_us"), time_unit="us")

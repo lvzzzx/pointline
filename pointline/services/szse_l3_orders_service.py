@@ -317,6 +317,9 @@ class SzseL3OrdersIngestionService(BaseService):
         For crypto (UTC timezone):
         - 2024-09-30 00:30 UTC → date=2024-09-30
         - 2024-09-30 23:30 UTC → date=2024-09-30
+
+        Raises:
+            ValueError: If exchange is not registered in EXCHANGE_TIMEZONES
         """
         # Add exchange (string) for partitioning and human readability
         # Add exchange_id (Int16) for joins and compression
@@ -329,7 +332,14 @@ class SzseL3OrdersIngestionService(BaseService):
 
         # Derive date from ts_local_us in exchange-local timezone
         # This ensures one trading day = one partition (no UTC boundary splits)
-        exchange_tz = get_exchange_timezone(exchange)
+        # Validate exchange has explicit timezone mapping (fail fast to prevent mispartitioning)
+        try:
+            exchange_tz = get_exchange_timezone(exchange, strict=True)
+        except ValueError as e:
+            raise ValueError(
+                f"Cannot add metadata for exchange '{exchange}' (exchange_id={exchange_id}): {e}"
+            ) from e
+
         result = result.with_columns(
             [
                 pl.from_epoch(pl.col("ts_local_us"), time_unit="us")

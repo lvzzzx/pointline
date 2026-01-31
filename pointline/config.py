@@ -259,7 +259,7 @@ EXCHANGE_TIMEZONES = {
 }
 
 
-def get_exchange_timezone(exchange: str) -> str:
+def get_exchange_timezone(exchange: str, *, strict: bool = True) -> str:
     """
     Get timezone for exchange-local date partitioning.
 
@@ -268,19 +268,48 @@ def get_exchange_timezone(exchange: str) -> str:
 
     Args:
         exchange: Exchange name (will be normalized before lookup)
+        strict: If True, raise ValueError when exchange not in registry.
+               If False, log warning and return "UTC" default.
 
     Returns:
         IANA timezone string (e.g., "UTC", "Asia/Shanghai")
-        Defaults to "UTC" if exchange is not found in registry.
+
+    Raises:
+        ValueError: If strict=True and exchange not found in EXCHANGE_TIMEZONES
 
     Examples:
         >>> get_exchange_timezone("binance-futures")
         'UTC'
         >>> get_exchange_timezone("szse")
         'Asia/Shanghai'
+        >>> get_exchange_timezone("unknown", strict=True)
+        Traceback (most recent call last):
+        ValueError: Exchange 'unknown' not found in EXCHANGE_TIMEZONES registry...
     """
     normalized = normalize_exchange(exchange)
-    return EXCHANGE_TIMEZONES.get(normalized, "UTC")
+
+    if normalized not in EXCHANGE_TIMEZONES:
+        if strict:
+            raise ValueError(
+                f"Exchange '{exchange}' (normalized: '{normalized}') not found in "
+                f"EXCHANGE_TIMEZONES registry. This could cause incorrect date partitioning. "
+                f"Please add the exchange to EXCHANGE_TIMEZONES in pointline/config.py with "
+                f"its correct IANA timezone (e.g., 'UTC', 'Asia/Shanghai', 'America/New_York'). "
+                f"Available exchanges: {sorted(EXCHANGE_TIMEZONES.keys())}"
+            )
+        else:
+            import warnings
+            warnings.warn(
+                f"Exchange '{exchange}' (normalized: '{normalized}') not found in "
+                f"EXCHANGE_TIMEZONES registry. Falling back to UTC default. "
+                f"This may cause incorrect date partitioning for regional exchanges. "
+                f"Add to EXCHANGE_TIMEZONES to fix.",
+                UserWarning,
+                stacklevel=2
+            )
+            return "UTC"
+
+    return EXCHANGE_TIMEZONES[normalized]
 
 
 # Asset Type Registry
