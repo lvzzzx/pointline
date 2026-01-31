@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import argparse
+import logging
+import time
 from pathlib import Path
 
 import polars as pl
@@ -39,9 +41,14 @@ from pointline.tables.trades import (
 from pointline.tables.trades import (
     resolve_symbol_ids as resolve_trades_symbol_ids,
 )
+from pointline.tables.validation_log import create_validation_record
+
+logger = logging.getLogger(__name__)
 
 
 def cmd_validate_quotes(args: argparse.Namespace) -> int:
+    start_time_ms = int(time.time() * 1000)
+
     path = Path(args.file)
     if not path.exists():
         raise ValueError(f"File not found: {path}")
@@ -112,12 +119,57 @@ def cmd_validate_quotes(args: argparse.Namespace) -> int:
         limit=None if args.show_all else args.limit,
     )
 
+    # Calculate validation duration
+    end_time_ms = int(time.time() * 1000)
+    validation_duration_ms = end_time_ms - start_time_ms
+
+    # Determine validation status
+    validation_status = (
+        "passed" if (missing_count == 0 and extra_count == 0 and mismatch_count == 0) else "failed"
+    )
+
+    # Create validation record
+    validation_record = create_validation_record(
+        file_id=file_id,
+        table_name="quotes",
+        validation_status=validation_status,
+        expected_rows=expected_count,
+        ingested_rows=ingested_count,
+        missing_rows=missing_count,
+        extra_rows=extra_count,
+        mismatched_rows=mismatch_count,
+        mismatch_sample=mismatch_sample if mismatch_count > 0 else None,
+        validation_duration_ms=validation_duration_ms,
+    )
+
+    # Persist validation record to validation_log table
+    validation_log_path = get_table_path("validation_log")
+
+    # Check if table exists; if not, create it with overwrite mode
+    if not Path(validation_log_path).exists():
+        validation_record.write_delta(
+            str(validation_log_path),
+            mode="overwrite",
+        )
+    else:
+        try:
+            validation_record.write_delta(
+                str(validation_log_path),
+                mode="append",
+            )
+        except Exception as e:
+            # Log and re-raise any errors during append
+            logger.error(f"Failed to append validation record to {validation_log_path}: {e}")
+            raise
+
     print("Validation summary (quotes):")
     print(f"  expected rows: {expected_count}")
     print(f"  ingested rows: {ingested_count}")
     print(f"  missing in ingested: {missing_count}")
     print(f"  extra in ingested: {extra_count}")
     print(f"  mismatched rows: {mismatch_count}")
+    print(f"  validation status: {validation_status}")
+    print(f"  validation duration: {validation_duration_ms}ms")
 
     if mismatch_count > 0:
         print("\nMismatch sample:")
@@ -127,6 +179,8 @@ def cmd_validate_quotes(args: argparse.Namespace) -> int:
 
 
 def cmd_validate_trades(args: argparse.Namespace) -> int:
+    start_time_ms = int(time.time() * 1000)
+
     path = Path(args.file)
     if not path.exists():
         raise ValueError(f"File not found: {path}")
@@ -197,12 +251,57 @@ def cmd_validate_trades(args: argparse.Namespace) -> int:
         limit=None if args.show_all else args.limit,
     )
 
+    # Calculate validation duration
+    end_time_ms = int(time.time() * 1000)
+    validation_duration_ms = end_time_ms - start_time_ms
+
+    # Determine validation status
+    validation_status = (
+        "passed" if (missing_count == 0 and extra_count == 0 and mismatch_count == 0) else "failed"
+    )
+
+    # Create validation record
+    validation_record = create_validation_record(
+        file_id=file_id,
+        table_name="trades",
+        validation_status=validation_status,
+        expected_rows=expected_count,
+        ingested_rows=ingested_count,
+        missing_rows=missing_count,
+        extra_rows=extra_count,
+        mismatched_rows=mismatch_count,
+        mismatch_sample=mismatch_sample if mismatch_count > 0 else None,
+        validation_duration_ms=validation_duration_ms,
+    )
+
+    # Persist validation record to validation_log table
+    validation_log_path = get_table_path("validation_log")
+
+    # Check if table exists; if not, create it with overwrite mode
+    if not Path(validation_log_path).exists():
+        validation_record.write_delta(
+            str(validation_log_path),
+            mode="overwrite",
+        )
+    else:
+        try:
+            validation_record.write_delta(
+                str(validation_log_path),
+                mode="append",
+            )
+        except Exception as e:
+            # Log and re-raise any errors during append
+            logger.error(f"Failed to append validation record to {validation_log_path}: {e}")
+            raise
+
     print("Validation summary (trades):")
     print(f"  expected rows: {expected_count}")
     print(f"  ingested rows: {ingested_count}")
     print(f"  missing in ingested: {missing_count}")
     print(f"  extra in ingested: {extra_count}")
     print(f"  mismatched rows: {mismatch_count}")
+    print(f"  validation status: {validation_status}")
+    print(f"  validation duration: {validation_duration_ms}ms")
 
     if mismatch_count > 0:
         print("\nMismatch sample:")
