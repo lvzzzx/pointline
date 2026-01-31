@@ -160,6 +160,43 @@ Tracks ingestion status per Bronze file. Enables idempotent re-runs, provides au
 
 ---
 
+### 1.4 `silver.stock_basic_cn`
+
+China-only reference metadata sourced from Tushare `stock_basic`. This table is a **full snapshot**
+and is overwritten on each sync (API is source of truth).
+
+**Storage:** Single unpartitioned Delta table (small size).
+
+| Column | Type | Description |
+|---|---|---|
+| **ts_code** | string | Tushare code (e.g., `000001.SZ`) |
+| **symbol** | string | Exchange symbol without suffix (e.g., `000001`) |
+| **name** | string | Security name |
+| **area** | string | Region/area (nullable) |
+| **industry** | string | Industry category (nullable) |
+| **fullname** | string | Full name (nullable) |
+| **enname** | string | English name (nullable) |
+| **cnspell** | string | Chinese spelling (nullable) |
+| **market** | string | Market segment (nullable) |
+| **exchange** | string | Normalized exchange (`szse`/`sse`) |
+| **curr_type** | string | Currency type (nullable) |
+| **list_status** | string | Listing status (`L`, `D`, `P`) |
+| **list_date** | date | Listing date (nullable) |
+| **delist_date** | date | Delisting date (nullable) |
+| **is_hs** | string | HS/HK connect flag (nullable) |
+| **act_name** | string | Actual controller name (nullable) |
+| **act_ent_type** | string | Actual controller type (nullable) |
+| **exchange_id** | i16 | Internal exchange ID (for joins with `dim_symbol`) |
+| **exchange_symbol** | string | Canonical exchange symbol (matches `dim_symbol.exchange_symbol`) |
+| **as_of_date** | date | Snapshot date (UTC) |
+| **ingest_ts_us** | i64 | Ingest timestamp in microseconds (UTC) |
+
+**Notes:**
+- `exchange_id` and `exchange_symbol` provide direct joins to `silver.dim_symbol`.
+- This table is **not** SCD2; historical changes should be derived from snapshots if needed.
+
+---
+
 ## 2. Silver Tables
 
 Silver tables are the canonical research foundation. They are normalized, typed Parquet files with fixed-point integer encoding for prices and quantities.

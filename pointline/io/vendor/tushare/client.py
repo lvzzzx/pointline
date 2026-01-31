@@ -56,8 +56,9 @@ class TushareClient:
 
         Returns:
             Polars DataFrame with columns:
-                ts_code, symbol, name, area, industry, fullname, enname,
-                market, exchange, list_status, list_date, delist_date, is_hs
+                ts_code, symbol, name, area, industry, fullname, enname, cnspell,
+                market, exchange, curr_type, list_status, list_date, delist_date, is_hs,
+                act_name, act_ent_type
 
         Example:
             >>> client = TushareClient()
@@ -67,8 +68,8 @@ class TushareClient:
         df_pandas = self.pro.stock_basic(
             exchange=exchange or "",
             list_status=list_status or "",
-            fields="ts_code,symbol,name,area,industry,fullname,enname,"
-            "market,exchange,list_status,list_date,delist_date,is_hs",
+            fields="ts_code,symbol,name,area,industry,fullname,enname,cnspell,market,exchange,"
+            "curr_type,list_status,list_date,delist_date,is_hs,act_name,act_ent_type",
         )
 
         # Convert to Polars

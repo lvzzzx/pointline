@@ -11,12 +11,17 @@ from pointline.cli.commands.dim_asset_stats import (
     cmd_dim_asset_stats_backfill,
     cmd_dim_asset_stats_sync,
 )
-from pointline.cli.commands.dim_symbol import cmd_dim_symbol_sync, cmd_dim_symbol_sync_tushare
+from pointline.cli.commands.dim_symbol import (
+    cmd_dim_symbol_sync,
+    cmd_dim_symbol_sync_from_stock_basic_cn,
+    cmd_dim_symbol_sync_tushare,
+)
 from pointline.cli.commands.download import cmd_download
 from pointline.cli.commands.dq import cmd_dq_report, cmd_dq_run, cmd_dq_summary, dq_table_choices
 from pointline.cli.commands.ingest import cmd_ingest_discover, cmd_ingest_run
 from pointline.cli.commands.manifest import cmd_manifest_backfill_sha256, cmd_manifest_show
 from pointline.cli.commands.symbol import cmd_symbol_search
+from pointline.cli.commands.stock_basic_cn import cmd_stock_basic_cn_sync
 from pointline.cli.commands.validate import cmd_validate_quotes, cmd_validate_trades
 from pointline.cli.commands.validation import cmd_validation_show, cmd_validation_stats
 from pointline.config import TABLE_PATHS, get_bronze_root, get_table_path
@@ -110,6 +115,27 @@ def build_parser() -> argparse.ArgumentParser:
         help="Path to the dim_symbol Delta table",
     )
     symbol_sync_tushare.set_defaults(func=cmd_dim_symbol_sync_tushare)
+
+    symbol_sync_stock_basic = symbol_sub.add_parser(
+        "sync-from-stock-basic-cn",
+        help="Sync dim_symbol from silver.stock_basic_cn snapshot",
+    )
+    symbol_sync_stock_basic.add_argument(
+        "--stock-basic-path",
+        default=str(get_table_path("stock_basic_cn")),
+        help="Path to the stock_basic_cn Delta table",
+    )
+    symbol_sync_stock_basic.add_argument(
+        "--table-path",
+        default=str(get_table_path("dim_symbol")),
+        help="Path to the dim_symbol Delta table",
+    )
+    symbol_sync_stock_basic.add_argument(
+        "--rebuild",
+        action="store_true",
+        help="Perform a full history rebuild for the symbols in the source",
+    )
+    symbol_sync_stock_basic.set_defaults(func=cmd_dim_symbol_sync_from_stock_basic_cn)
 
     # --- Bronze ---
     bronze = subparsers.add_parser("bronze", help="Bronze layer utilities")
@@ -440,6 +466,38 @@ def build_parser() -> argparse.ArgumentParser:
         help="Data source provider (default: coingecko)",
     )
     silver_dim_asset_stats_backfill.set_defaults(func=cmd_dim_asset_stats_backfill)
+
+    silver_stock_basic_cn = silver_sub.add_parser(
+        "stock-basic-cn", help="China stock_basic reference table utilities"
+    )
+    silver_stock_basic_cn_sub = silver_stock_basic_cn.add_subparsers(
+        dest="silver_stock_basic_cn_command"
+    )
+    silver_stock_basic_cn_sync = silver_stock_basic_cn_sub.add_parser(
+        "sync", help="Sync stock_basic_cn from Tushare API"
+    )
+    silver_stock_basic_cn_sync.add_argument(
+        "--exchange",
+        choices=["szse", "sse", "all"],
+        default="all",
+        help="Exchange to sync (default: all)",
+    )
+    silver_stock_basic_cn_sync.add_argument(
+        "--include-delisted",
+        action="store_true",
+        help="Include delisted stocks",
+    )
+    silver_stock_basic_cn_sync.add_argument(
+        "--token",
+        default=os.getenv("TUSHARE_TOKEN", ""),
+        help="Tushare API token (or set TUSHARE_TOKEN env var)",
+    )
+    silver_stock_basic_cn_sync.add_argument(
+        "--table-path",
+        default=str(get_table_path("stock_basic_cn")),
+        help="Path to the stock_basic_cn Delta table",
+    )
+    silver_stock_basic_cn_sync.set_defaults(func=cmd_stock_basic_cn_sync)
 
     # --- Manifest ---
     manifest = subparsers.add_parser("manifest", help="Ingestion manifest utilities")
