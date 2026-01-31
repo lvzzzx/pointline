@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from abc import ABC, abstractmethod
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 
 import polars as pl
 
@@ -45,7 +45,7 @@ class CoinGeckoAssetStatsProvider(AssetStatsProvider):
             return pl.DataFrame()
 
         stats_data = []
-        fetched_at_ts = int(datetime.now().timestamp() * 1_000_000)
+        fetched_at_ts = int(datetime.now(timezone.utc).timestamp() * 1_000_000)
 
         for base_asset in base_assets:
             coin_id = get_coingecko_coin_id(base_asset)
@@ -93,17 +93,23 @@ class CoinGeckoAssetStatsProvider(AssetStatsProvider):
             logger.warning(f"No base_assets to sync for date range {start_date} to {end_date}")
             return pl.DataFrame()
 
-        days_ago = (datetime.now().date() - start_date).days + 30
+        days_ago = (datetime.now(timezone.utc).date() - start_date).days + 30
         days_param = "max" if days_ago > 365 else str(days_ago)
 
-        start_ts_ms = int(datetime.combine(start_date, datetime.min.time()).timestamp() * 1000)
+        start_ts_ms = int(
+            datetime.combine(start_date, datetime.min.time(), tzinfo=timezone.utc).timestamp()
+            * 1000
+        )
         end_ts_ms = int(
-            (datetime.combine(end_date, datetime.max.time()) + timedelta(days=1)).timestamp()
+            (
+                datetime.combine(end_date, datetime.max.time(), tzinfo=timezone.utc)
+                + timedelta(days=1)
+            ).timestamp()
             * 1000
         )
 
         stats_data = []
-        fetched_at_ts = int(datetime.now().timestamp() * 1_000_000)
+        fetched_at_ts = int(datetime.now(timezone.utc).timestamp() * 1_000_000)
 
         for base_asset in base_assets:
             coin_id = get_coingecko_coin_id(base_asset)
@@ -120,7 +126,7 @@ class CoinGeckoAssetStatsProvider(AssetStatsProvider):
                 daily_supplies: dict[date, float] = {}
                 for timestamp_ms, supply_value in chart_data:
                     if start_ts_ms <= timestamp_ms < end_ts_ms:
-                        dt = datetime.fromtimestamp(timestamp_ms / 1000)
+                        dt = datetime.fromtimestamp(timestamp_ms / 1000, timezone.utc)
                         day = dt.date()
                         if day not in daily_supplies:
                             daily_supplies[day] = supply_value
@@ -134,7 +140,9 @@ class CoinGeckoAssetStatsProvider(AssetStatsProvider):
                 for day, supply in daily_supplies.items():
                     if start_date <= day <= end_date:
                         updated_at_ts = int(
-                            datetime.combine(day, datetime.min.time()).timestamp() * 1_000_000
+                            datetime.combine(day, datetime.min.time(), tzinfo=timezone.utc)
+                            .timestamp()
+                            * 1_000_000
                         )
 
                         stats_data.append(
@@ -207,7 +215,7 @@ class CoinMarketCapAssetStatsProvider(AssetStatsProvider):
         )
 
 
-def _to_float_or_none(val) -> float | None:
+def _to_float_or_none(val: float | None) -> float | None:
     if val is None:
         return None
     return float(val)
