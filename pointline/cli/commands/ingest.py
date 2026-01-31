@@ -10,14 +10,27 @@ import polars as pl
 
 from pointline.cli.ingestion_factory import create_ingestion_service
 from pointline.cli.utils import print_files, sorted_files
+from pointline.config import BRONZE_ROOT
 from pointline.io.delta_manifest_repo import DeltaManifestRepository
 from pointline.io.local_source import LocalBronzeSource
 from pointline.io.protocols import IngestionResult
 
 
 def cmd_ingest_discover(args: argparse.Namespace) -> int:
-    bronze_root = Path(args.bronze_root)
-    source = LocalBronzeSource(bronze_root)
+    # Resolve bronze_root: vendor parameter takes precedence
+    if hasattr(args, "vendor") and args.vendor:
+        bronze_root = BRONZE_ROOT / args.vendor
+    else:
+        bronze_root = Path(args.bronze_root)
+
+    enable_prehooks = not getattr(args, "no_prehook", False)
+
+    # Discovery doesn't need checksums - skip for performance
+    source = LocalBronzeSource(
+        bronze_root,
+        enable_prehooks=enable_prehooks,
+        compute_checksums=False,  # Fast discovery without SHA256
+    )
     files = list(source.list_files(args.glob))
 
     if args.data_type:
@@ -30,14 +43,32 @@ def cmd_ingest_discover(args: argparse.Namespace) -> int:
     files = sorted_files(files)
     label = "pending files" if args.pending_only else "files"
     print(f"{label}: {len(files)}")
-    print_files(files)
+
+    # Determine display limit
+    limit = getattr(args, "limit", 100)
+    if limit == 0:
+        limit = None  # Show all files
+
+    print_files(files, limit=limit)
     return 0
 
 
 def cmd_ingest_run(args: argparse.Namespace) -> int:
     """Run ingestion for pending bronze files."""
-    bronze_root = Path(args.bronze_root)
-    source = LocalBronzeSource(bronze_root)
+    # Resolve bronze_root: vendor parameter takes precedence
+    if hasattr(args, "vendor") and args.vendor:
+        bronze_root = BRONZE_ROOT / args.vendor
+    else:
+        bronze_root = Path(args.bronze_root)
+
+    enable_prehooks = not getattr(args, "no_prehook", False)
+
+    # Ingestion needs checksums for manifest tracking
+    source = LocalBronzeSource(
+        bronze_root,
+        enable_prehooks=enable_prehooks,
+        compute_checksums=True,  # Need SHA256 for manifest
+    )
     manifest_repo = DeltaManifestRepository(Path(args.manifest_path))
 
     files = list(source.list_files(args.glob))

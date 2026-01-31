@@ -32,8 +32,19 @@ def sorted_files(files: Iterable[BronzeFileMetadata]) -> list[BronzeFileMetadata
     )
 
 
-def print_files(files: Sequence[BronzeFileMetadata]) -> None:
-    for f in files:
+def print_files(files: Sequence[BronzeFileMetadata], *, limit: int | None = 100) -> None:
+    """
+    Print bronze file metadata.
+
+    Args:
+        files: Sequence of file metadata
+        limit: Maximum number of files to print. If None, prints all files.
+              Default is 100 to avoid flooding the terminal.
+    """
+    total = len(files)
+    files_to_print = files if limit is None else files[:limit]
+
+    for f in files_to_print:
         print(
             " | ".join(
                 [
@@ -46,6 +57,10 @@ def print_files(files: Sequence[BronzeFileMetadata]) -> None:
                 ]
             )
         )
+
+    if limit is not None and total > limit:
+        print(f"... and {total - limit} more files (showing first {limit})")
+        print(f"Tip: Use --limit to adjust output, or --limit 0 to show all files")
 
 
 def compute_sha256(path: Path, chunk_size: int = 1024 * 1024) -> str:
