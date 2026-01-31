@@ -25,11 +25,14 @@ def cmd_ingest_discover(args: argparse.Namespace) -> int:
 
     enable_prehooks = not getattr(args, "no_prehook", False)
 
-    # Discovery doesn't need checksums - skip for performance
+    # When using --pending-only, we need checksums to match against the manifest
+    # Otherwise, skip checksums for faster discovery
+    compute_checksums = args.pending_only
+
     source = LocalBronzeSource(
         bronze_root,
         enable_prehooks=enable_prehooks,
-        compute_checksums=False,  # Fast discovery without SHA256
+        compute_checksums=compute_checksums,
     )
     files = list(source.list_files(args.glob))
 
@@ -37,7 +40,8 @@ def cmd_ingest_discover(args: argparse.Namespace) -> int:
         files = [f for f in files if f.data_type == args.data_type]
 
     if args.pending_only:
-        manifest_repo = DeltaManifestRepository(get_table_path("ingest_manifest"))
+        manifest_path = Path(args.manifest_path)
+        manifest_repo = DeltaManifestRepository(manifest_path)
         files = manifest_repo.filter_pending(files)
 
     files = sorted_files(files)

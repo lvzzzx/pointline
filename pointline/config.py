@@ -226,6 +226,63 @@ def get_exchange_name(exchange_id: int) -> str:
     )
 
 
+# Exchange Timezone Registry
+# Maps exchange names to their timezone for exchange-local date partitioning
+# Rationale: Partition date represents the trading day in exchange-local time,
+# ensuring "one trading day = one partition" for efficient queries
+EXCHANGE_TIMEZONES = {
+    # Crypto (24/7, use UTC as default)
+    "binance": "UTC",
+    "binance-futures": "UTC",
+    "binance-coin-futures": "UTC",
+    "binance-us": "UTC",
+    "coinbase": "UTC",
+    "coinbase-pro": "UTC",
+    "kraken": "UTC",
+    "okx": "UTC",
+    "okx-futures": "UTC",
+    "huobi": "UTC",
+    "gate": "UTC",
+    "bitfinex": "UTC",
+    "bitstamp": "UTC",
+    "gemini": "UTC",
+    "crypto-com": "UTC",
+    "kucoin": "UTC",
+    "deribit": "UTC",
+    "bybit": "UTC",
+    "bitmex": "UTC",
+    "ftx": "UTC",
+    "dydx": "UTC",
+    # Chinese Stock Exchanges (China Standard Time, UTC+8, no DST)
+    "szse": "Asia/Shanghai",  # Shenzhen Stock Exchange
+    "sse": "Asia/Shanghai",  # Shanghai Stock Exchange
+}
+
+
+def get_exchange_timezone(exchange: str) -> str:
+    """
+    Get timezone for exchange-local date partitioning.
+
+    This timezone is used to derive the partition date from ts_local_us,
+    ensuring that one trading day maps to one partition.
+
+    Args:
+        exchange: Exchange name (will be normalized before lookup)
+
+    Returns:
+        IANA timezone string (e.g., "UTC", "Asia/Shanghai")
+        Defaults to "UTC" if exchange is not found in registry.
+
+    Examples:
+        >>> get_exchange_timezone("binance-futures")
+        'UTC'
+        >>> get_exchange_timezone("szse")
+        'Asia/Shanghai'
+    """
+    normalized = normalize_exchange(exchange)
+    return EXCHANGE_TIMEZONES.get(normalized, "UTC")
+
+
 # Asset Type Registry
 # Maps Tardis instrument type strings to internal asset_type (u8)
 # Supports aliases for common variations

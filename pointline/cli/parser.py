@@ -207,6 +207,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Vendor name (used to construct bronze-root as LAKE_ROOT/bronze/{vendor})",
     )
     bronze_discover.add_argument(
+        "--manifest-path",
+        default=str(get_table_path("ingest_manifest")),
+        help="Path to ingest_manifest (default: LAKE_ROOT/silver/ingest_manifest)",
+    )
+    bronze_discover.add_argument(
         "--glob",
         default="**/*.csv.gz",
         help="Glob pattern for bronze files",

@@ -105,6 +105,7 @@ ruff format .
 **`config.py`** - Global configuration registry
 - `LAKE_ROOT`, `BRONZE_ROOT`, `TABLE_PATHS`
 - Exchange registry: `EXCHANGE_MAP` (exchange name → exchange_id)
+- Exchange timezone registry: `EXCHANGE_TIMEZONES` (exchange → IANA timezone)
 - Type registry: `TYPE_MAP` (instrument type → asset_type)
 
 **`research.py`** - Primary researcher API
@@ -147,6 +148,37 @@ ruff format .
 3. **Immutability:** Bronze never modified; Silver is append-only for events
 4. **Lineage:** Every silver row traces back to bronze file via `file_id` + `file_line_number`
 5. **Symbol Resolution:** Always resolve symbol_id upfront via `dim_symbol`
+6. **Fixed-Point Integers:** Keep integers until final decode to avoid floating-point errors
+7. **Partition Pruning:** Require symbol_id + time range to leverage Delta Lake statistics
+8. **Idempotent ETL:** Same inputs + metadata → same outputs
+
+## Timezone Handling
+
+**Timestamp Storage:**
+- All timestamps stored in UTC (`ts_local_us`, `ts_exch_us`)
+- Microsecond precision (Int64)
+
+**Partition Date Semantics:** Exchange-local trading date
+- **Crypto (24/7):** `date` = UTC date from `ts_local_us`
+  - Example: binance-futures, coinbase, okx
+- **SZSE/SSE:** `date` = CST (Asia/Shanghai) date from `ts_local_us`
+  - Example: 2024-09-30 00:30 CST → date=2024-09-30 (not 2024-09-29)
+- **Future US exchanges:** `date` = ET (America/New_York) date
+
+**Rationale:**
+- Ensures one trading day = one partition for efficient queries
+- Researchers query by trading day, not UTC day
+- Aligns with bronze layer structure (bronze already uses exchange-local dates)
+
+**Cross-Exchange Queries:**
+- Use `ts_local_us` for precise timestamp filtering across exchanges
+- Do not filter by `date` across exchanges with different timezones
+- Each exchange partition has its own timezone semantics
+
+**Configuration:**
+- Timezone registry: `pointline.config.EXCHANGE_TIMEZONES`
+- Lookup function: `get_exchange_timezone(exchange)` → IANA timezone string
+- Default: "UTC" for unlisted exchanges
 6. **Fixed-Point Integers:** Keep integers until final decode to avoid floating-point errors
 7. **Partition Pruning:** Require symbol_id + time range to leverage Delta Lake statistics
 8. **Idempotent ETL:** Same inputs + metadata → same outputs

@@ -167,7 +167,10 @@ Silver tables are the canonical research foundation. They are normalized, typed 
 **Common Partitioning:** All Silver tables (except reference tables) are partitioned by `["exchange", "date"]`.
 
 **Common Columns:** Most Silver tables include:
-- `date` (date): Partition key, derived from `ts_local_us` in UTC
+- `date` (date): Partition key, derived from `ts_local_us` in **exchange-local timezone**:
+  - Crypto exchanges (binance-futures, etc.): UTC date
+  - Regional exchanges (szse, sse): Local timezone date (Asia/Shanghai for China)
+  - **Critical:** This ensures one trading day maps to exactly one partition
 - `exchange` (string): Partition key (not stored in Parquet, reconstructed from directory)
 - `exchange_id` (i16): For joins and compression
 - `symbol_id` (i64): Stable identifier from `dim_symbol`

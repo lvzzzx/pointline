@@ -9,7 +9,7 @@ from pathlib import Path
 
 import polars as pl
 
-from pointline.config import get_bronze_root, get_exchange_id, normalize_exchange
+from pointline.config import get_bronze_root, get_exchange_id, get_exchange_timezone, normalize_exchange
 from pointline.dim_symbol import check_coverage
 from pointline.io.protocols import (
     BronzeFileMetadata,
@@ -304,7 +304,12 @@ class SzseL3TicksIngestionService(BaseService):
         )
 
     def _add_metadata(self, df: pl.DataFrame, exchange: str, exchange_id: int) -> pl.DataFrame:
-        """Add exchange, exchange_id and date columns."""
+        """
+        Add exchange, exchange_id, and exchange-local date columns.
+
+        The date column is derived from ts_local_us in the exchange's local timezone,
+        ensuring that one trading day maps to exactly one partition.
+        """
         # Add exchange (string) for partitioning and human readability
         # Add exchange_id (Int16) for joins and compression
         result = df.with_columns(
@@ -314,10 +319,15 @@ class SzseL3TicksIngestionService(BaseService):
             ]
         )
 
-        # Derive date from ts_local_us (microseconds since epoch) in UTC
+        # Derive date from ts_local_us in exchange-local timezone
+        exchange_tz = get_exchange_timezone(exchange)
         result = result.with_columns(
             [
-                pl.from_epoch(pl.col("ts_local_us"), time_unit="us").cast(pl.Date).alias("date"),
+                pl.from_epoch(pl.col("ts_local_us"), time_unit="us")
+                .dt.replace_time_zone("UTC")
+                .dt.convert_time_zone(exchange_tz)
+                .dt.date()
+                .alias("date"),
             ]
         )
 
