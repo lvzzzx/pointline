@@ -309,6 +309,8 @@ def get_table_path(table_name: str) -> Path:
     """
     Resolves the absolute path for a given table name.
 
+    Supports dynamic kline tables: kline_1h, kline_4h, kline_1d, etc.
+
     Args:
         table_name: The name of the table to resolve.
 
@@ -316,9 +318,18 @@ def get_table_path(table_name: str) -> Path:
         Path: The absolute path to the table.
 
     Raises:
-        KeyError: If the table name is not registered in TABLE_PATHS.
+        KeyError: If the table name is not registered and doesn't match a known pattern.
     """
-    if table_name not in TABLE_PATHS:
-        raise KeyError(f"Table '{table_name}' not found in TABLE_PATHS registry.")
+    # Check exact match first
+    if table_name in TABLE_PATHS:
+        return LAKE_ROOT / TABLE_PATHS[table_name]
 
-    return LAKE_ROOT / TABLE_PATHS[table_name]
+    # Handle dynamic kline tables: kline_{interval}
+    if table_name.startswith("kline_"):
+        interval = table_name[6:]  # Extract interval part after "kline_"
+        return LAKE_ROOT / f"silver/{table_name}"
+
+    raise KeyError(
+        f"Table '{table_name}' not found in TABLE_PATHS registry "
+        f"and doesn't match known patterns (e.g., kline_*)."
+    )

@@ -77,6 +77,7 @@ class LocalBronzeSource:
                 file_size_bytes=stat.st_size,
                 last_modified_ts=int(stat.st_mtime * 1_000_000),  # microseconds
                 sha256=sha256,
+                interval=meta.get("interval"),  # Extract interval (for klines: "1h", "4h", etc.)
             )
 
     def _extract_metadata(self, path: Path) -> dict:

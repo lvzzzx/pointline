@@ -71,17 +71,23 @@ def cmd_ingest_run(args: argparse.Namespace) -> int:
     failed_count = 0
     quarantined_count = 0
 
-    files_by_type: dict[str, list] = {}
+    # Group files by (data_type, interval) for klines, or just data_type for others
+    files_by_key: dict[tuple, list] = {}
     for file_meta in files:
-        files_by_type.setdefault(file_meta.data_type, []).append(file_meta)
+        if file_meta.data_type == "klines" and file_meta.interval:
+            key = ("klines", file_meta.interval)
+        else:
+            key = (file_meta.data_type, None)
+        files_by_key.setdefault(key, []).append(file_meta)
 
-    for data_type, type_files in files_by_type.items():
+    for (data_type, interval), type_files in files_by_key.items():
         try:
-            service = create_ingestion_service(data_type, manifest_repo)
+            service = create_ingestion_service(data_type, manifest_repo, interval=interval)
         except ValueError as exc:
             print(f"Error: {exc}")
             for file_meta in type_files:
-                print(f"✗ {file_meta.bronze_file_path}: Unsupported data type")
+                desc = f"{data_type}:{interval}" if interval else data_type
+                print(f"✗ {file_meta.bronze_file_path}: Unsupported type {desc}")
                 failed_count += 1
             continue
 
