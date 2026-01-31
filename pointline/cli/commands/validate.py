@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import logging
 import time
 from pathlib import Path
 
@@ -41,6 +42,8 @@ from pointline.tables.trades import (
     resolve_symbol_ids as resolve_trades_symbol_ids,
 )
 from pointline.tables.validation_log import create_validation_record
+
+logger = logging.getLogger(__name__)
 
 
 def cmd_validate_quotes(args: argparse.Namespace) -> int:
@@ -141,17 +144,23 @@ def cmd_validate_quotes(args: argparse.Namespace) -> int:
 
     # Persist validation record to validation_log table
     validation_log_path = get_table_path("validation_log")
-    try:
-        validation_record.write_delta(
-            str(validation_log_path),
-            mode="append",
-        )
-    except Exception:
-        # If table doesn't exist, create it
+
+    # Check if table exists; if not, create it with overwrite mode
+    if not Path(validation_log_path).exists():
         validation_record.write_delta(
             str(validation_log_path),
             mode="overwrite",
         )
+    else:
+        try:
+            validation_record.write_delta(
+                str(validation_log_path),
+                mode="append",
+            )
+        except Exception as e:
+            # Log and re-raise any errors during append
+            logger.error(f"Failed to append validation record to {validation_log_path}: {e}")
+            raise
 
     print("Validation summary (quotes):")
     print(f"  expected rows: {expected_count}")
@@ -267,17 +276,23 @@ def cmd_validate_trades(args: argparse.Namespace) -> int:
 
     # Persist validation record to validation_log table
     validation_log_path = get_table_path("validation_log")
-    try:
-        validation_record.write_delta(
-            str(validation_log_path),
-            mode="append",
-        )
-    except Exception:
-        # If table doesn't exist, create it
+
+    # Check if table exists; if not, create it with overwrite mode
+    if not Path(validation_log_path).exists():
         validation_record.write_delta(
             str(validation_log_path),
             mode="overwrite",
         )
+    else:
+        try:
+            validation_record.write_delta(
+                str(validation_log_path),
+                mode="append",
+            )
+        except Exception as e:
+            # Log and re-raise any errors during append
+            logger.error(f"Failed to append validation record to {validation_log_path}: {e}")
+            raise
 
     print("Validation summary (trades):")
     print(f"  expected rows: {expected_count}")
