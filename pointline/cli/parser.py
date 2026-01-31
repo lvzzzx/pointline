@@ -13,6 +13,7 @@ from pointline.cli.commands.dim_asset_stats import (
 )
 from pointline.cli.commands.dim_symbol import cmd_dim_symbol_sync, cmd_dim_symbol_sync_tushare
 from pointline.cli.commands.download import cmd_download
+from pointline.cli.commands.dq import cmd_dq_report, cmd_dq_run, cmd_dq_summary, dq_table_choices
 from pointline.cli.commands.ingest import cmd_ingest_discover, cmd_ingest_run
 from pointline.cli.commands.manifest import cmd_manifest_backfill_sha256, cmd_manifest_show
 from pointline.cli.commands.symbol import cmd_symbol_search
@@ -490,6 +491,115 @@ def build_parser() -> argparse.ArgumentParser:
         help="Path to the validation log table",
     )
     validation_stats.set_defaults(func=cmd_validation_stats)
+
+    # --- Data Quality ---
+    dq = subparsers.add_parser("dq", help="Data quality summaries")
+    dq_sub = dq.add_subparsers(dest="dq_command")
+
+    dq_run = dq_sub.add_parser("run", help="Run data quality checks")
+    dq_run.add_argument(
+        "--table",
+        default="all",
+        choices=dq_table_choices(),
+        help="Table to check (default: all)",
+    )
+    dq_run.add_argument(
+        "--date",
+        default=None,
+        help="Optional partition date (YYYY-MM-DD)",
+    )
+    dq_run.add_argument(
+        "--start-date",
+        default=None,
+        help="Start date for partitioned runs (YYYY-MM-DD)",
+    )
+    dq_run.add_argument(
+        "--end-date",
+        default=None,
+        help="End date for partitioned runs (YYYY-MM-DD)",
+    )
+    dq_run.add_argument(
+        "--max-dates",
+        type=int,
+        default=None,
+        help="Max partitions to scan (newest-first) in partitioned runs",
+    )
+    dq_run.add_argument(
+        "--partitioned",
+        action="store_true",
+        help="Run partition-by-partition using ingest_manifest dates",
+    )
+    dq_run.add_argument(
+        "--progress",
+        action="store_true",
+        help="Print progress per partition",
+    )
+    dq_run.add_argument(
+        "--no-rollup",
+        action="store_true",
+        help="Skip aggregate rollup row for partitioned runs",
+    )
+    dq_run.add_argument(
+        "--dq-summary-path",
+        default=str(get_table_path("dq_summary")),
+        help="Path to dq_summary table (default: LAKE_ROOT/silver/dq_summary)",
+    )
+    dq_run.add_argument(
+        "--no-write",
+        action="store_true",
+        help="Skip persisting results to dq_summary",
+    )
+    dq_run.set_defaults(func=cmd_dq_run)
+
+    dq_report = dq_sub.add_parser("report", help="Show data quality summaries")
+    dq_report.add_argument(
+        "--table",
+        required=True,
+        choices=dq_table_choices()[1:],
+        help="Table to report",
+    )
+    dq_report.add_argument(
+        "--date",
+        default=None,
+        help="Optional partition date (YYYY-MM-DD)",
+    )
+    dq_report.add_argument(
+        "--latest",
+        action="store_true",
+        help="Show only the latest record (default)",
+    )
+    dq_report.add_argument(
+        "--limit",
+        type=int,
+        default=10,
+        help="Limit records when not using --latest (default: 10)",
+    )
+    dq_report.add_argument(
+        "--dq-summary-path",
+        default=str(get_table_path("dq_summary")),
+        help="Path to dq_summary table (default: LAKE_ROOT/silver/dq_summary)",
+    )
+    dq_report.set_defaults(func=cmd_dq_report)
+
+    dq_summary = dq_sub.add_parser("summary", help="Show human-friendly DQ summary")
+    dq_summary.add_argument(
+        "--table",
+        required=True,
+        choices=dq_table_choices()[1:],
+        help="Table to summarize",
+    )
+    dq_summary.add_argument(
+        "--recent",
+        type=int,
+        default=30,
+        help="Number of recent partitions to summarize (default: 30)",
+    )
+    dq_summary.add_argument(
+        "--dq-summary-path",
+        default=str(get_table_path("dq_summary")),
+        help="Path to dq_summary table (default: LAKE_ROOT/silver/dq_summary)",
+    )
+    dq_summary.set_defaults(func=cmd_dq_summary)
 
     # --- Assets ---
     assets = subparsers.add_parser("assets", help="Asset stats utilities")
