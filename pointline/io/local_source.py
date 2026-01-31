@@ -168,7 +168,12 @@ class LocalBronzeSource:
         Prehook: Reorganize quant360 .7z archives if present.
 
         Checks for .7z archives and reorganizes them into Hive partitions.
-        Skips if already reorganized (idempotent).
+        Skips archives that are already reorganized (idempotent).
+
+        Smart detection:
+        - Parses each archive filename to extract date/type
+        - Checks if corresponding partition exists with files
+        - Only reorganizes archives without matching partitions
         """
         # Check if archives exist
         archives = list(self.root_path.glob("*.7z"))
@@ -184,14 +189,50 @@ class LocalBronzeSource:
         else:
             source_dir = self.root_path
 
-        # Check if already reorganized (has Hive partitions)
-        hive_partitions = list(self.root_path.glob("exchange=*/type=*/date=*/symbol=*/*.csv.gz"))
-        if hive_partitions and not archives:
-            # Already reorganized and no new archives
+        # Check each archive to see if it needs reorganization
+        archives_needing_reorganization = []
+
+        for archive in archives:
+            # Parse archive metadata
+            metadata = self._parse_quant360_archive_metadata(archive.name)
+            if not metadata:
+                # Unknown format - skip (don't attempt reorganization)
+                logger.debug(f"Skipping {archive.name}: unknown archive format")
+                continue
+
+            # Check if partition exists for this archive's date/type
+            exchange = metadata["exchange"]
+            table_type = metadata["table_type"]  # "l3_orders" or "l3_ticks"
+            date_iso = metadata["date_iso"]
+
+            partition_pattern = f"exchange={exchange}/type={table_type}/date={date_iso}/symbol=*/*.csv.gz"
+            partition_files = list(self.root_path.glob(partition_pattern))
+
+            if not partition_files:
+                # No files for this archive's partition - needs reorganization
+                logger.debug(
+                    f"Archive {archive.name} needs reorganization: "
+                    f"no files found for {exchange}/{table_type}/{date_iso}"
+                )
+                archives_needing_reorganization.append(archive)
+            else:
+                # Partition exists - assume reorganized (script will skip existing files anyway)
+                logger.debug(
+                    f"Skipping {archive.name}: found {len(partition_files)} files "
+                    f"in {exchange}/{table_type}/{date_iso}"
+                )
+
+        if not archives_needing_reorganization:
+            # All archives already reorganized
+            logger.debug(
+                f"Skipping reorganization prehook: all {len(archives)} archive(s) "
+                f"already have corresponding partitions"
+            )
             return
 
         logger.info(
-            f"Detected {len(archives)} quant360 archive(s) - running reorganization prehook"
+            f"Detected {len(archives_needing_reorganization)}/{len(archives)} quant360 archive(s) "
+            f"needing reorganization"
         )
 
         # Find reorganization script
@@ -241,3 +282,47 @@ class LocalBronzeSource:
             if path.exists():
                 return path
         return None
+
+    def _parse_quant360_archive_metadata(self, filename: str) -> dict[str, str] | None:
+        """
+        Parse Quant360 archive filename to extract metadata.
+
+        Expected formats:
+        - order_new_STK_SZ_20240930.7z
+        - tick_new_STK_SZ_20240930.7z
+
+        Returns:
+            dict with keys: exchange, table_type, date_iso
+            None if filename doesn't match expected pattern
+        """
+        import re
+        from datetime import datetime
+
+        pattern = r"^(order|tick)_new_STK_(SZ|SH)_(\d{8})\.7z$"
+        match = re.match(pattern, filename)
+        if not match:
+            return None
+
+        data_type, exchange_code, date_str = match.groups()
+
+        # Map exchange code to our exchange names
+        exchange_map = {
+            "SZ": "szse",  # Shenzhen Stock Exchange
+            "SH": "sse",   # Shanghai Stock Exchange
+        }
+
+        # Map data_type to table type
+        type_map = {
+            "order": "l3_orders",
+            "tick": "l3_ticks",
+        }
+
+        # Format date as YYYY-MM-DD
+        date_obj = datetime.strptime(date_str, "%Y%m%d")
+        date_iso = date_obj.strftime("%Y-%m-%d")
+
+        return {
+            "exchange": exchange_map.get(exchange_code, "unknown"),
+            "table_type": type_map.get(data_type, "unknown"),
+            "date_iso": date_iso,
+        }

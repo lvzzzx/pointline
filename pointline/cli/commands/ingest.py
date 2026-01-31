@@ -10,7 +10,7 @@ import polars as pl
 
 from pointline.cli.ingestion_factory import create_ingestion_service
 from pointline.cli.utils import print_files, sorted_files
-from pointline.config import BRONZE_ROOT
+from pointline.config import BRONZE_ROOT, get_table_path
 from pointline.io.delta_manifest_repo import DeltaManifestRepository
 from pointline.io.local_source import LocalBronzeSource
 from pointline.io.protocols import IngestionResult
@@ -37,7 +37,7 @@ def cmd_ingest_discover(args: argparse.Namespace) -> int:
         files = [f for f in files if f.data_type == args.data_type]
 
     if args.pending_only:
-        manifest_repo = DeltaManifestRepository(Path(args.manifest_path))
+        manifest_repo = DeltaManifestRepository(get_table_path("ingest_manifest"))
         files = manifest_repo.filter_pending(files)
 
     files = sorted_files(files)
@@ -69,7 +69,7 @@ def cmd_ingest_run(args: argparse.Namespace) -> int:
         enable_prehooks=enable_prehooks,
         compute_checksums=True,  # Need SHA256 for manifest
     )
-    manifest_repo = DeltaManifestRepository(Path(args.manifest_path))
+    manifest_repo = DeltaManifestRepository(get_table_path("ingest_manifest"))
 
     files = list(source.list_files(args.glob))
 

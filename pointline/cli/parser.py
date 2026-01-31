@@ -212,11 +212,6 @@ def build_parser() -> argparse.ArgumentParser:
         help="Glob pattern for bronze files",
     )
     bronze_discover.add_argument(
-        "--manifest-path",
-        default=str(get_table_path("ingest_manifest")),
-        help="Path to the ingest manifest table",
-    )
-    bronze_discover.add_argument(
         "--data-type",
         help="Filter by data type (e.g., trades, quotes, book_snapshot_25)",
     )
@@ -252,11 +247,6 @@ def build_parser() -> argparse.ArgumentParser:
         "--glob",
         default="**/*.csv.gz",
         help="Glob pattern for bronze files",
-    )
-    bronze_ingest.add_argument(
-        "--manifest-path",
-        default=str(get_table_path("ingest_manifest")),
-        help="Path to the ingest manifest table",
     )
     bronze_ingest.add_argument(
         "--data-type",
