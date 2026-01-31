@@ -8,8 +8,8 @@ preserving existing behavior via compatibility shims. The goal is improved disco
 consistent flag naming, and easier extension.
 
 ## Goals
-- Align commands to data-lake layers (`bronze`, `silver`, `gold`) and domains (`symbol`, `assets`,
-  `manifest`, `delta`).
+- Align commands to data-lake layers (`bronze`, `silver`, `gold`) and domains (`symbol`, `manifest`,
+  `delta`).
 - Standardize verbs and flags across commands.
 - Remove legacy paths and aliases in the same release to keep the CLI surface clean.
 
@@ -31,15 +31,14 @@ pointline
 │
 ├─ silver
 │  ├─ validate quotes --file [--file-id] [--exchange] [--symbol] [--date]
-│  └─ validate trades --file [--file-id] [--exchange] [--symbol] [--date]
+│  ├─ validate trades --file [--file-id] [--exchange] [--symbol] [--date]
+│  └─ dim-asset-stats
+│     ├─ sync --date [--base-assets]
+│     └─ backfill --start-date --end-date [--base-assets]
 │
 ├─ manifest
 │  ├─ show [--detailed] [--status] [--exchange] [--data-type] [--symbol]
 │  └─ backfill-sha256 [--dry-run] [--limit] [--batch-size]
-│
-├─ assets
-│  ├─ sync --date [--base-assets]
-│  └─ backfill --start-date --end-date [--base-assets]
 │
 ├─ delta
 │  ├─ optimize --table --partition KEY=VALUE [--target-file-size] [--zorder]
@@ -68,8 +67,8 @@ pointline
 - `pointline manifest backfill-sha256` → `pointline manifest backfill-sha256` (unchanged)
 - `pointline dim-symbol upsert` → `pointline symbol sync --source <file>`
 - `pointline dim-symbol sync` → `pointline symbol sync`
-- `pointline dim-asset-stats sync` → `pointline assets sync`
-- `pointline dim-asset-stats backfill` → `pointline assets backfill`
+- `pointline dim-asset-stats sync` → `pointline silver dim-asset-stats sync`
+- `pointline dim-asset-stats backfill` → `pointline silver dim-asset-stats backfill`
 - `pointline delta optimize` → `pointline delta optimize` (unchanged)
 - `pointline delta vacuum` → `pointline delta vacuum` (unchanged)
 - `pointline gold l2-state-checkpoint` → `pointline gold l2-state-checkpoint` (unchanged)
@@ -87,6 +86,6 @@ pointline
 - **Help output complexity**: keep top-level help concise with grouped sections.
 
 ## Acceptance Criteria
-- All existing command paths still function.
+- Legacy command paths are removed.
 - New command paths produce identical behavior.
 - CI covers at least one new-path command per domain.
