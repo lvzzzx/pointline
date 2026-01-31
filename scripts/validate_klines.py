@@ -51,23 +51,43 @@ print(f"\n{'='*60}")
 print("COMPLETENESS CHECK (24 rows/day expected for 1h interval)")
 print(f"{'='*60}")
 
-# Check completeness per symbol
-completeness = check_kline_completeness(df, interval="1h", warn_on_gaps=False)
-incomplete = completeness.filter(~pl.col("is_complete"))
+# Load dim_symbol to get exchange_symbol
+from pathlib import Path as P
+dim_symbol_path = P.home() / "data/lake/silver/dim_symbol"
+dim_symbol_df = pl.scan_delta(str(dim_symbol_path)).select([
+    'symbol_id', 'exchange_symbol'
+]).unique().collect()
 
-total_days = completeness.height
-complete_days = completeness.filter(pl.col("is_complete")).height
-incomplete_days = incomplete.height
+# Join to get exchange_symbol
+df_with_symbol = df.join(dim_symbol_df, on='symbol_id', how='left')
 
-print(f"Total symbol-days: {total_days}")
-print(f"Complete days: {complete_days} ({complete_days/total_days*100:.1f}%)")
-print(f"Incomplete days: {incomplete_days} ({incomplete_days/total_days*100:.1f}%)")
+# Check completeness by symbol_id (shows SCD Type 2 transitions)
+completeness_by_id = check_kline_completeness(df, interval="1h", warn_on_gaps=False)
+incomplete_by_id = completeness_by_id.filter(~pl.col("is_complete"))
 
-if incomplete_days > 0:
-    print(f"\nSample incomplete days (showing first 10):")
-    print(incomplete.head(10))
+print("\n1️⃣  BY SYMBOL_ID (shows metadata transitions):")
+print(f"   Total symbol-days: {completeness_by_id.height}")
+print(f"   Complete days: {completeness_by_id.filter(pl.col('is_complete')).height}")
+print(f"   Incomplete days: {incomplete_by_id.height} ({incomplete_by_id.height/completeness_by_id.height*100:.2f}%)")
+
+# Check completeness by exchange_symbol (combines symbol_id versions)
+completeness_by_symbol = check_kline_completeness(
+    df_with_symbol, interval="1h", warn_on_gaps=False, by_exchange_symbol=True
+)
+incomplete_by_symbol = completeness_by_symbol.filter(~pl.col("is_complete"))
+
+print("\n2️⃣  BY EXCHANGE_SYMBOL (combines symbol versions) ⭐ RECOMMENDED:")
+print(f"   Total symbol-days: {completeness_by_symbol.height}")
+print(f"   Complete days: {completeness_by_symbol.filter(pl.col('is_complete')).height}")
+print(f"   Incomplete days: {incomplete_by_symbol.height} ({incomplete_by_symbol.height/completeness_by_symbol.height*100:.2f}%)")
+
+if incomplete_by_id.height > 0 and incomplete_by_symbol.height == 0:
+    print("\n   ✅ 100% complete! The symbol_id gaps were just metadata transitions.")
+elif incomplete_by_symbol.height > 0:
+    print(f"\n   ⚠️  {incomplete_by_symbol.height} genuine gaps remain:")
+    print(incomplete_by_symbol.head(10))
 else:
-    print("\n✓ All days have complete data!")
+    print("\n   ✅ Perfect! All days complete!")
 
 print(f"\n{'='*60}")
 print("FIXED-POINT ENCODING VALIDATION")

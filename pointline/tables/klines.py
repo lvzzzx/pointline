@@ -454,8 +454,9 @@ def check_kline_completeness(
     interval: str = "1h",
     *,
     warn_on_gaps: bool = True,
+    by_exchange_symbol: bool = False,
 ) -> pl.DataFrame:
-    """Check kline completeness per (date, symbol_id).
+    """Check kline completeness per (date, symbol_id) or (date, exchange_symbol).
 
     Validates that each symbol has the expected number of klines per day.
     For example, 1h klines should have exactly 24 rows per day per symbol.
@@ -464,28 +465,45 @@ def check_kline_completeness(
         df: Kline DataFrame with 'date' and 'symbol_id' columns
         interval: Kline interval (e.g., '1h', '4h', '1d')
         warn_on_gaps: If True, log warnings for incomplete days
+        by_exchange_symbol: If True, group by exchange_symbol instead of symbol_id
+                           (recommended to handle symbol metadata transitions)
 
     Returns:
-        DataFrame with completeness statistics per (date, symbol_id):
-        - date, symbol_id, row_count, expected_count, is_complete
+        DataFrame with completeness statistics per (date, symbol_id) or (date, exchange_symbol):
+        - date, symbol_id/exchange_symbol, row_count, expected_count, is_complete
 
     Note:
         Gaps can be legitimate (new listings, delistings, exchange downtime).
         Use this for data quality monitoring, not hard validation.
+
+        For symbols with metadata changes (SCD Type 2), use by_exchange_symbol=True
+        to combine hours across different symbol_id versions on transition days.
     """
     if df.is_empty():
+        group_col = "exchange_symbol" if by_exchange_symbol else "symbol_id"
+        col_type = pl.Utf8 if by_exchange_symbol else pl.Int64
         return pl.DataFrame(
             schema={
                 "date": pl.Date,
-                "symbol_id": pl.Int64,
+                group_col: col_type,
                 "row_count": pl.Int64,
                 "expected_count": pl.Int64,
                 "is_complete": pl.Boolean,
             }
         )
 
-    if "date" not in df.columns or "symbol_id" not in df.columns:
-        raise ValueError("check_kline_completeness: df must have 'date' and 'symbol_id' columns")
+    # Determine grouping column
+    if by_exchange_symbol:
+        if "exchange_symbol" not in df.columns:
+            raise ValueError(
+                "check_kline_completeness: by_exchange_symbol=True requires "
+                "'exchange_symbol' column in df"
+            )
+        group_cols = ["date", "exchange_symbol"]
+    else:
+        if "date" not in df.columns or "symbol_id" not in df.columns:
+            raise ValueError("check_kline_completeness: df must have 'date' and 'symbol_id' columns")
+        group_cols = ["date", "symbol_id"]
 
     expected_count = KLINE_INTERVAL_ROWS_PER_DAY.get(interval)
     if expected_count is None:
@@ -494,22 +512,23 @@ def check_kline_completeness(
             f"Valid intervals: {list(KLINE_INTERVAL_ROWS_PER_DAY.keys())}"
         )
 
-    # Count rows per (date, symbol_id)
-    completeness = df.group_by(["date", "symbol_id"]).agg(
+    # Count rows per group
+    completeness = df.group_by(group_cols).agg(
         pl.len().alias("row_count")
     ).with_columns([
         pl.lit(expected_count, dtype=pl.Int64).alias("expected_count"),
         (pl.col("row_count") == expected_count).alias("is_complete"),
-    ]).sort(["date", "symbol_id"])
+    ]).sort(group_cols)
 
     if warn_on_gaps:
         incomplete = completeness.filter(~pl.col("is_complete"))
         if not incomplete.is_empty():
             total_incomplete = incomplete.height
+            group_desc = "exchange_symbol" if by_exchange_symbol else "symbol_id"
             logger.warning(
                 f"Found {total_incomplete} incomplete day(s) for interval '{interval}' "
-                f"(expected {expected_count} rows/day). This may indicate data gaps, "
-                f"new listings, or exchange downtime."
+                f"(expected {expected_count} rows/day, grouped by {group_desc}). "
+                f"This may indicate data gaps, new listings, or exchange downtime."
             )
             # Log sample of incomplete days
             sample = incomplete.head(10)
