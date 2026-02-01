@@ -3,6 +3,8 @@ import re
 import warnings
 from pathlib import Path
 
+from pointline._error_messages import exchange_not_found_error
+
 try:
     import tomllib
 except ModuleNotFoundError:  # Python < 3.11
@@ -180,8 +182,7 @@ def normalize_exchange(exchange: str) -> str:
 
 
 def get_exchange_id(exchange: str) -> int:
-    """
-    Get exchange_id for a given exchange name.
+    """Get exchange_id for a given exchange name.
 
     This is the canonical source of truth for exchange → exchange_id mapping.
     Normalizes the exchange name before lookup.
@@ -197,10 +198,7 @@ def get_exchange_id(exchange: str) -> int:
     """
     normalized = normalize_exchange(exchange)
     if normalized not in EXCHANGE_MAP:
-        raise ValueError(
-            f"Exchange '{exchange}' (normalized: '{normalized}') not found in EXCHANGE_MAP. "
-            f"Available exchanges: {sorted(EXCHANGE_MAP.keys())}"
-        )
+        raise ValueError(exchange_not_found_error(exchange, list(EXCHANGE_MAP.keys())))
     return EXCHANGE_MAP[normalized]
 
 
@@ -334,6 +332,34 @@ TYPE_MAP = {
     "l3_ticks": 11,  # Trade executions and cancellations
 }
 
+# Reverse mapping: asset_type integer -> human-readable string
+ASSET_TYPE_NAMES = {
+    0: "spot",
+    1: "perpetual",
+    2: "future",
+    3: "option",
+    10: "l3_orders",
+    11: "l3_ticks",
+}
+
+
+def get_asset_type_name(asset_type: int) -> str:
+    """Get human-readable name for asset_type integer.
+
+    Args:
+        asset_type: Asset type code (e.g., 0, 1, 2, 3, 10, 11)
+
+    Returns:
+        Human-readable name (e.g., "spot", "perpetual", "future")
+
+    Examples:
+        >>> get_asset_type_name(0)
+        'spot'
+        >>> get_asset_type_name(1)
+        'perpetual'
+    """
+    return ASSET_TYPE_NAMES.get(asset_type, f"unknown_{asset_type}")
+
 
 # Asset to CoinGecko Mapping
 # Maps base_asset (from dim_symbol) to CoinGecko coin_id
@@ -392,6 +418,293 @@ def get_coingecko_coin_id(base_asset: str) -> str | None:
         CoinGecko coin_id (e.g., "bitcoin", "ethereum") or None if not found
     """
     return ASSET_TO_COINGECKO_MAP.get(base_asset.upper())
+
+
+# Asset Class Taxonomy
+# Hierarchical classification for data discovery and filtering
+# Designed for extensibility - easily add new asset classes (US equities, futures, forex, etc.)
+ASSET_CLASS_TAXONOMY = {
+    "crypto": {
+        "description": "Cryptocurrency spot and derivatives",
+        "children": ["crypto-spot", "crypto-derivatives"],
+    },
+    "crypto-spot": {
+        "description": "Cryptocurrency spot trading",
+        "parent": "crypto",
+        "exchanges": [
+            "binance",
+            "coinbase",
+            "kraken",
+            "okx",
+            "huobi",
+            "gate",
+            "bitfinex",
+            "bitstamp",
+            "gemini",
+            "crypto-com",
+            "kucoin",
+            "binance-us",
+            "coinbase-pro",
+        ],
+    },
+    "crypto-derivatives": {
+        "description": "Cryptocurrency futures, perpetuals, and options",
+        "parent": "crypto",
+        "exchanges": [
+            "binance-futures",
+            "binance-coin-futures",
+            "deribit",
+            "bybit",
+            "okx-futures",
+            "bitmex",
+            "ftx",
+            "dydx",
+        ],
+    },
+    "stocks": {
+        "description": "Equity markets",
+        "children": ["stocks-cn"],
+    },
+    "stocks-cn": {
+        "description": "Chinese stock exchanges with Level 3 order book data",
+        "parent": "stocks",
+        "exchanges": ["szse", "sse"],
+    },
+    # Future asset classes (placeholder for extensibility):
+    # "stocks-us": {"description": "US stock exchanges", "parent": "stocks", "exchanges": []},
+    # "futures": {"description": "Traditional futures (CME, ICE, etc.)", "exchanges": []},
+    # "options": {"description": "Listed options markets", "exchanges": []},
+    # "forex": {"description": "Foreign exchange spot and derivatives", "exchanges": []},
+}
+
+
+# Exchange Metadata Registry
+# Extended metadata for data discovery and UI presentation
+# Maps exchange name → metadata dict
+EXCHANGE_METADATA = {
+    # Crypto Spot Exchanges
+    "binance": {
+        "exchange_id": 1,
+        "asset_class": "crypto-spot",
+        "description": "Binance Spot Trading",
+        "is_active": True,
+        "supported_tables": ["trades", "quotes", "book_snapshot_25", "kline_1h"],
+    },
+    "coinbase": {
+        "exchange_id": 3,
+        "asset_class": "crypto-spot",
+        "description": "Coinbase Spot Trading",
+        "is_active": True,
+        "supported_tables": ["trades", "quotes"],
+    },
+    "kraken": {
+        "exchange_id": 4,
+        "asset_class": "crypto-spot",
+        "description": "Kraken Spot Trading",
+        "is_active": True,
+        "supported_tables": ["trades", "quotes"],
+    },
+    "okx": {
+        "exchange_id": 5,
+        "asset_class": "crypto-spot",
+        "description": "OKX Spot Trading",
+        "is_active": True,
+        "supported_tables": ["trades", "quotes"],
+    },
+    "huobi": {
+        "exchange_id": 6,
+        "asset_class": "crypto-spot",
+        "description": "Huobi Spot Trading",
+        "is_active": True,
+        "supported_tables": ["trades", "quotes"],
+    },
+    "gate": {
+        "exchange_id": 7,
+        "asset_class": "crypto-spot",
+        "description": "Gate.io Spot Trading",
+        "is_active": True,
+        "supported_tables": ["trades", "quotes"],
+    },
+    "bitfinex": {
+        "exchange_id": 8,
+        "asset_class": "crypto-spot",
+        "description": "Bitfinex Spot Trading",
+        "is_active": True,
+        "supported_tables": ["trades", "quotes"],
+    },
+    "bitstamp": {
+        "exchange_id": 9,
+        "asset_class": "crypto-spot",
+        "description": "Bitstamp Spot Trading",
+        "is_active": True,
+        "supported_tables": ["trades", "quotes"],
+    },
+    "gemini": {
+        "exchange_id": 10,
+        "asset_class": "crypto-spot",
+        "description": "Gemini Spot Trading",
+        "is_active": True,
+        "supported_tables": ["trades", "quotes"],
+    },
+    "crypto-com": {
+        "exchange_id": 11,
+        "asset_class": "crypto-spot",
+        "description": "Crypto.com Spot Trading",
+        "is_active": True,
+        "supported_tables": ["trades", "quotes"],
+    },
+    "kucoin": {
+        "exchange_id": 12,
+        "asset_class": "crypto-spot",
+        "description": "KuCoin Spot Trading",
+        "is_active": True,
+        "supported_tables": ["trades", "quotes"],
+    },
+    "binance-us": {
+        "exchange_id": 13,
+        "asset_class": "crypto-spot",
+        "description": "Binance US Spot Trading",
+        "is_active": True,
+        "supported_tables": ["trades", "quotes"],
+    },
+    "coinbase-pro": {
+        "exchange_id": 14,
+        "asset_class": "crypto-spot",
+        "description": "Coinbase Pro (Legacy)",
+        "is_active": False,
+        "supported_tables": ["trades", "quotes"],
+    },
+    # Crypto Derivatives Exchanges
+    "binance-futures": {
+        "exchange_id": 2,
+        "asset_class": "crypto-derivatives",
+        "description": "Binance USDT-Margined Perpetual Futures",
+        "is_active": True,
+        "supported_tables": [
+            "trades",
+            "quotes",
+            "book_snapshot_25",
+            "derivative_ticker",
+            "kline_1h",
+        ],
+    },
+    "binance-coin-futures": {
+        "exchange_id": 20,
+        "asset_class": "crypto-derivatives",
+        "description": "Binance COIN-Margined Futures",
+        "is_active": True,
+        "supported_tables": ["trades", "quotes", "derivative_ticker"],
+    },
+    "deribit": {
+        "exchange_id": 21,
+        "asset_class": "crypto-derivatives",
+        "description": "Deribit BTC/ETH Options and Futures",
+        "is_active": True,
+        "supported_tables": ["trades", "quotes", "derivative_ticker"],
+    },
+    "bybit": {
+        "exchange_id": 22,
+        "asset_class": "crypto-derivatives",
+        "description": "Bybit Derivatives",
+        "is_active": True,
+        "supported_tables": ["trades", "quotes", "derivative_ticker"],
+    },
+    "okx-futures": {
+        "exchange_id": 23,
+        "asset_class": "crypto-derivatives",
+        "description": "OKX Futures and Perpetuals",
+        "is_active": True,
+        "supported_tables": ["trades", "quotes", "derivative_ticker"],
+    },
+    "bitmex": {
+        "exchange_id": 24,
+        "asset_class": "crypto-derivatives",
+        "description": "BitMEX Perpetual Swaps",
+        "is_active": True,
+        "supported_tables": ["trades", "quotes"],
+    },
+    "ftx": {
+        "exchange_id": 25,
+        "asset_class": "crypto-derivatives",
+        "description": "FTX (Historical data only - exchange defunct)",
+        "is_active": False,
+        "supported_tables": ["trades", "quotes"],
+    },
+    "dydx": {
+        "exchange_id": 26,
+        "asset_class": "crypto-derivatives",
+        "description": "dYdX Perpetual Swaps",
+        "is_active": True,
+        "supported_tables": ["trades", "quotes"],
+    },
+    # Chinese Stock Exchanges
+    "szse": {
+        "exchange_id": 30,
+        "asset_class": "stocks-cn",
+        "description": "Shenzhen Stock Exchange (Level 3 Order Book)",
+        "is_active": True,
+        "supported_tables": ["l3_orders", "l3_ticks"],
+    },
+    "sse": {
+        "exchange_id": 31,
+        "asset_class": "stocks-cn",
+        "description": "Shanghai Stock Exchange (Level 3 Order Book)",
+        "is_active": True,
+        "supported_tables": ["l3_orders", "l3_ticks"],
+    },
+}
+
+
+def get_exchange_metadata(exchange: str) -> dict | None:
+    """Get metadata for a given exchange.
+
+    Args:
+        exchange: Exchange name (will be normalized before lookup)
+
+    Returns:
+        Metadata dict or None if not found
+
+    Examples:
+        >>> meta = get_exchange_metadata("binance-futures")
+        >>> meta["asset_class"]
+        'crypto-derivatives'
+    """
+    normalized = normalize_exchange(exchange)
+    return EXCHANGE_METADATA.get(normalized)
+
+
+def get_asset_class_exchanges(asset_class: str) -> list[str]:
+    """Get all exchanges belonging to an asset class.
+
+    Handles hierarchical taxonomy - if asset_class has children,
+    returns exchanges from all children.
+
+    Args:
+        asset_class: Asset class name (e.g., "crypto", "crypto-spot", "stocks-cn")
+
+    Returns:
+        List of exchange names
+
+    Examples:
+        >>> get_asset_class_exchanges("crypto-spot")
+        ['binance', 'coinbase', 'kraken', ...]
+        >>> get_asset_class_exchanges("crypto")  # includes spot + derivatives
+        ['binance', 'coinbase', ..., 'binance-futures', 'deribit', ...]
+    """
+    if asset_class not in ASSET_CLASS_TAXONOMY:
+        return []
+
+    taxonomy_entry = ASSET_CLASS_TAXONOMY[asset_class]
+
+    # If this is a parent class with children, recurse
+    if "children" in taxonomy_entry:
+        exchanges = []
+        for child in taxonomy_entry["children"]:
+            exchanges.extend(get_asset_class_exchanges(child))
+        return exchanges
+
+    # Otherwise, return exchanges directly
+    return taxonomy_entry.get("exchanges", [])
 
 
 def get_table_path(table_name: str) -> Path:

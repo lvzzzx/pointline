@@ -1,5 +1,5 @@
-"""
-Registry for resolving symbol metadata.
+"""Registry for resolving symbol metadata.
+
 Acts as a read-only interface to the dim_symbol table.
 """
 
@@ -10,6 +10,7 @@ from collections.abc import Iterable
 
 import polars as pl
 
+from pointline._error_messages import symbol_not_found_error
 from pointline.dim_symbol import read_dim_symbol_table
 
 logger = logging.getLogger(__name__)
@@ -81,7 +82,7 @@ def resolve_symbol(symbol_id: int) -> tuple[str, int, str]:
     row = df.filter(pl.col("symbol_id") == symbol_id)
 
     if row.height == 0:
-        raise ValueError(f"Symbol ID {symbol_id} not found in dim_symbol registry.")
+        raise ValueError(symbol_not_found_error(symbol_id))
 
     exchange_id = row["exchange_id"][0]
     exchange_name = row["exchange"][0]
