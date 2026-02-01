@@ -104,16 +104,28 @@ def test_query_trades_with_string_dates():
 
         mock_load.return_value = MagicMock(spec=pl.LazyFrame)
 
-        # String dates should work (datetime parsing happens in core._normalize_timestamp)
-        # For now, we pass through to core which handles it
-        query.trades(
+        # ISO string dates should work (parsed in core._normalize_timestamp)
+        result = query.trades(
             "binance-futures",
             "SOLUSDT",
-            start=datetime(2024, 5, 1, tzinfo=timezone.utc),
-            end=datetime(2024, 5, 2, tzinfo=timezone.utc),
+            start="2024-05-01",
+            end="2024-05-02",
         )
 
         mock_load.assert_called_once()
+        call_kwargs = mock_load.call_args[1]
+
+        # Verify strings were converted to timestamps
+        expected_start = int(
+            datetime(2024, 5, 1, 0, 0, 0, tzinfo=timezone.utc).timestamp() * 1_000_000
+        )
+        expected_end = int(
+            datetime(2024, 5, 2, 0, 0, 0, tzinfo=timezone.utc).timestamp() * 1_000_000
+        )
+
+        assert call_kwargs["start_ts_us"] == expected_start
+        assert call_kwargs["end_ts_us"] == expected_end
+        assert result == mock_load.return_value
 
 
 def test_query_trades_warns_on_metadata_change():

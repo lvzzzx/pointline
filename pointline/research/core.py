@@ -30,20 +30,21 @@ def table_path(table_name: str) -> Path:
 
 
 def _normalize_timestamp(ts: TimestampInput | None, param_name: str) -> int | None:
-    """Convert datetime to microseconds since epoch, or pass through int.
+    """Convert datetime or ISO string to microseconds since epoch, or pass through int.
 
-    Accepts both int (microseconds since epoch) and datetime objects for convenience.
-    Naive datetimes are interpreted as UTC with a warning.
+    Accepts int (microseconds since epoch), datetime objects, or ISO 8601 date/datetime strings.
+    Naive datetimes and date-only strings are interpreted as UTC with a warning.
 
     Args:
-        ts: Either int (microseconds since epoch) or datetime object
+        ts: int (microseconds since epoch), datetime object, or ISO string (e.g., "2024-05-01")
         param_name: Parameter name for error messages
 
     Returns:
         Microseconds since epoch (int) or None if input is None
 
     Raises:
-        TypeError: If ts is neither int, datetime, nor None
+        TypeError: If ts is not int, datetime, str, or None
+        ValueError: If ISO string cannot be parsed
     """
     if ts is None:
         return None
@@ -51,13 +52,24 @@ def _normalize_timestamp(ts: TimestampInput | None, param_name: str) -> int | No
     if isinstance(ts, int):
         return ts
 
+    # Parse ISO string to datetime
+    if isinstance(ts, str):
+        try:
+            ts = datetime.fromisoformat(ts)
+        except ValueError as e:
+            raise ValueError(
+                f"{param_name}: Invalid ISO datetime string '{ts}'. "
+                f"Expected format: 'YYYY-MM-DD' or 'YYYY-MM-DDTHH:MM:SS'. "
+                f"Error: {e}"
+            ) from e
+
     if isinstance(ts, datetime):
         # Warn if naive datetime (ambiguous, but accept as UTC)
         if ts.tzinfo is None:
             warnings.warn(
                 f"{param_name}: naive datetime interpreted as UTC. "
                 f"Use timezone-aware datetime for clarity: "
-                f"datetime(..., tzinfo=timezone.utc)",
+                f"datetime(..., tzinfo=timezone.utc) or ISO string with timezone '2024-05-01T00:00:00+00:00'",
                 UserWarning,
                 stacklevel=4,
             )
@@ -67,7 +79,7 @@ def _normalize_timestamp(ts: TimestampInput | None, param_name: str) -> int | No
         return int(ts.timestamp() * 1_000_000)
 
     raise TypeError(
-        f"{param_name} must be int (microseconds) or datetime object, got {type(ts).__name__}"
+        f"{param_name} must be int (microseconds), datetime object, or ISO string, got {type(ts).__name__}"
     )
 
 

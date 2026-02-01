@@ -29,9 +29,10 @@ TableName = Literal[
     "szse_l3_ticks",
 ]
 
-# Timestamp input type - accepts either int microseconds or datetime objects
+# Timestamp input type - accepts int microseconds, datetime objects, or ISO strings
 # This allows flexible timestamp specification in research API functions.
-TimestampInput = int | datetime
+# ISO strings: "2024-05-01", "2024-05-01T12:00:00", "2024-05-01T12:00:00+00:00"
+TimestampInput = int | datetime | str
 
 # Column selection type
 ColumnList = tuple[str, ...] | list[str]

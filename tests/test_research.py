@@ -170,13 +170,47 @@ def test_normalize_timestamp_with_none():
     assert result is None
 
 
+def test_normalize_timestamp_with_iso_date_string():
+    """Test that _normalize_timestamp parses ISO date strings."""
+    result = _normalize_timestamp("2024-05-01", "start_ts_us")
+
+    # ISO date without time is parsed as midnight UTC (with warning)
+    expected_dt = datetime(2024, 5, 1, 0, 0, 0, tzinfo=timezone.utc)
+    expected = int(expected_dt.timestamp() * 1_000_000)
+    assert result == expected
+    assert isinstance(result, int)
+
+
+def test_normalize_timestamp_with_iso_datetime_string():
+    """Test that _normalize_timestamp parses ISO datetime strings."""
+    # With timezone
+    result = _normalize_timestamp("2024-05-01T12:30:45+00:00", "start_ts_us")
+    expected_dt = datetime(2024, 5, 1, 12, 30, 45, tzinfo=timezone.utc)
+    expected = int(expected_dt.timestamp() * 1_000_000)
+    assert result == expected
+
+    # Without timezone (should warn and assume UTC)
+    with pytest.warns(UserWarning, match="naive datetime interpreted as UTC"):
+        result = _normalize_timestamp("2024-05-01T12:30:45", "start_ts_us")
+    assert result == expected
+
+
+def test_normalize_timestamp_with_invalid_iso_string():
+    """Test that _normalize_timestamp raises ValueError for invalid ISO strings."""
+    with pytest.raises(ValueError, match="Invalid ISO datetime string"):
+        _normalize_timestamp("not-a-date", "start_ts_us")
+
+    with pytest.raises(ValueError, match="Invalid ISO datetime string"):
+        _normalize_timestamp("2024-13-01", "start_ts_us")  # Invalid month
+
+
 def test_normalize_timestamp_with_invalid_type():
     """Test that _normalize_timestamp raises TypeError for invalid types."""
-    with pytest.raises(TypeError, match="must be int.*or datetime"):
-        _normalize_timestamp("invalid", "start_ts_us")
-
-    with pytest.raises(TypeError, match="must be int.*or datetime"):
+    with pytest.raises(TypeError, match="must be int.*datetime.*or ISO string"):
         _normalize_timestamp(1.5, "start_ts_us")
+
+    with pytest.raises(TypeError, match="must be int.*datetime.*or ISO string"):
+        _normalize_timestamp([], "start_ts_us")
 
 
 @patch("pointline.research.core.resolve_symbols")
