@@ -17,15 +17,39 @@ This project provides ETL utilities and a structured data lake design optimized 
 
 ### Prerequisites
 - Python >= 3.10
+- [uv](https://github.com/astral-sh/uv) (required for dependency management)
+
+### Installation
+
+Install uv if you haven't already:
+```bash
+# macOS/Linux
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# Windows
+powershell -c "irm https://astral.sh/uv/install.ps1 | iex"
+
+# Or with pip
+pip install uv
+```
 
 ### Setup
 ```bash
-# Install dependencies
-pip install -e .
+# 1. Create virtualenv
+uv venv
+source .venv/bin/activate  # On Windows: .venv\Scripts\activate
 
-# Run tests
+# 2. Install dependencies
+uv pip install -e ".[dev]"
+
+# 3. Install pre-commit hooks (REQUIRED)
+pre-commit install
+
+# 4. Run tests to verify
 pytest
 ```
+
+**Important for Git Worktrees:** If using worktrees, run `pre-commit install` in each worktree. See [Worktree Setup Guide](./docs/development/worktree-setup.md).
 
 ## CLI
 ```bash

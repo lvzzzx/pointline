@@ -14,19 +14,21 @@ When creating or switching to a new worktree, run these commands:
 # 1. Navigate to your worktree
 cd /path/to/your/worktree
 
-# 2. Create/activate virtualenv (using uv)
+# 2. Create and activate virtualenv with uv
 uv venv
 source .venv/bin/activate
 
-# 3. Install dependencies
+# 3. Install dependencies with uv
 uv pip install -e ".[dev]"
 
-# 4. Install pre-commit hooks (IMPORTANT!)
+# 4. Install pre-commit hooks (CRITICAL!)
 pre-commit install
 
 # 5. Verify it's working
 pre-commit run --all-files
 ```
+
+**Note:** This project uses [uv](https://github.com/astral-sh/uv) for fast, deterministic dependency management. Do not use pip.
 
 ## Why Step 4 is Critical
 
