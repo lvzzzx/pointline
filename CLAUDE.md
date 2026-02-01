@@ -16,17 +16,29 @@ Pointline is a high-performance, point-in-time (PIT) accurate offline data lake 
 
 ### Setup
 ```bash
-# Install Python dependencies
-pip install -e .
+# Install Python dependencies (using uv - recommended)
+uv venv
+source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+uv pip install -e ".[dev]"
 
-# Install development dependencies (includes pre-commit)
-pip install -e ".[dev]"
-
-# Set up pre-commit hooks (recommended for development)
+# IMPORTANT: Install pre-commit hooks for your worktree
+# (Required when creating/switching worktrees)
 pre-commit install
+
+# Verify pre-commit is working
+pre-commit run --all-files
 
 # This will automatically run linting before each commit
 # Hooks include: Ruff linting, Ruff formatting, trailing whitespace checks, etc.
+```
+
+**Note for Git Worktrees:** If you're using git worktrees, you MUST run `pre-commit install` in each worktree. See [Worktree Setup Guide](docs/development/worktree-setup.md) for details.
+
+**Alternative (pip):**
+```bash
+pip install -e .
+pip install -e ".[dev]"
+pre-commit install
 ```
 
 ### Testing
