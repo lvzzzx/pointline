@@ -91,7 +91,7 @@ The `changes` array represents a timeline of values. To apply them correctly:
 API note: the `changes` field is not guaranteed to be present for all instruments,
 and its data quality can vary by exchange (only `contractMultiplier` changes are
 guaranteed accurate). Prefer `--rebuild` when using API responses that include
-`changes`, and fall back to incremental updates otherwise. 
+`changes`, and fall back to incremental updates otherwise.
 
 ## Behavior
 1. Load metadata from the source.

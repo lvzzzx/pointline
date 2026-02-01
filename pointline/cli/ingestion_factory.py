@@ -23,8 +23,14 @@ TABLE_PARTITIONS = {
 }
 
 
-def create_ingestion_service(data_type: str, manifest_repo):
-    """Create the appropriate ingestion service based on data type."""
+def create_ingestion_service(data_type: str, manifest_repo, *, interval: str | None = None):
+    """Create the appropriate ingestion service based on data type.
+
+    Args:
+        data_type: Type of data (trades, quotes, klines, etc.)
+        manifest_repo: Ingestion manifest repository
+        interval: For klines, the interval (1h, 4h, 1d, etc.)
+    """
     dim_symbol_repo = BaseDeltaRepository(get_table_path("dim_symbol"))
 
     # Map bronze layer data_type to canonical table name.
@@ -52,9 +58,12 @@ def create_ingestion_service(data_type: str, manifest_repo):
             partition_by=["exchange", "date"],
         )
         return DerivativeTickerIngestionService(repo, dim_symbol_repo, manifest_repo)
-    if data_type == "kline_1h":
+    if data_type == "klines":
+        if not interval:
+            raise ValueError("Klines data requires 'interval' to be specified (e.g., '1h', '4h')")
+        table_name = f"kline_{interval}"
         repo = BaseDeltaRepository(
-            get_table_path("kline_1h"),
+            get_table_path(table_name),
             partition_by=["exchange", "date"],
         )
         return KlinesIngestionService(repo, dim_symbol_repo, manifest_repo)

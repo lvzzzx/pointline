@@ -48,6 +48,7 @@ class BronzeFileMetadata:
     file_size_bytes: int
     last_modified_ts: int
     sha256: str
+    interval: str | None = None  # For klines: "1h", "4h", "1d", etc.
 
 
 @runtime_checkable

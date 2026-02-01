@@ -97,9 +97,9 @@ Additional replay accelerator (derived from `silver.l2_updates`) - **Planned for
 
 ## 3) Storage format & performance defaults
 
-**Format:** Delta Lake (via `delta-rs`)  
-**Compression:** ZSTD (best compression)  
-**Row group sizing:** target ~128–512MB row groups  
+**Format:** Delta Lake (via `delta-rs`)
+**Compression:** ZSTD (best compression)
+**Row group sizing:** target ~128–512MB row groups
 **File sizing:** 256MB–1GB files (controlled by Delta writer)
 
 **Integer Type Limitations:**
@@ -127,7 +127,7 @@ Symbols change over time (renames, delistings, tick size changes). Maintain a **
 
 **Implementation:** Delta Table (`silver.dim_symbol`)
 - **Storage:** Single versioned table (not partitioned, as it's small).
-- **Surrogate Key (`symbol_id`):** `i64` integer. 
+- **Surrogate Key (`symbol_id`):** `i64` integer.
   - *Strategy:* Use a deterministic hash of `(exchange_id, exchange_symbol, valid_from_ts)` or a managed autoincrementing sequence during registry updates.
 - **Natural Key:** `(exchange_id, exchange_symbol)`.
 
@@ -141,14 +141,14 @@ Symbols change over time (renames, delistings, tick size changes). Maintain a **
 
 **Ingestion Join:**
 ```sql
-SELECT 
-    b.*, 
+SELECT
+    b.*,
     s.symbol_id
 FROM bronze_data b
-JOIN silver.dim_symbol s 
+JOIN silver.dim_symbol s
   ON  b.exchange_id = s.exchange_id
   AND b.exchange_symbol = s.exchange_symbol
-  AND b.ts_local_us >= s.valid_from_ts 
+  AND b.ts_local_us >= s.valid_from_ts
   AND b.ts_local_us <  s.valid_until_ts
 ```
 
@@ -305,8 +305,8 @@ Snapshots are full top-N book states (e.g., 25 levels).
 **Recommended storage: list columns (Silver)**
 **Verdict:** Stick to `list<i64>`. DuckDB/Polars handle lists natively and efficiently. Wide columns explode schema metadata.
 
-**Table:** `silver.book_snapshot_25`  
-**Partitioned by:** `["exchange", "date"]` (same strategy as trades/quotes tables)  
+**Table:** `silver.book_snapshot_25`
+**Partitioned by:** `["exchange", "date"]` (same strategy as trades/quotes tables)
 **Schema:** See [Schema Reference - book_snapshot_25](../schemas.md#22-silverbook_snapshot_25)
 
 **Gold option: wide columns (Legacy Support)**
@@ -317,13 +317,13 @@ Use this strictly for Gold if legacy tools (Pandas without explode) require it. 
 ---
 
 ### 5.3 `trades`
-**Table:** `silver.trades`  
+**Table:** `silver.trades`
 **Schema:** See [Schema Reference - trades](../schemas.md#23-silvertrades)
 
 ---
 
 ### 5.4 `tob_quotes` (from `quotes` or derived from L2)
-**Table:** `silver.quotes` (or `gold.tob_quotes` if you treat it as a fast path)  
+**Table:** `silver.quotes` (or `gold.tob_quotes` if you treat it as a fast path)
 **Schema:** See [Schema Reference - quotes](../schemas.md#24-silverquotes)
 
 ---
@@ -331,7 +331,7 @@ Use this strictly for Gold if legacy tools (Pandas without explode) require it. 
 ### 5.5 `book_ticker`
 Use if you subscribe to exchange-native `bookTicker`/similar.
 
-**Table:** `silver.book_ticker`  
+**Table:** `silver.book_ticker`
 **Schema:** See [Schema Reference - book_ticker](../schemas.md#25-silverbook_ticker)
 
 Same schema as top-of-book quotes, plus any venue-specific fields (update ids, etc.).
@@ -341,13 +341,13 @@ Same schema as top-of-book quotes, plus any venue-specific fields (update ids, e
 ### 5.6 `derivative_ticker`
 Includes mark/index, funding, OI, etc.
 
-**Table:** `silver.derivative_ticker`  
+**Table:** `silver.derivative_ticker`
 **Schema:** See [Schema Reference - derivative_ticker](../schemas.md#26-silverderivative_ticker)
 
 ---
 
 ### 5.7 `liquidations`
-**Table:** `silver.liquidations`  
+**Table:** `silver.liquidations`
 **Schema:** See [Schema Reference - liquidations](../schemas.md#27-silverliquidations)
 
 ---
@@ -355,7 +355,7 @@ Includes mark/index, funding, OI, etc.
 ### 5.8 `options_chain`
 Options chain is typically cross-sectional and heavy. Store updates per contract.
 
-**Table:** `silver.options_chain`  
+**Table:** `silver.options_chain`
 **Schema:** See [Schema Reference - options_chain](../schemas.md#28-silveroptions_chain)
 
 **Gold recommendation:** `gold.options_surface_grid`
@@ -531,7 +531,7 @@ Core "safe" APIs (suggested):
 
 **DuckDB Example:**
 ```sql
-SELECT * FROM delta_scan('/lake/silver/trades') 
+SELECT * FROM delta_scan('/lake/silver/trades')
 WHERE date = '2025-12-28' AND symbol_id = 123
 ```
 

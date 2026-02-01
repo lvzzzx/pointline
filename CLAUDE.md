@@ -18,6 +18,15 @@ Pointline is a high-performance, point-in-time (PIT) accurate offline data lake 
 ```bash
 # Install Python dependencies
 pip install -e .
+
+# Install development dependencies (includes pre-commit)
+pip install -e ".[dev]"
+
+# Set up pre-commit hooks (recommended for development)
+pre-commit install
+
+# This will automatically run linting before each commit
+# Hooks include: Ruff linting, Ruff formatting, trailing whitespace checks, etc.
 ```
 
 ### Testing
@@ -42,8 +51,12 @@ pointline symbol search BTCUSDT --exchange binance-futures
 pointline symbol sync --file ./symbols.csv
 
 # Bronze layer (raw vendor data)
-pointline bronze download --vendor tardis --exchange binance-futures --date 2024-05-01
-pointline bronze discover --pending-only
+# Simple: just specify vendor
+pointline bronze discover --vendor quant360 --pending-only
+pointline bronze discover --vendor tardis --pending-only
+
+# Or explicitly specify bronze-root (for non-standard layouts)
+pointline bronze reorganize --source-dir ~/archives --bronze-root ~/data/lake/bronze
 
 # Silver layer (ETL ingestion)
 pointline ingest discover --pending-only
@@ -63,6 +76,18 @@ pointline validate trades --exchange binance-futures --date 2024-05-01
 # Ruff is configured in pyproject.toml (line-length = 100)
 ruff check .
 ruff format .
+
+# Pre-commit hooks (recommended for development)
+# Install pre-commit hooks (one-time setup)
+pip install pre-commit
+pre-commit install
+
+# Hooks will now run automatically on git commit
+# To run manually on all files:
+pre-commit run --all-files
+
+# To skip hooks for a specific commit (use sparingly):
+git commit --no-verify
 ```
 
 ## Architecture
@@ -73,6 +98,10 @@ ruff format .
 - Path: `/lake/bronze/{vendor}/exchange={exchange}/type={data_type}/date={date}/symbol={symbol}/`
 - Format: Raw vendor files (CSV.gz, ZIP) exactly as downloaded
 - Purpose: Preserve original data with checksums for reproducibility
+- **Vendor-specific preprocessing:**
+  - **Tardis**: Direct downloads already in Hive-partitioned format
+  - **Quant360**: Requires reorganization from `.7z` archives → use `pointline bronze reorganize`
+  - Archives (`.7z`, `.zip`) must be reorganized before ingestion
 
 **Silver Layer** (Canonical Research Foundation)
 - Path: `/lake/silver/{table_name}/exchange={exchange}/date={date}/`
@@ -84,6 +113,7 @@ ruff format .
   - `trades`, `quotes`, `book_snapshot_25` - Market data events
   - `derivative_ticker` - Funding, OI, mark/index prices
   - `kline_1h` - OHLCV candles
+  - `szse_l3_orders`, `szse_l3_ticks` - SZSE Level 3 order book events
   - `ingest_manifest` - ETL tracking ledger
 
 **Gold Layer** (Derived Research Tables)
@@ -96,6 +126,7 @@ ruff format .
 **`config.py`** - Global configuration registry
 - `LAKE_ROOT`, `BRONZE_ROOT`, `TABLE_PATHS`
 - Exchange registry: `EXCHANGE_MAP` (exchange name → exchange_id)
+- Exchange timezone registry: `EXCHANGE_TIMEZONES` (exchange → IANA timezone)
 - Type registry: `TYPE_MAP` (instrument type → asset_type)
 
 **`research.py`** - Primary researcher API
@@ -142,6 +173,37 @@ ruff format .
 7. **Partition Pruning:** Require symbol_id + time range to leverage Delta Lake statistics
 8. **Idempotent ETL:** Same inputs + metadata → same outputs
 
+## Timezone Handling
+
+**Timestamp Storage:**
+- All timestamps stored in UTC (`ts_local_us`, `ts_exch_us`)
+- Microsecond precision (Int64)
+
+**Partition Date Semantics:** Exchange-local trading date
+- **Crypto (24/7):** `date` = UTC date from `ts_local_us`
+  - Example: binance-futures, coinbase, okx
+- **SZSE/SSE:** `date` = CST (Asia/Shanghai) date from `ts_local_us`
+  - Example: 2024-09-30 00:30 CST → date=2024-09-30 (not 2024-09-29)
+- **Future US exchanges:** `date` = ET (America/New_York) date
+
+**Rationale:**
+- Ensures one trading day = one partition for efficient queries
+- Researchers query by trading day, not UTC day
+- Aligns with bronze layer structure (bronze already uses exchange-local dates)
+
+**Cross-Exchange Queries:**
+- Use `ts_local_us` for precise timestamp filtering across exchanges
+- Do not filter by `date` across exchanges with different timezones
+- Each exchange partition has its own timezone semantics
+
+**Configuration:**
+- Timezone registry: `pointline.config.EXCHANGE_TIMEZONES`
+- Lookup function: `get_exchange_timezone(exchange)` → IANA timezone string
+- Default: "UTC" for unlisted exchanges
+6. **Fixed-Point Integers:** Keep integers until final decode to avoid floating-point errors
+7. **Partition Pruning:** Require symbol_id + time range to leverage Delta Lake statistics
+8. **Idempotent ETL:** Same inputs + metadata → same outputs
+
 ## Timeline Semantics
 
 **Default replay timeline:** `ts_local_us` (arrival time), **not** `ts_exch_us` (exchange time)
@@ -161,6 +223,59 @@ ruff format .
 - Most tables: `exchange` + `date`
 - Within partitions: Z-order by `(symbol_id, ts_local_us)` for pruning
 - No partitioning: `dim_symbol`, `dim_asset_stats` (small dimension tables)
+
+## Vendor-Specific Workflows
+
+### Quant360 (SZSE Level 3 Data)
+
+**Data Source:** Chinese stock exchanges (SZSE, SSE) Level 3 market data
+- Individual order placements (`l3_orders`)
+- Trade executions and cancellations (`l3_ticks`)
+
+**Bronze Reorganization (Required Pre-ingestion Step):**
+```bash
+# Quant360 delivers data as monolithic .7z archives (one archive per date/type)
+# Archives contain ~3000 per-symbol CSV files that must be reorganized
+
+# Automatic (default): prehook auto-detects and reorganizes during discovery
+pointline bronze discover --vendor quant360 --pending-only
+
+# Manual (for batch operations or debugging):
+pointline bronze reorganize \
+  --source-dir ~/data/archives/quant360 \
+  --bronze-root ~/data/lake/bronze \
+  --vendor quant360
+
+# Transforms: order_new_STK_SZ_20240930.7z
+# Into: bronze/quant360/exchange=szse/type=l3_orders/date=2024-09-30/symbol={XXXXXX}/{XXXXXX}.csv.gz
+```
+
+**Ingestion Workflow:**
+```bash
+# Step 1: Discover reorganized files (prehook auto-reorganizes if needed)
+pointline bronze discover --vendor quant360 --pending-only
+
+# Step 2: Ingest to silver tables
+pointline ingest run --table l3_orders --exchange szse --date 2024-09-30
+pointline ingest run --table l3_ticks --exchange szse --date 2024-09-30
+
+# Step 3: Validate (optional)
+pointline validate l3_orders --exchange szse --date 2024-09-30
+```
+
+**Key Implementation Files:**
+- `pointline/io/vendor/quant360/reorganize.py` - Python reorganization utilities
+- `scripts/reorganize_quant360.sh` - Fast bash reorganization (preferred)
+- `pointline/tables/szse_l3_orders.py` - Order schema and parsing
+- `pointline/tables/szse_l3_ticks.py` - Tick schema and parsing
+- `pointline/services/szse_l3_orders_service.py` - Order ingestion service
+- `pointline/services/szse_l3_ticks_service.py` - Tick ingestion service
+
+**Schema Specifics:**
+- Timestamps: Asia/Shanghai (CST) → UTC conversion via `parse_quant360_timestamp()`
+- Fixed-point encoding: Lot-based (100 shares/lot) for Chinese A-shares
+- Side/Type remapping: Quant360 uses 1/2 codes → remapped to 0/1 for consistency
+- Tick semantics: Fills (price>0) vs Cancellations (price=0)
 
 ## Research Experiment Structure
 

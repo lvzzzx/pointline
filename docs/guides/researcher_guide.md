@@ -362,7 +362,7 @@ When writing code for this data lake, follow these rules:
 
 **Safe Query Template (DuckDB):**
 ```sql
-SELECT * 
+SELECT *
 FROM delta_scan('/lake/silver/<table_name>')
 WHERE date >= '<start_date>' AND date <= '<end_date>'
   AND symbol_id = <id>

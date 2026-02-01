@@ -109,7 +109,7 @@ class IngestionManifestRepository(Protocol):
     def filter_pending(self, candidates: list[BronzeFileMetadata]) -> list[BronzeFileMetadata]:
         """Returns only files that need processing (efficient batch anti-join)."""
         ...
-        
+
     def update_status(self, file_id: int, status: str, meta: BronzeFileMetadata, result=None) -> None:
         """Records success/failure."""
         ...

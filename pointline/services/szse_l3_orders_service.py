@@ -9,7 +9,12 @@ from pathlib import Path
 
 import polars as pl
 
-from pointline.config import get_bronze_root, get_exchange_id, normalize_exchange
+from pointline.config import (
+    get_bronze_root,
+    get_exchange_id,
+    get_exchange_timezone,
+    normalize_exchange,
+)
 from pointline.dim_symbol import check_coverage
 from pointline.io.protocols import (
     BronzeFileMetadata,
@@ -304,7 +309,23 @@ class SzseL3OrdersIngestionService(BaseService):
         )
 
     def _add_metadata(self, df: pl.DataFrame, exchange: str, exchange_id: int) -> pl.DataFrame:
-        """Add exchange, exchange_id and date columns."""
+        """
+        Add exchange, exchange_id, and exchange-local date columns.
+
+        The date column is derived from ts_local_us in the exchange's local timezone,
+        ensuring that one trading day maps to exactly one partition.
+
+        For SZSE (Asia/Shanghai timezone):
+        - 2024-09-30 00:30 CST → date=2024-09-30
+        - 2024-09-30 23:30 CST → date=2024-09-30
+
+        For crypto (UTC timezone):
+        - 2024-09-30 00:30 UTC → date=2024-09-30
+        - 2024-09-30 23:30 UTC → date=2024-09-30
+
+        Raises:
+            ValueError: If exchange is not registered in EXCHANGE_TIMEZONES
+        """
         # Add exchange (string) for partitioning and human readability
         # Add exchange_id (Int16) for joins and compression
         result = df.with_columns(
@@ -314,10 +335,23 @@ class SzseL3OrdersIngestionService(BaseService):
             ]
         )
 
-        # Derive date from ts_local_us (microseconds since epoch) in UTC
+        # Derive date from ts_local_us in exchange-local timezone
+        # This ensures one trading day = one partition (no UTC boundary splits)
+        # Validate exchange has explicit timezone mapping (fail fast to prevent mispartitioning)
+        try:
+            exchange_tz = get_exchange_timezone(exchange, strict=True)
+        except ValueError as e:
+            raise ValueError(
+                f"Cannot add metadata for exchange '{exchange}' (exchange_id={exchange_id}): {e}"
+            ) from e
+
         result = result.with_columns(
             [
-                pl.from_epoch(pl.col("ts_local_us"), time_unit="us").cast(pl.Date).alias("date"),
+                pl.from_epoch(pl.col("ts_local_us"), time_unit="us")
+                .dt.replace_time_zone("UTC")
+                .dt.convert_time_zone(exchange_tz)
+                .dt.date()
+                .alias("date"),
             ]
         )
 

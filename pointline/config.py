@@ -228,6 +228,93 @@ def get_exchange_name(exchange_id: int) -> str:
     )
 
 
+# Exchange Timezone Registry
+# Maps exchange names to their timezone for exchange-local date partitioning
+# Rationale: Partition date represents the trading day in exchange-local time,
+# ensuring "one trading day = one partition" for efficient queries
+EXCHANGE_TIMEZONES = {
+    # Crypto (24/7, use UTC as default)
+    "binance": "UTC",
+    "binance-futures": "UTC",
+    "binance-coin-futures": "UTC",
+    "binance-us": "UTC",
+    "coinbase": "UTC",
+    "coinbase-pro": "UTC",
+    "kraken": "UTC",
+    "okx": "UTC",
+    "okx-futures": "UTC",
+    "huobi": "UTC",
+    "gate": "UTC",
+    "bitfinex": "UTC",
+    "bitstamp": "UTC",
+    "gemini": "UTC",
+    "crypto-com": "UTC",
+    "kucoin": "UTC",
+    "deribit": "UTC",
+    "bybit": "UTC",
+    "bitmex": "UTC",
+    "ftx": "UTC",
+    "dydx": "UTC",
+    # Chinese Stock Exchanges (China Standard Time, UTC+8, no DST)
+    "szse": "Asia/Shanghai",  # Shenzhen Stock Exchange
+    "sse": "Asia/Shanghai",  # Shanghai Stock Exchange
+}
+
+
+def get_exchange_timezone(exchange: str, *, strict: bool = True) -> str:
+    """
+    Get timezone for exchange-local date partitioning.
+
+    This timezone is used to derive the partition date from ts_local_us,
+    ensuring that one trading day maps to one partition.
+
+    Args:
+        exchange: Exchange name (will be normalized before lookup)
+        strict: If True, raise ValueError when exchange not in registry.
+               If False, log warning and return "UTC" default.
+
+    Returns:
+        IANA timezone string (e.g., "UTC", "Asia/Shanghai")
+
+    Raises:
+        ValueError: If strict=True and exchange not found in EXCHANGE_TIMEZONES
+
+    Examples:
+        >>> get_exchange_timezone("binance-futures")
+        'UTC'
+        >>> get_exchange_timezone("szse")
+        'Asia/Shanghai'
+        >>> get_exchange_timezone("unknown", strict=True)
+        Traceback (most recent call last):
+        ValueError: Exchange 'unknown' not found in EXCHANGE_TIMEZONES registry...
+    """
+    normalized = normalize_exchange(exchange)
+
+    if normalized not in EXCHANGE_TIMEZONES:
+        if strict:
+            raise ValueError(
+                f"Exchange '{exchange}' (normalized: '{normalized}') not found in "
+                f"EXCHANGE_TIMEZONES registry. This could cause incorrect date partitioning. "
+                f"Please add the exchange to EXCHANGE_TIMEZONES in pointline/config.py with "
+                f"its correct IANA timezone (e.g., 'UTC', 'Asia/Shanghai', 'America/New_York'). "
+                f"Available exchanges: {sorted(EXCHANGE_TIMEZONES.keys())}"
+            )
+        else:
+            import warnings
+
+            warnings.warn(
+                f"Exchange '{exchange}' (normalized: '{normalized}') not found in "
+                f"EXCHANGE_TIMEZONES registry. Falling back to UTC default. "
+                f"This may cause incorrect date partitioning for regional exchanges. "
+                f"Add to EXCHANGE_TIMEZONES to fix.",
+                UserWarning,
+                stacklevel=2,
+            )
+            return "UTC"
+
+    return EXCHANGE_TIMEZONES[normalized]
+
+
 # Asset Type Registry
 # Maps Tardis instrument type strings to internal asset_type (u8)
 # Supports aliases for common variations
@@ -311,6 +398,8 @@ def get_table_path(table_name: str) -> Path:
     """
     Resolves the absolute path for a given table name.
 
+    Supports dynamic kline tables: kline_1h, kline_4h, kline_1d, etc.
+
     Args:
         table_name: The name of the table to resolve.
 
@@ -318,9 +407,17 @@ def get_table_path(table_name: str) -> Path:
         Path: The absolute path to the table.
 
     Raises:
-        KeyError: If the table name is not registered in TABLE_PATHS.
+        KeyError: If the table name is not registered and doesn't match a known pattern.
     """
-    if table_name not in TABLE_PATHS:
-        raise KeyError(f"Table '{table_name}' not found in TABLE_PATHS registry.")
+    # Check exact match first
+    if table_name in TABLE_PATHS:
+        return LAKE_ROOT / TABLE_PATHS[table_name]
 
-    return LAKE_ROOT / TABLE_PATHS[table_name]
+    # Handle dynamic kline tables: kline_{interval}
+    if table_name.startswith("kline_"):
+        return LAKE_ROOT / f"silver/{table_name}"
+
+    raise KeyError(
+        f"Table '{table_name}' not found in TABLE_PATHS registry "
+        f"and doesn't match known patterns (e.g., kline_*)."
+    )

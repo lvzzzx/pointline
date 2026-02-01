@@ -10,35 +10,70 @@ import polars as pl
 
 from pointline.cli.ingestion_factory import create_ingestion_service
 from pointline.cli.utils import print_files, sorted_files
+from pointline.config import BRONZE_ROOT, get_table_path
 from pointline.io.delta_manifest_repo import DeltaManifestRepository
 from pointline.io.local_source import LocalBronzeSource
 from pointline.io.protocols import IngestionResult
 
 
 def cmd_ingest_discover(args: argparse.Namespace) -> int:
-    bronze_root = Path(args.bronze_root)
-    source = LocalBronzeSource(bronze_root)
+    # Resolve bronze_root: vendor parameter takes precedence
+    if hasattr(args, "vendor") and args.vendor:
+        bronze_root = BRONZE_ROOT / args.vendor
+    else:
+        bronze_root = Path(args.bronze_root)
+
+    enable_prehooks = not getattr(args, "no_prehook", False)
+
+    # When using --pending-only, we need checksums to match against the manifest
+    # Otherwise, skip checksums for faster discovery
+    compute_checksums = args.pending_only
+
+    source = LocalBronzeSource(
+        bronze_root,
+        enable_prehooks=enable_prehooks,
+        compute_checksums=compute_checksums,
+    )
     files = list(source.list_files(args.glob))
 
     if args.data_type:
         files = [f for f in files if f.data_type == args.data_type]
 
     if args.pending_only:
-        manifest_repo = DeltaManifestRepository(Path(args.manifest_path))
+        manifest_path = Path(args.manifest_path)
+        manifest_repo = DeltaManifestRepository(manifest_path)
         files = manifest_repo.filter_pending(files)
 
     files = sorted_files(files)
     label = "pending files" if args.pending_only else "files"
     print(f"{label}: {len(files)}")
-    print_files(files)
+
+    # Determine display limit
+    limit = getattr(args, "limit", 100)
+    if limit == 0:
+        limit = None  # Show all files
+
+    print_files(files, limit=limit)
     return 0
 
 
 def cmd_ingest_run(args: argparse.Namespace) -> int:
     """Run ingestion for pending bronze files."""
-    bronze_root = Path(args.bronze_root)
-    source = LocalBronzeSource(bronze_root)
-    manifest_repo = DeltaManifestRepository(Path(args.manifest_path))
+    # Resolve bronze_root: vendor parameter takes precedence
+    if hasattr(args, "vendor") and args.vendor:
+        bronze_root = BRONZE_ROOT / args.vendor
+    else:
+        bronze_root = Path(args.bronze_root)
+
+    enable_prehooks = not getattr(args, "no_prehook", False)
+
+    # Ingestion needs checksums for manifest tracking
+    source = LocalBronzeSource(
+        bronze_root,
+        enable_prehooks=enable_prehooks,
+        compute_checksums=True,  # Need SHA256 for manifest
+    )
+    manifest_repo = DeltaManifestRepository(get_table_path("ingest_manifest"))
 
     files = list(source.list_files(args.glob))
 
@@ -71,17 +106,23 @@ def cmd_ingest_run(args: argparse.Namespace) -> int:
     failed_count = 0
     quarantined_count = 0
 
-    files_by_type: dict[str, list] = {}
+    # Group files by (data_type, interval) for klines, or just data_type for others
+    files_by_key: dict[tuple, list] = {}
     for file_meta in files:
-        files_by_type.setdefault(file_meta.data_type, []).append(file_meta)
+        if file_meta.data_type == "klines" and file_meta.interval:
+            key = ("klines", file_meta.interval)
+        else:
+            key = (file_meta.data_type, None)
+        files_by_key.setdefault(key, []).append(file_meta)
 
-    for data_type, type_files in files_by_type.items():
+    for (data_type, interval), type_files in files_by_key.items():
         try:
-            service = create_ingestion_service(data_type, manifest_repo)
+            service = create_ingestion_service(data_type, manifest_repo, interval=interval)
         except ValueError as exc:
             print(f"Error: {exc}")
             for file_meta in type_files:
-                print(f"✗ {file_meta.bronze_file_path}: Unsupported data type")
+                desc = f"{data_type}:{interval}" if interval else data_type
+                print(f"✗ {file_meta.bronze_file_path}: Unsupported type {desc}")
                 failed_count += 1
             continue
 

@@ -8,7 +8,12 @@ from pathlib import Path
 
 import polars as pl
 
-from pointline.config import get_bronze_root, get_exchange_id, normalize_exchange
+from pointline.config import (
+    get_bronze_root,
+    get_exchange_id,
+    get_exchange_timezone,
+    normalize_exchange,
+)
 from pointline.dim_symbol import check_coverage
 from pointline.io.protocols import BronzeFileMetadata, IngestionManifestRepository, IngestionResult
 from pointline.io.vendor.binance import normalize_symbol
@@ -219,16 +224,34 @@ class KlinesIngestionService(BaseService):
         )
 
     def _add_metadata(self, df: pl.DataFrame, exchange: str, exchange_id: int) -> pl.DataFrame:
+        """
+        Add exchange, exchange_id, and exchange-local date columns.
+
+        The date column is derived from ts_bucket_start_us (not ts_local_us) in the
+        exchange's local timezone, ensuring that one trading day maps to exactly one partition.
+
+        Raises:
+            ValueError: If exchange is not registered in EXCHANGE_TIMEZONES
+        """
         result = df.with_columns(
             [
                 pl.lit(exchange, dtype=pl.Utf8).alias("exchange"),
                 pl.lit(exchange_id, dtype=pl.Int16).alias("exchange_id"),
             ]
         )
+        # Validate exchange has explicit timezone mapping (fail fast to prevent mispartitioning)
+        try:
+            exchange_tz = get_exchange_timezone(exchange, strict=True)
+        except ValueError as e:
+            raise ValueError(
+                f"Cannot add metadata for exchange '{exchange}' (exchange_id={exchange_id}): {e}"
+            ) from e
         result = result.with_columns(
             [
                 pl.from_epoch(pl.col("ts_bucket_start_us"), time_unit="us")
-                .cast(pl.Date)
+                .dt.replace_time_zone("UTC")
+                .dt.convert_time_zone(exchange_tz)
+                .dt.date()
                 .alias("date"),
             ]
         )

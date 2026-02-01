@@ -45,7 +45,7 @@ A daily dimension table tracking asset-level statistics, primarily `circulating_
 **Join Pattern:**
 ```sql
 -- Join with dim_symbol to get asset stats for symbols
-SELECT 
+SELECT
     s.*,
     a.circulating_supply,
     a.market_cap_usd
@@ -74,7 +74,7 @@ WHERE s.is_current = true
 **Use Case:** Daily syncs for current data
 
 #### 2. Circulating Supply Chart Endpoint (Historical Backfill) ⭐ **RECOMMENDED**
-**Endpoint:** `GET /pro-api.coingecko.com/api/v3/coins/{id}/circulating_supply_chart`  
+**Endpoint:** `GET /pro-api.coingecko.com/api/v3/coins/{id}/circulating_supply_chart`
 **Reference:** [CoinGecko API Docs](https://docs.coingecko.com/reference/coins-id-circulating-supply-chart)
 
 **Benefits:**

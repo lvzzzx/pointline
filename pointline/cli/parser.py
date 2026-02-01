@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import os
 
+from pointline.cli.commands.bronze_reorganize import cmd_bronze_reorganize
 from pointline.cli.commands.config import cmd_config_set, cmd_config_show
 from pointline.cli.commands.delta import cmd_delta_optimize, cmd_delta_vacuum
 from pointline.cli.commands.dim_asset_stats import (
@@ -24,7 +25,7 @@ from pointline.cli.commands.stock_basic_cn import cmd_stock_basic_cn_sync
 from pointline.cli.commands.symbol import cmd_symbol_search
 from pointline.cli.commands.validate import cmd_validate_quotes, cmd_validate_trades
 from pointline.cli.commands.validation import cmd_validation_show, cmd_validation_stats
-from pointline.config import TABLE_PATHS, get_bronze_root, get_table_path
+from pointline.config import BRONZE_ROOT, TABLE_PATHS, get_bronze_root, get_table_path
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -196,21 +197,50 @@ def build_parser() -> argparse.ArgumentParser:
     bronze_download.add_argument("--http-proxy", default=None, help="HTTP proxy URL (optional)")
     bronze_download.set_defaults(func=cmd_download)
 
+    bronze_reorganize = bronze_sub.add_parser(
+        "reorganize", help="Reorganize vendor archives into Hive-partitioned bronze layout"
+    )
+    bronze_reorganize.add_argument(
+        "--source-dir",
+        required=True,
+        help="Source directory containing vendor archives (e.g., .7z files)",
+    )
+    bronze_reorganize.add_argument(
+        "--bronze-root",
+        required=True,
+        help="Bronze root directory (target for reorganized files)",
+    )
+    bronze_reorganize.add_argument(
+        "--vendor",
+        default="quant360",
+        help="Vendor name (default: quant360)",
+    )
+    bronze_reorganize.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Print actions without executing",
+    )
+    bronze_reorganize.set_defaults(func=cmd_bronze_reorganize)
+
     bronze_discover = bronze_sub.add_parser("discover", help="Discover bronze files")
     bronze_discover.add_argument(
         "--bronze-root",
-        default=str(get_bronze_root("tardis")),
-        help="Bronze root path (default: LAKE_ROOT/bronze/tardis)",
+        default=str(BRONZE_ROOT),
+        help="Bronze root path (default: LAKE_ROOT/bronze)",
+    )
+    bronze_discover.add_argument(
+        "--vendor",
+        help="Vendor name (used to construct bronze-root as LAKE_ROOT/bronze/{vendor})",
+    )
+    bronze_discover.add_argument(
+        "--manifest-path",
+        default=str(get_table_path("ingest_manifest")),
+        help="Path to ingest_manifest (default: LAKE_ROOT/silver/ingest_manifest)",
     )
     bronze_discover.add_argument(
         "--glob",
         default="**/*.csv.gz",
         help="Glob pattern for bronze files",
-    )
-    bronze_discover.add_argument(
-        "--manifest-path",
-        default=str(get_table_path("ingest_manifest")),
-        help="Path to the ingest manifest table",
     )
     bronze_discover.add_argument(
         "--data-type",
@@ -221,23 +251,33 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Only show files not yet marked success in the manifest",
     )
+    bronze_discover.add_argument(
+        "--no-prehook",
+        action="store_true",
+        help="Skip vendor-specific prehooks (e.g., archive reorganization)",
+    )
+    bronze_discover.add_argument(
+        "--limit",
+        type=int,
+        default=100,
+        help="Maximum number of files to display (default: 100, use 0 for all)",
+    )
     bronze_discover.set_defaults(func=cmd_ingest_discover)
 
     bronze_ingest = bronze_sub.add_parser("ingest", help="Run ingestion for pending files")
     bronze_ingest.add_argument(
         "--bronze-root",
-        default=str(get_bronze_root("tardis")),
-        help="Bronze root path (default: LAKE_ROOT/bronze/tardis)",
+        default=str(BRONZE_ROOT),
+        help="Bronze root path (default: LAKE_ROOT/bronze)",
+    )
+    bronze_ingest.add_argument(
+        "--vendor",
+        help="Vendor name (used to construct bronze-root as LAKE_ROOT/bronze/{vendor})",
     )
     bronze_ingest.add_argument(
         "--glob",
         default="**/*.csv.gz",
         help="Glob pattern for bronze files",
-    )
-    bronze_ingest.add_argument(
-        "--manifest-path",
-        default=str(get_table_path("ingest_manifest")),
-        help="Path to the ingest manifest table",
     )
     bronze_ingest.add_argument(
         "--data-type",
@@ -269,6 +309,11 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=0,
         help="Random seed for validation sampling (default: 0)",
+    )
+    bronze_ingest.add_argument(
+        "--no-prehook",
+        action="store_true",
+        help="Skip vendor-specific prehooks (e.g., archive reorganization)",
     )
     bronze_ingest.set_defaults(func=cmd_ingest_run)
 
