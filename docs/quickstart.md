@@ -211,8 +211,11 @@ plt.show()
 **Advanced: Resample to 1-minute bars**
 ```python
 # Aggregate to 1-minute OHLCV bars
-bars = trades.group_by_dynamic(
-    "ts_local_us",
+trades_with_dt = trades.with_columns(
+    pl.from_epoch("ts_local_us", time_unit="us").alias("ts_dt")
+)
+bars = trades_with_dt.group_by_dynamic(
+    "ts_dt",
     every="1m",
 ).agg([
     pl.col("price").first().alias("open"),

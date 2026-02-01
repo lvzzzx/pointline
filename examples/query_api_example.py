@@ -102,6 +102,7 @@ except Exception as e:
     trades_df = pl.DataFrame(
         {
             "ts_local_us": range(1714521600000000, 1714521600000000 + 1000000, 1000),
+            "symbol_id": [1] * 1000,
             "price": [67000.0 + i * 0.1 for i in range(1000)],
             "qty": [0.1 + (i % 10) * 0.01 for i in range(1000)],
             "side": [i % 2 for i in range(1000)],
@@ -130,7 +131,7 @@ stats = trades_df.select(
         pl.col("price").max().alias("max_price"),
         pl.col("price").mean().alias("avg_price"),
         pl.col("qty").sum().alias("total_volume"),
-        pl.count().alias("trade_count"),
+        pl.len().alias("trade_count"),
     ]
 )
 print("\nTrade Statistics:")
@@ -142,7 +143,7 @@ by_side = trades_df.group_by("side").agg(
     [
         pl.col("qty").sum().alias("volume"),
         pl.col("price").mean().alias("avg_price"),
-        pl.count().alias("count"),
+        pl.len().alias("count"),
     ]
 )
 print("By Side (0=buy, 1=sell):")
@@ -191,12 +192,12 @@ try:
     pit_data = trades_sorted.join_asof(
         quotes_sorted,
         on="ts_local_us",
-        by=["exchange_id", "symbol_id"],
+        by="symbol_id",
         strategy="backward",  # Get last quote known BEFORE or AT trade time
     )
     print(f"✓ Joined {pit_data.height:,} rows")
     print("\nSample joined data:")
-    print(pit_data.select(["ts_local_us", "price", "bid_px", "ask_px"]).head(3))
+    print(pit_data.select(["ts_local_us", "price", "bid_price", "ask_price"]).head(3))
     print()
 
 except Exception as e:
@@ -215,10 +216,11 @@ print()
 
 # Create 1-minute OHLCV bars
 print("Creating 1-minute OHLCV bars...")
+trades_with_dt = trades_df.with_columns(pl.from_epoch("ts_local_us", time_unit="us").alias("ts_dt"))
 bars = (
-    trades_df.sort("ts_local_us")
+    trades_with_dt.sort("ts_dt")
     .group_by_dynamic(
-        "ts_local_us",
+        "ts_dt",
         every="1m",
     )
     .agg(
@@ -228,7 +230,7 @@ bars = (
             pl.col("price").min().alias("low"),
             pl.col("price").last().alias("close"),
             pl.col("qty").sum().alias("volume"),
-            pl.count().alias("trade_count"),
+            pl.len().alias("trade_count"),
         ]
     )
 )

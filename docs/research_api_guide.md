@@ -38,11 +38,12 @@ features = book.select([
     pl.col("bids_px").list.get(0).alias("best_bid"),
     pl.col("asks_px").list.get(0).alias("best_ask"),
 ]).with_columns([
+    pl.from_epoch("ts_local_us", time_unit="us").alias("ts_dt"),
     (pl.col("best_ask") - pl.col("best_bid")).alias("spread"),
 ])
 
 # Aggregate before collecting
-hourly = features.group_by_dynamic("ts_local_us", every="1h").agg([
+hourly = features.group_by_dynamic("ts_dt", every="1h").agg([
     pl.col("spread").mean().alias("avg_spread"),
 ])
 
@@ -197,6 +198,7 @@ features_lf = book_lf.select([
          pl.col("asks_sz").list.head(5).list.sum())
     ).alias("imbalance_top5"),
 ]).with_columns([
+    pl.from_epoch("ts_local_us", time_unit="us").alias("ts_dt"),
     # Spread
     (pl.col("best_ask_px") - pl.col("best_bid_px")).alias("spread"),
     # Mid price
@@ -205,7 +207,7 @@ features_lf = book_lf.select([
 
 # 3. Aggregate to reduce data volume (still lazy)
 hourly_lf = features_lf.group_by_dynamic(
-    "ts_local_us",
+    "ts_dt",
     every="1h",
     by="symbol_id",
 ).agg([
@@ -213,7 +215,7 @@ hourly_lf = features_lf.group_by_dynamic(
     pl.col("spread").std().alias("std_spread"),
     pl.col("mid_px").mean().alias("avg_mid_px"),
     pl.col("imbalance_top5").mean().alias("avg_imbalance"),
-    pl.col("ts_local_us").count().alias("snapshot_count"),
+    pl.len().alias("snapshot_count"),
 ])
 
 # 4. NOW collect (query plan executes)
@@ -255,6 +257,9 @@ Load trades with automatic symbol resolution.
 
 #### `query.quotes(...)`
 Load quotes with automatic symbol resolution.
+
+**Decoded columns (when `decoded=True`):**
+`bid_price`, `bid_amount`, `ask_price`, `ask_amount`
 
 #### `query.book_snapshot_25(...)`
 Load book snapshots with automatic symbol resolution.

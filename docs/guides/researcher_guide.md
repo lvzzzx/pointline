@@ -207,7 +207,10 @@ trades_lf = query.trades(
 large_trades = trades_lf.filter(pl.col("qty") > 1.0)
 
 # Aggregate before collecting
-hourly = large_trades.group_by_dynamic("ts_local_us", every="1h").agg([
+large_trades = large_trades.with_columns(
+    pl.from_epoch("ts_local_us", time_unit="us").alias("ts_dt")
+)
+hourly = large_trades.group_by_dynamic("ts_dt", every="1h").agg([
     pl.col("price").mean(),
     pl.col("qty").sum(),
 ])
@@ -297,7 +300,10 @@ print(f"VWAP: ${vwap:.2f}")
 
 ```python
 # 1-minute OHLCV bars
-bars = trades.group_by_dynamic("ts_local_us", every="1m").agg([
+trades_with_dt = trades.with_columns(
+    pl.from_epoch("ts_local_us", time_unit="us").alias("ts_dt")
+)
+bars = trades_with_dt.group_by_dynamic("ts_dt", every="1m").agg([
     pl.col("price").first().alias("open"),
     pl.col("price").max().alias("high"),
     pl.col("price").min().alias("low"),
