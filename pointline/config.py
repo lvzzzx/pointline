@@ -413,7 +413,6 @@ def get_table_path(table_name: str) -> Path:
 
     # Handle dynamic kline tables: kline_{interval}
     if table_name.startswith("kline_"):
-        interval = table_name[6:]  # Extract interval part after "kline_"
         return LAKE_ROOT / f"silver/{table_name}"
 
     raise KeyError(

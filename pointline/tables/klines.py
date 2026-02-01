@@ -194,8 +194,8 @@ def encode_fixed_point(df: pl.DataFrame, dim_symbol: pl.DataFrame) -> pl.DataFra
     )
     if not overflow_check.is_empty():
         raise ValueError(
-            f"encode_fixed_point: Int64 overflow detected when encoding quote_volume "
-            f"(quote_increment too small or values too large)"
+            "encode_fixed_point: Int64 overflow detected when encoding quote_volume "
+            "(quote_increment too small or values too large)"
         )
 
     drop_cols = [

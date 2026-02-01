@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """Validate kline ingestion results."""
 
-import polars as pl
 from pathlib import Path
+
+import polars as pl
+
 from pointline.tables.klines import check_kline_completeness
 
 # Load all kline_1h data
@@ -59,9 +61,7 @@ print("COMPLETENESS CHECK (24 rows/day expected for 1h interval)")
 print(f"{'=' * 60}")
 
 # Load dim_symbol to get exchange_symbol
-from pathlib import Path as P
-
-dim_symbol_path = P.home() / "data/lake/silver/dim_symbol"
+dim_symbol_path = Path.home() / "data/lake/silver/dim_symbol"
 dim_symbol_df = (
     pl.scan_delta(str(dim_symbol_path)).select(["symbol_id", "exchange_symbol"]).unique().collect()
 )

@@ -60,7 +60,7 @@ def print_files(files: Sequence[BronzeFileMetadata], *, limit: int | None = 100)
 
     if limit is not None and total > limit:
         print(f"... and {total - limit} more files (showing first {limit})")
-        print(f"Tip: Use --limit to adjust output, or --limit 0 to show all files")
+        print("Tip: Use --limit to adjust output, or --limit 0 to show all files")
 
 
 def compute_sha256(path: Path, chunk_size: int = 1024 * 1024) -> str:

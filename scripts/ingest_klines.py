@@ -3,6 +3,7 @@
 
 import sys
 from pathlib import Path
+
 from pointline.cli import main
 
 # Configure ingestion

@@ -10,7 +10,6 @@ from pathlib import Path
 import polars as pl
 
 from pointline.cli.utils import parse_date_arg
-from pointline.config import get_table_path
 from pointline.dq.registry import list_dq_tables
 from pointline.dq.runner import (
     run_dq_for_all_tables,

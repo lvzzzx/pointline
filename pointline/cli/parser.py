@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import os
 
+from pointline.cli.commands.bronze_reorganize import cmd_bronze_reorganize
 from pointline.cli.commands.config import cmd_config_set, cmd_config_show
 from pointline.cli.commands.delta import cmd_delta_optimize, cmd_delta_vacuum
 from pointline.cli.commands.dim_asset_stats import (
@@ -12,7 +13,6 @@ from pointline.cli.commands.dim_asset_stats import (
     cmd_dim_asset_stats_sync,
 )
 from pointline.cli.commands.dim_symbol import cmd_dim_symbol_sync, cmd_dim_symbol_sync_tushare
-from pointline.cli.commands.bronze_reorganize import cmd_bronze_reorganize
 from pointline.cli.commands.download import cmd_download
 from pointline.cli.commands.dq import cmd_dq_report, cmd_dq_run, cmd_dq_summary, dq_table_choices
 from pointline.cli.commands.ingest import cmd_ingest_discover, cmd_ingest_run

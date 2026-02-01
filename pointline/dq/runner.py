@@ -11,7 +11,7 @@ from pathlib import Path
 import polars as pl
 
 from pointline.config import TABLE_HAS_DATE, get_table_path
-from pointline.dq.registry import TableDQConfig, get_dq_config, list_dq_tables
+from pointline.dq.registry import get_dq_config, list_dq_tables
 from pointline.tables.dq_summary import create_dq_summary_record
 
 

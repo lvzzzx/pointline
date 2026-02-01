@@ -1,7 +1,7 @@
 """Test timezone validation in services."""
 
-import pytest
 import polars as pl
+import pytest
 
 from pointline.config import get_exchange_timezone
 from pointline.services.trades_service import TradesIngestionService
@@ -29,9 +29,10 @@ def test_get_exchange_timezone_non_strict_mode_unknown_exchange():
 def test_service_add_metadata_fails_for_unknown_exchange():
     """_add_metadata should fail fast for unknown exchanges."""
     # Create a minimal trades service instance
-    from pointline.io.base_repository import BaseDeltaRepository
-    from pathlib import Path
     import tempfile
+    from pathlib import Path
+
+    from pointline.io.base_repository import BaseDeltaRepository
 
     with tempfile.TemporaryDirectory() as tmpdir:
         repo = BaseDeltaRepository(Path(tmpdir) / "trades")
@@ -54,9 +55,10 @@ def test_service_add_metadata_fails_for_unknown_exchange():
 
 def test_service_add_metadata_succeeds_for_known_exchange():
     """_add_metadata should succeed for known exchanges."""
-    from pointline.io.base_repository import BaseDeltaRepository
-    from pathlib import Path
     import tempfile
+    from pathlib import Path
+
+    from pointline.io.base_repository import BaseDeltaRepository
 
     with tempfile.TemporaryDirectory() as tmpdir:
         repo = BaseDeltaRepository(Path(tmpdir) / "trades")
