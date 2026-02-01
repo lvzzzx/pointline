@@ -351,6 +351,52 @@ def load_book_snapshot_25(
     return lf if lazy else lf.collect()
 
 
+def load_derivative_ticker(
+    *,
+    symbol_id: int | Iterable[int] | None = None,
+    start_ts_us: TimestampInput | None = None,
+    end_ts_us: TimestampInput | None = None,
+    ts_col: str = "ts_local_us",
+    columns: Sequence[str] | None = None,
+    lazy: bool = False,
+) -> pl.DataFrame | pl.LazyFrame:
+    """Load derivative ticker data with common filters applied.
+
+    Requires symbol_id + time range.
+
+    Derivative ticker data includes funding rates, open interest, mark price,
+    index price, and last price for perpetual futures and other derivatives.
+
+    Args:
+        symbol_id: Symbol ID(s) to filter
+        start_ts_us: Start timestamp (microseconds since epoch or datetime object)
+        end_ts_us: End timestamp (microseconds since epoch or datetime object)
+        ts_col: Timestamp column to filter on (default: "ts_local_us")
+        columns: List of columns to select (default: all)
+        lazy: If True, return LazyFrame; if False, return DataFrame
+
+    Returns:
+        Filtered derivative ticker data (DataFrame or LazyFrame based on lazy parameter)
+
+    Examples:
+        >>> from datetime import datetime, timezone
+        >>> ticker = research.load_derivative_ticker(
+        ...     symbol_id=101,
+        ...     start_ts_us=datetime(2023, 11, 14, 12, 0, tzinfo=timezone.utc),
+        ...     end_ts_us=datetime(2023, 11, 14, 13, 0, tzinfo=timezone.utc),
+        ... )
+    """
+    lf = scan_table(
+        "derivative_ticker",
+        symbol_id=symbol_id,
+        start_ts_us=start_ts_us,
+        end_ts_us=end_ts_us,
+        ts_col=ts_col,
+        columns=columns,
+    )
+    return lf if lazy else lf.collect()
+
+
 def load_trades_decoded(
     *,
     symbol_id: int | Iterable[int] | None = None,
