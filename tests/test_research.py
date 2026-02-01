@@ -4,12 +4,17 @@ from unittest.mock import MagicMock, patch
 import polars as pl
 import pytest
 
-from pointline.research import _normalize_timestamp, list_tables, load_trades, scan_table
+from pointline.research import (
+    _normalize_timestamp,
+    list_tables,
+    load_trades,
+    scan_table,
+)
 
 
-@patch("pointline.research.resolve_symbols")
-@patch("pointline.research.pl.scan_delta")
-@patch("pointline.research.get_table_path")
+@patch("pointline.research.core.resolve_symbols")
+@patch("pointline.research.core.pl.scan_delta")
+@patch("pointline.research.core.get_table_path")
 def test_scan_table_filters(mock_get_path, mock_scan_delta, mock_resolve_symbols):
     # Setup mocks
     mock_get_path.return_value = "/fake/path"
@@ -47,9 +52,9 @@ def test_scan_table_filters(mock_get_path, mock_scan_delta, mock_resolve_symbols
     mock_lf.select.assert_called_once_with(["ts_local_us", "price_int"])
 
 
-@patch("pointline.research.resolve_symbols")
-@patch("pointline.research.pl.scan_delta")
-@patch("pointline.research.get_table_path")
+@patch("pointline.research.core.resolve_symbols")
+@patch("pointline.research.core.pl.scan_delta")
+@patch("pointline.research.core.get_table_path")
 def test_scan_table_time_range_prunes_date(mock_get_path, mock_scan_delta, mock_resolve_symbols):
     mock_get_path.return_value = "/fake/path"
     mock_lf = MagicMock(spec=pl.LazyFrame)
@@ -86,7 +91,7 @@ def test_list_tables():
     assert "book_snapshot_25" in tables
 
 
-@patch("pointline.research.scan_table")
+@patch("pointline.research.core.scan_table")
 def test_load_trades_lazy(mock_scan_table):
     mock_lf = MagicMock(spec=pl.LazyFrame)
     mock_scan_table.return_value = mock_lf
@@ -174,9 +179,9 @@ def test_normalize_timestamp_with_invalid_type():
         _normalize_timestamp(1.5, "start_ts_us")
 
 
-@patch("pointline.research.resolve_symbols")
-@patch("pointline.research.pl.scan_delta")
-@patch("pointline.research.get_table_path")
+@patch("pointline.research.core.resolve_symbols")
+@patch("pointline.research.core.pl.scan_delta")
+@patch("pointline.research.core.get_table_path")
 def test_scan_table_accepts_datetime(mock_get_path, mock_scan_delta, mock_resolve_symbols):
     """Test that scan_table accepts datetime objects."""
     start = datetime(2023, 11, 14, 12, 0, 0, tzinfo=timezone.utc)
@@ -207,9 +212,9 @@ def test_scan_table_accepts_datetime(mock_get_path, mock_scan_delta, mock_resolv
     mock_scan_delta.assert_called_once()
 
 
-@patch("pointline.research.resolve_symbols")
-@patch("pointline.research.pl.scan_delta")
-@patch("pointline.research.get_table_path")
+@patch("pointline.research.core.resolve_symbols")
+@patch("pointline.research.core.pl.scan_delta")
+@patch("pointline.research.core.get_table_path")
 def test_load_trades_with_datetime(mock_get_path, mock_scan_delta, mock_resolve_symbols):
     """Test that load_trades works with datetime objects."""
     start = datetime(2023, 11, 14, 12, 0, 0, tzinfo=timezone.utc)
@@ -287,9 +292,9 @@ def test_datetime_backwards_compatibility():
     """Test that existing int-based code still works."""
     # This test verifies backward compatibility
     with (
-        patch("pointline.research.resolve_symbols"),
-        patch("pointline.research.pl.scan_delta"),
-        patch("pointline.research.get_table_path"),
+        patch("pointline.research.core.resolve_symbols"),
+        patch("pointline.research.core.pl.scan_delta"),
+        patch("pointline.research.core.get_table_path"),
     ):
         # Old-style API call with ints should still work
         scan_table(
