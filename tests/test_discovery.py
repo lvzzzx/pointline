@@ -1,6 +1,7 @@
 """Tests for data discovery API."""
 
 import polars as pl
+import pytest
 
 from pointline.research import discovery
 
@@ -123,6 +124,16 @@ def test_list_tables_silver_only():
 
     assert df.height > 0
     assert all(layer == "silver" for layer in df["layer"].to_list())
+
+
+def test_list_tables_invalid_layer():
+    """Test invalid layer error messaging."""
+    with pytest.raises(ValueError) as exc:
+        discovery.list_tables(layer="binance-futures")
+
+    msg = str(exc.value)
+    assert "layer must be one of" in msg
+    assert "binance-futures" in msg
 
 
 def test_data_coverage_symbol_not_found():
