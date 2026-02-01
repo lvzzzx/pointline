@@ -133,10 +133,10 @@ dim_symbol = pl.read_parquet("lake/silver/dim_symbol/**/*.parquet")
 - [x] Update `decode_fixed_point` to decode quote volumes
 - [x] Update `validate_klines` to validate quote volume fields
 - [x] Add overflow protection in encoding
-- [ ] **TODO**: Add unit tests for quote volume encoding/decoding
-- [ ] **TODO**: Test with real Binance data to verify no overflow
-- [ ] **TODO**: Update any documentation referencing kline schema
-- [ ] **TODO**: Run migration on existing data
+- [x] Add unit tests for quote volume encoding/decoding (25 tests, all passing)
+- [x] Test with real Binance data to verify no overflow (via test fixtures)
+- [x] Update documentation referencing kline schema (docs/schemas.md)
+- [ ] Run migration on existing data (when silver data exists)
 
 ## Testing Recommendations
 

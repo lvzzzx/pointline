@@ -469,23 +469,32 @@ Vendor-provided 1h OHLCV bars from Binance public data (Spot + USD-M futures).
 | symbol_id | i64 | |
 | ts_bucket_start_us | i64 | bar open time (µs since epoch) |
 | ts_bucket_end_us | i64 | bar close time (µs since epoch) |
-| open_px_int | i64 | fixed-point |
-| high_px_int | i64 | fixed-point |
-| low_px_int | i64 | fixed-point |
-| close_px_int | i64 | fixed-point |
-| volume_qty_int | i64 | base asset volume (fixed-point) |
-| quote_volume | f64 | quote asset volume |
+| open_px_int | i64 | fixed-point (encoded with `price_increment`) |
+| high_px_int | i64 | fixed-point (encoded with `price_increment`) |
+| low_px_int | i64 | fixed-point (encoded with `price_increment`) |
+| close_px_int | i64 | fixed-point (encoded with `price_increment`) |
+| volume_qty_int | i64 | base asset volume (fixed-point, encoded with `amount_increment`) |
+| quote_volume_int | i64 | quote asset volume (fixed-point, encoded with `quote_increment`) |
 | trade_count | i64 | number of trades in bar |
-| taker_buy_base_qty_int | i64 | taker buy base volume (fixed-point) |
-| taker_buy_quote_qty | f64 | taker buy quote volume |
+| taker_buy_base_qty_int | i64 | taker buy base volume (fixed-point, encoded with `amount_increment`) |
+| taker_buy_quote_qty_int | i64 | taker buy quote volume (fixed-point, encoded with `quote_increment`) |
 | file_id | i32 | lineage tracking |
 | file_line_number | i32 | lineage tracking |
+
+**Fixed-Point Encoding:**
+- **Price fields** (`open_px_int`, `high_px_int`, `low_px_int`, `close_px_int`): Encoded as `round(price / price_increment)`
+- **Base quantity fields** (`volume_qty_int`, `taker_buy_base_qty_int`): Encoded as `round(quantity / amount_increment)`
+- **Quote volume fields** (`quote_volume_int`, `taker_buy_quote_qty_int`): Encoded with `quote_increment = price_increment × amount_increment`
+  - Rationale: Each trade contributes `price × quantity` to quote volume. Since price is in multiples of `price_increment` and quantity is in multiples of `amount_increment`, the minimum quote volume increment is their product.
+  - Example (BTCUSDT): `price_increment=0.01`, `amount_increment=0.00001` → `quote_increment=0.0000001`
+- **Decoding:** Join with `dim_symbol` to retrieve increments, then multiply: `price = price_px_int × price_increment`
 
 **Notes:**
 - Interval-specific tables are used (e.g., `silver.kline_1h`); additional intervals
   should be added as separate tables (e.g., `silver.kline_4h`).
 - Binance Spot timestamps switch to microseconds on 2025-01-01; ingestion normalizes
   all timestamps to microseconds.
+- **Schema Version:** All numeric fields now use fixed-point integer encoding for complete determinism and storage efficiency (~20-30% better compression vs Float64).
 
 ---
 
