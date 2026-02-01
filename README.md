@@ -9,9 +9,13 @@ This project provides ETL utilities and a structured data lake design optimized 
 - **Efficiency:** Compressed Parquet storage with integer encoding.
 
 ## Documentation
-- **Architecture:** [Design Document](./docs/architecture/design.md) - Detailed data lake schema and design principles.
-- **Product Guide:** [Product Vision](./conductor/product.md) - Goals and target audience.
-- **Tech Stack:** [Technology Stack](./conductor/tech-stack.md) - Python, Polars, Delta Lake, DuckDB.
+
+- **[5-Minute Quickstart](docs/quickstart.md)** ← Start here for new users
+- **[Choosing an API](docs/guides/choosing-an-api.md)** - Query API vs Core API decision guide
+- **[Research API Guide](docs/research_api_guide.md)** - Complete API reference
+- **[Researcher's Guide](docs/guides/researcher_guide.md)** - Comprehensive guide
+- **[Architecture](./docs/architecture/design.md)** - Detailed data lake schema and design principles
+- **[Product Vision](./conductor/product.md)** - Goals and target audience
 
 ## Getting Started
 
@@ -99,6 +103,8 @@ print(f"Loaded {trades.height:,} trades")
 ```
 
 See [examples/discovery_example.py](examples/discovery_example.py) for a complete walkthrough.
+
+**For production research:** Need explicit symbol_id control or performance tuning? See [Advanced Topics](docs/guides/researcher_guide.md#7-researcher-interface-conventions) for the core API.
 
 ## Contributing
 Please review our [Product Guidelines](./conductor/product-guidelines.md) and [Workflow](./conductor/workflow.md) before contributing.

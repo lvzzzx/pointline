@@ -65,6 +65,131 @@ trades = query.trades("binance-futures", "BTCUSDT", "2024-05-01", "2024-05-02", 
 - Prints rich summary with metadata and coverage
 - Use when user asks "tell me about BTCUSDT"
 
+## API Selection Guide (CRITICAL FOR LLM AGENTS)
+
+### Default Workflow: Query API
+
+**ALWAYS use the query API for exploration, analysis, and user questions:**
+
+```python
+from pointline.research import query
+
+# One-liner - automatic symbol resolution + decoding
+trades = query.trades("binance-futures", "BTCUSDT", "2024-05-01", "2024-05-02", decoded=True)
+quotes = query.quotes("binance-futures", "BTCUSDT", "2024-05-01", "2024-05-02", decoded=True)
+book = query.book_snapshot_25("binance-futures", "BTCUSDT", "2024-05-01", "2024-05-02", decoded=True)
+```
+
+**When user asks:** "Show me BTC trades on Binance"
+- ✅ **Correct:** Use `query.trades()` directly
+- ❌ **Incorrect:** Multi-step workflow with `registry.find_symbol()` + manual extraction
+
+### Advanced Workflow: Core API
+
+**ONLY use when user explicitly requests:**
+- Production research requiring reproducibility
+- Explicit symbol_id control
+- Performance-critical queries with custom optimization
+- Handling SCD Type 2 symbol changes explicitly
+
+### Anti-Patterns for LLM Agents
+
+#### ❌ DON'T: Use core API for simple queries
+
+```python
+# ❌ BAD - Unnecessary complexity
+from pointline import registry, research
+
+symbols = registry.find_symbol("BTCUSDT", exchange="binance-futures")
+symbol_id = symbols["symbol_id"][0]  # Manual extraction
+trades = research.load_trades(
+    symbol_id=symbol_id,
+    start_ts_us=1714521600000000,
+    end_ts_us=1714608000000000,
+)
+```
+
+#### ✅ DO: Use query API
+
+```python
+# ✅ GOOD - Simple and correct
+from pointline.research import query
+
+trades = query.trades(
+    "binance-futures",
+    "BTCUSDT",
+    "2024-05-01",
+    "2024-05-02",
+    decoded=True,
+)
+```
+
+#### ❌ DON'T: Manually convert timestamps
+
+```python
+# ❌ BAD - Error-prone
+from datetime import datetime, timezone
+
+start = datetime(2024, 5, 1, tzinfo=timezone.utc)
+start_ts_us = int(start.timestamp() * 1_000_000)  # Easy to mess up
+```
+
+#### ✅ DO: Use ISO strings or datetime objects directly
+
+```python
+# ✅ GOOD - ISO string (simplest)
+trades = query.trades(..., start="2024-05-01", end="2024-05-02")
+
+# ✅ GOOD - datetime object (query API accepts both)
+from datetime import datetime, timezone
+trades = query.trades(
+    ...,
+    start=datetime(2024, 5, 1, tzinfo=timezone.utc),
+    end=datetime(2024, 5, 2, tzinfo=timezone.utc),
+)
+```
+
+#### ❌ DON'T: Manually decode fixed-point
+
+```python
+# ❌ BAD - Verbose and unnecessary
+trades = research.load_trades(...)
+from pointline.tables.trades import decode_fixed_point
+from pointline.dim_symbol import read_dim_symbol_table
+
+dim_symbol = read_dim_symbol_table()
+trades = decode_fixed_point(trades, dim_symbol)
+```
+
+#### ✅ DO: Use decoded=True parameter
+
+```python
+# ✅ GOOD - Automatic decoding
+trades = query.trades(..., decoded=True)
+```
+
+### Decision Tree for LLM Agents
+
+```
+User asks to load data?
+│
+├─ Is this exploration/analysis/quick check? ──> Use query API
+│   └─ query.trades(..., decoded=True)
+│
+├─ Is this production research? ──> Ask if they need explicit symbol_id control
+│   ├─ Yes ──> Use core API
+│   │   └─ research.load_trades(symbol_id=..., start_ts_us=..., end_ts_us=...)
+│   └─ No ──> Use query API
+│
+└─ User explicitly mentions "symbol_id" or "reproducibility"?
+    └─ Yes ──> Use core API
+```
+
+**Summary for agents:**
+- **Default:** Query API (90% of use cases)
+- **Advanced:** Core API (10% of use cases, when explicitly needed)
+- **Never:** Multi-step workflows when query API exists
+
 ## Commands
 
 ### Setup
