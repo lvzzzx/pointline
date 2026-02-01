@@ -353,8 +353,75 @@ def book_snapshot_25(
     )
 
 
+def derivative_ticker(
+    exchange: str,
+    symbol: str,
+    start: TimestampInput,
+    end: TimestampInput,
+    *,
+    ts_col: str = "ts_local_us",
+    columns: list[str] | tuple[str, ...] | None = None,
+    lazy: bool = True,
+) -> pl.LazyFrame | pl.DataFrame:
+    """Load derivative ticker data with automatic symbol resolution.
+
+    This is a convenience function for exploration. For production use,
+    prefer research.load_derivative_ticker() with explicit symbol_id.
+
+    Derivative ticker data includes funding rates, open interest, mark price,
+    index price, and last price for perpetual futures and other derivatives.
+
+    Args:
+        exchange: Exchange name (e.g., "binance-futures", "deribit")
+        symbol: Exchange symbol (e.g., "SOLUSDT", "BTC-PERPETUAL")
+        start: Start time (datetime, ISO string, or int microseconds)
+        end: End time (datetime, ISO string, or int microseconds)
+        ts_col: Timestamp column to filter on (default: "ts_local_us")
+        columns: List of columns to select (default: all)
+        lazy: Return LazyFrame (True) or DataFrame (False)
+
+    Returns:
+        Derivative ticker data (LazyFrame or DataFrame)
+
+    Examples:
+        >>> from pointline.research import query
+        >>> from datetime import datetime, timezone
+        >>>
+        >>> # Quick exploration with datetime
+        >>> ticker = query.derivative_ticker(
+        ...     exchange="binance-futures",
+        ...     symbol="SOLUSDT",
+        ...     start=datetime(2024, 5, 1, tzinfo=timezone.utc),
+        ...     end=datetime(2024, 5, 2, tzinfo=timezone.utc),
+        ... )
+        >>>
+        >>> # Or with ISO strings
+        >>> ticker = query.derivative_ticker(
+        ...     "binance-futures",
+        ...     "SOLUSDT",
+        ...     "2024-05-01",
+        ...     "2024-05-02",
+        ...     lazy=False,
+        ... )
+    """
+    start_ts_us = core._normalize_timestamp(start, "start")
+    end_ts_us = core._normalize_timestamp(end, "end")
+
+    symbol_ids = _resolve_symbols_with_warning(exchange, symbol, start_ts_us, end_ts_us)
+
+    return core.load_derivative_ticker(
+        symbol_id=symbol_ids,
+        start_ts_us=start_ts_us,
+        end_ts_us=end_ts_us,
+        ts_col=ts_col,
+        columns=columns,
+        lazy=lazy,
+    )
+
+
 __all__ = [
     "trades",
     "quotes",
     "book_snapshot_25",
+    "derivative_ticker",
 ]

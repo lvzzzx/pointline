@@ -327,6 +327,27 @@ def list_tables(
         >>> tables = list_tables()
         >>> print(tables)
     """
+    valid_layers = {"silver", "gold", "reference"}
+    if layer:
+        normalized_layer = layer.strip().lower()
+        if normalized_layer in {"all", "*"}:
+            layer = None
+        elif normalized_layer not in valid_layers:
+            raise ValueError(
+                "layer must be one of {'silver', 'gold', 'reference'} or None. "
+                f"Got '{layer}'. If you meant an exchange (e.g., 'binance-futures'), "
+                "use `list_exchanges()` or `list_symbols(exchange=...)` instead."
+            )
+        else:
+            layer = normalized_layer
+
+    schema = {
+        "table_name": pl.Utf8,
+        "layer": pl.Utf8,
+        "path": pl.Utf8,
+        "has_date_partition": pl.Boolean,
+        "description": pl.Utf8,
+    }
     tables_data = []
 
     for table_name, rel_path in TABLE_PATHS.items():
@@ -348,7 +369,7 @@ def list_tables(
             }
         )
 
-    df = pl.DataFrame(tables_data)
+    df = pl.DataFrame(tables_data, schema=schema)
 
     # TODO: Add stats (size, row counts) if include_stats=True
     if include_stats:
