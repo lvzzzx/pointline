@@ -8,6 +8,7 @@ from pointline.research import (
     _normalize_timestamp,
     list_tables,
     load_trades,
+    load_trades_decoded,
     scan_table,
 )
 
@@ -112,6 +113,56 @@ def test_load_trades_lazy(mock_scan_table):
         ts_col="ts_local_us",
         columns=None,
     )
+
+
+@patch("pointline.research.core.decode_trades")
+@patch("pointline.research.core.read_table")
+def test_load_trades_decoded_keeps_ints_for_requested_columns(mock_read_table, mock_decode_trades):
+    mock_read_table.return_value = pl.DataFrame(
+        {"symbol_id": [1], "price_int": [10], "qty_int": [5]}
+    )
+    mock_decode_trades.return_value = pl.DataFrame(
+        {"symbol_id": [1], "price_int": [10], "qty_int": [5], "price": [1.0], "qty": [0.05]}
+    )
+
+    dim_symbol = pl.DataFrame(
+        {"symbol_id": [1], "price_increment": [0.1], "amount_increment": [0.01]}
+    )
+
+    result = load_trades_decoded(
+        symbol_id=1,
+        start_ts_us=1,
+        end_ts_us=2,
+        columns=["symbol_id", "price_int"],
+        dim_symbol=dim_symbol,
+    )
+
+    assert result.shape[0] == 1
+    assert "price_int" in result.columns
+    assert mock_decode_trades.call_args.kwargs["keep_ints"] is True
+
+
+def test_load_trades_decoded_lazy_returns_lazyframe():
+    df = pl.DataFrame({"symbol_id": [1], "price_int": [10], "qty_int": [5]})
+    dim_symbol = pl.DataFrame(
+        {"symbol_id": [1], "price_increment": [0.1], "amount_increment": [0.01]}
+    )
+
+    with patch("pointline.research.core.scan_table") as mock_scan:
+        mock_scan.return_value = df.lazy()
+
+        result = load_trades_decoded(
+            symbol_id=1,
+            start_ts_us=1,
+            end_ts_us=2,
+            dim_symbol=dim_symbol,
+            lazy=True,
+        )
+
+        assert isinstance(result, pl.LazyFrame)
+        collected = result.collect()
+        assert collected["price"][0] == 1.0
+        assert collected["qty"][0] == 0.05
 
 
 def test_scan_table_requires_symbol_id():

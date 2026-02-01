@@ -140,6 +140,8 @@ def trades(
     *,
     ts_col: str = "ts_local_us",
     columns: list[str] | tuple[str, ...] | None = None,
+    decoded: bool = False,
+    keep_ints: bool = False,
     lazy: bool = True,
 ) -> pl.LazyFrame | pl.DataFrame:
     """Load trades with automatic symbol resolution.
@@ -154,6 +156,8 @@ def trades(
         end: End time (datetime, ISO string, or int microseconds)
         ts_col: Timestamp column to filter on (default: "ts_local_us")
         columns: List of columns to select (default: all)
+        decoded: Decode fixed-point integer columns into floats (default: False)
+        keep_ints: Keep fixed-point integer columns when decoded=True (default: False)
         lazy: Return LazyFrame (True) or DataFrame (False)
 
     Returns:
@@ -191,6 +195,17 @@ def trades(
     symbol_ids = _resolve_symbols_with_warning(exchange, symbol, start_ts_us, end_ts_us)
 
     # Delegate to low-level API
+    if decoded:
+        return core.load_trades_decoded(
+            symbol_id=symbol_ids,
+            start_ts_us=start_ts_us,
+            end_ts_us=end_ts_us,
+            ts_col=ts_col,
+            columns=columns,
+            keep_ints=keep_ints,
+            lazy=lazy,
+        )
+
     return core.load_trades(
         symbol_id=symbol_ids,
         start_ts_us=start_ts_us,
@@ -209,6 +224,8 @@ def quotes(
     *,
     ts_col: str = "ts_local_us",
     columns: list[str] | tuple[str, ...] | None = None,
+    decoded: bool = False,
+    keep_ints: bool = False,
     lazy: bool = True,
 ) -> pl.LazyFrame | pl.DataFrame:
     """Load quotes with automatic symbol resolution.
@@ -223,6 +240,8 @@ def quotes(
         end: End time
         ts_col: Timestamp column to filter on (default: "ts_local_us")
         columns: List of columns to select (default: all)
+        decoded: Decode fixed-point integer columns into floats (default: False)
+        keep_ints: Keep fixed-point integer columns when decoded=True (default: False)
         lazy: Return LazyFrame (True) or DataFrame (False)
 
     Returns:
@@ -240,6 +259,17 @@ def quotes(
     end_ts_us = core._normalize_timestamp(end, "end")
 
     symbol_ids = _resolve_symbols_with_warning(exchange, symbol, start_ts_us, end_ts_us)
+
+    if decoded:
+        return core.load_quotes_decoded(
+            symbol_id=symbol_ids,
+            start_ts_us=start_ts_us,
+            end_ts_us=end_ts_us,
+            ts_col=ts_col,
+            columns=columns,
+            keep_ints=keep_ints,
+            lazy=lazy,
+        )
 
     return core.load_quotes(
         symbol_id=symbol_ids,
@@ -259,6 +289,7 @@ def book_snapshot_25(
     *,
     ts_col: str = "ts_local_us",
     columns: list[str] | tuple[str, ...] | None = None,
+    decoded: bool = False,
     lazy: bool = True,
 ) -> pl.LazyFrame | pl.DataFrame:
     """Load book snapshots with automatic symbol resolution.
@@ -273,6 +304,7 @@ def book_snapshot_25(
         end: End time
         ts_col: Timestamp column to filter on (default: "ts_local_us")
         columns: List of columns to select (default: all)
+        decoded: Decode fixed-point list columns into floats (default: False)
         lazy: Return LazyFrame (True) or DataFrame (False)
 
     Returns:
@@ -300,6 +332,16 @@ def book_snapshot_25(
     end_ts_us = core._normalize_timestamp(end, "end")
 
     symbol_ids = _resolve_symbols_with_warning(exchange, symbol, start_ts_us, end_ts_us)
+
+    if decoded:
+        return core.load_book_snapshot_25_decoded(
+            symbol_id=symbol_ids,
+            start_ts_us=start_ts_us,
+            end_ts_us=end_ts_us,
+            ts_col=ts_col,
+            columns=columns,
+            lazy=lazy,
+        )
 
     return core.load_book_snapshot_25(
         symbol_id=symbol_ids,

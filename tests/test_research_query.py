@@ -86,6 +86,43 @@ def test_query_trades_basic():
         assert result == mock_lf
 
 
+def test_query_trades_decoded_calls_decoded_loader():
+    start = datetime(2024, 5, 1, tzinfo=timezone.utc)
+    end = datetime(2024, 5, 2, tzinfo=timezone.utc)
+
+    with (
+        patch("pointline.research.query.registry.find_symbol") as mock_find,
+        patch("pointline.research.query.core.load_trades_decoded") as mock_load_decoded,
+    ):
+        mock_find.return_value = pl.DataFrame(
+            {
+                "symbol_id": [101],
+                "valid_from_ts": [0],
+                "valid_until_ts": [2**63 - 1],
+                "price_increment": [0.001],
+                "tick_size": [0.001],
+            }
+        )
+
+        mock_lf = MagicMock(spec=pl.LazyFrame)
+        mock_load_decoded.return_value = mock_lf
+
+        result = query.trades(
+            exchange="binance-futures",
+            symbol="SOLUSDT",
+            start=start,
+            end=end,
+            decoded=True,
+            keep_ints=True,
+        )
+
+        mock_load_decoded.assert_called_once()
+        call_kwargs = mock_load_decoded.call_args[1]
+        assert call_kwargs["symbol_id"] == [101]
+        assert call_kwargs["keep_ints"] is True
+        assert result == mock_lf
+
+
 def test_query_trades_with_string_dates():
     """Test trades query with ISO string dates."""
     with (
@@ -246,6 +283,38 @@ def test_query_quotes():
         assert result == mock_lf
 
 
+def test_query_quotes_decoded_calls_decoded_loader():
+    with (
+        patch("pointline.research.query.registry.find_symbol") as mock_find,
+        patch("pointline.research.query.core.load_quotes_decoded") as mock_load,
+    ):
+        mock_find.return_value = pl.DataFrame(
+            {
+                "symbol_id": [101],
+                "valid_from_ts": [0],
+                "valid_until_ts": [2**63 - 1],
+                "price_increment": [0.001],
+                "tick_size": [0.001],
+            }
+        )
+
+        mock_lf = MagicMock(spec=pl.LazyFrame)
+        mock_load.return_value = mock_lf
+
+        result = query.quotes(
+            exchange="binance-futures",
+            symbol="SOLUSDT",
+            start=datetime(2024, 5, 1, tzinfo=timezone.utc),
+            end=datetime(2024, 5, 2, tzinfo=timezone.utc),
+            decoded=True,
+        )
+
+        mock_load.assert_called_once()
+        call_kwargs = mock_load.call_args[1]
+        assert call_kwargs["symbol_id"] == [101]
+        assert result == mock_lf
+
+
 def test_query_book_snapshot_25():
     """Test book_snapshot_25 query with auto-resolution."""
     with (
@@ -270,6 +339,38 @@ def test_query_book_snapshot_25():
             "SOLUSDT",
             datetime(2024, 5, 1, tzinfo=timezone.utc),
             datetime(2024, 5, 2, tzinfo=timezone.utc),
+        )
+
+        mock_load.assert_called_once()
+        call_kwargs = mock_load.call_args[1]
+        assert call_kwargs["symbol_id"] == [101]
+        assert result == mock_lf
+
+
+def test_query_book_snapshot_25_decoded_calls_decoded_loader():
+    with (
+        patch("pointline.research.query.registry.find_symbol") as mock_find,
+        patch("pointline.research.query.core.load_book_snapshot_25_decoded") as mock_load,
+    ):
+        mock_find.return_value = pl.DataFrame(
+            {
+                "symbol_id": [101],
+                "valid_from_ts": [0],
+                "valid_until_ts": [2**63 - 1],
+                "price_increment": [0.001],
+                "tick_size": [0.001],
+            }
+        )
+
+        mock_lf = MagicMock(spec=pl.LazyFrame)
+        mock_load.return_value = mock_lf
+
+        result = query.book_snapshot_25(
+            "binance-futures",
+            "SOLUSDT",
+            datetime(2024, 5, 1, tzinfo=timezone.utc),
+            datetime(2024, 5, 2, tzinfo=timezone.utc),
+            decoded=True,
         )
 
         mock_load.assert_called_once()

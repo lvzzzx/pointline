@@ -251,6 +251,44 @@ trades = decode_trades(trades, dim_symbol)
 print(trades.select(["ts_local_us", "price", "qty"]).head(5))
 ```
 
+#### 5.3.2 Decoding to Floats (Convenience Loaders)
+For user-friendly workflows, use the decoded research loaders. These keep Silver tables
+canonical (fixed-point), while exposing float columns at the edge:
+
+```python
+from pointline import research
+
+trades = research.load_trades_decoded(
+    symbol_id=101,
+    start_ts_us=1700000000000000,
+    end_ts_us=1700003600000000,
+)
+quotes = research.load_quotes_decoded(
+    symbol_id=101,
+    start_ts_us=1700000000000000,
+    end_ts_us=1700003600000000,
+)
+book = research.load_book_snapshot_25_decoded(
+    symbol_id=101,
+    start_ts_us=1700000000000000,
+    end_ts_us=1700003600000000,
+)
+```
+
+You can also use the query API with `decoded=True` for quick exploration:
+
+```python
+from pointline.research import query
+
+trades = query.trades(
+    exchange="binance-futures",
+    symbol="SOLUSDT",
+    start="2024-05-01",
+    end="2024-05-02",
+    decoded=True,
+)
+```
+
 ## 6. Common Workflows
 
 ### 6.1 Join Trades with Quotes (As-Of Join)

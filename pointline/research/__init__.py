@@ -9,6 +9,7 @@ This package provides two layers for querying data:
 2. Query API (automatic symbol resolution):
    - research.query.trades(exchange=..., symbol=..., start=..., end=...)
    - Best for: exploration, prototyping, quick checks
+   - Optional: decoded=True for float outputs at the edge
 
 Example - Core API (explicit):
     >>> from pointline import research, registry
@@ -25,6 +26,14 @@ Example - Core API (explicit):
     ...     end_ts_us=datetime(2024, 5, 2, tzinfo=timezone.utc),
     ... )
 
+Example - Core API (decoded convenience):
+    >>> from pointline import research
+    >>> trades = research.load_trades_decoded(
+    ...     symbol_id=symbol_ids,
+    ...     start_ts_us=datetime(2024, 5, 1, tzinfo=timezone.utc),
+    ...     end_ts_us=datetime(2024, 5, 2, tzinfo=timezone.utc),
+    ... )
+
 Example - Query API (implicit):
     >>> from pointline.research import query
     >>>
@@ -34,6 +43,15 @@ Example - Query API (implicit):
     ...     symbol="SOLUSDT",
     ...     start="2024-05-01",
     ...     end="2024-05-02",
+    ... )
+
+Example - Query API (decoded):
+    >>> trades = query.trades(
+    ...     exchange="binance-futures",
+    ...     symbol="SOLUSDT",
+    ...     start="2024-05-01",
+    ...     end="2024-05-02",
+    ...     decoded=True,
     ... )
 """
 
@@ -49,8 +67,12 @@ from pointline.research.core import (
     _validate_ts_range,
     list_tables,
     load_book_snapshot_25,
+    load_book_snapshot_25_decoded,
+    load_kline_1h_decoded,
     load_quotes,
+    load_quotes_decoded,
     load_trades,
+    load_trades_decoded,
     read_table,
     scan_table,
     table_path,
@@ -65,6 +87,10 @@ __all__ = [
     "load_trades",
     "load_quotes",
     "load_book_snapshot_25",
+    "load_trades_decoded",
+    "load_quotes_decoded",
+    "load_book_snapshot_25_decoded",
+    "load_kline_1h_decoded",
     # Query module (convenience layer)
     "query",
     # Internal functions (exposed for testing/advanced use)
