@@ -41,9 +41,11 @@ def test_service_add_metadata_fails_for_unknown_exchange():
         service = TradesIngestionService(repo, dim_symbol_repo, manifest_repo_mock)
 
         # Create a dummy dataframe
-        df = pl.DataFrame({
-            "ts_local_us": [1000000],
-        })
+        df = pl.DataFrame(
+            {
+                "ts_local_us": [1000000],
+            }
+        )
 
         # Should raise ValueError for unknown exchange
         with pytest.raises(ValueError, match="Cannot add metadata for exchange 'unknown'"):
@@ -63,9 +65,11 @@ def test_service_add_metadata_succeeds_for_known_exchange():
 
         service = TradesIngestionService(repo, dim_symbol_repo, manifest_repo_mock)
 
-        df = pl.DataFrame({
-            "ts_local_us": [1727659500000000],  # 2024-09-30 01:15 UTC
-        })
+        df = pl.DataFrame(
+            {
+                "ts_local_us": [1727659500000000],  # 2024-09-30 01:15 UTC
+            }
+        )
 
         # Should succeed for known exchange
         result = service._add_metadata(df, "binance-futures", exchange_id=2)

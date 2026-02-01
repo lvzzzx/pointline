@@ -9,7 +9,12 @@ from pathlib import Path
 
 import polars as pl
 
-from pointline.config import get_bronze_root, get_exchange_id, get_exchange_timezone, normalize_exchange
+from pointline.config import (
+    get_bronze_root,
+    get_exchange_id,
+    get_exchange_timezone,
+    normalize_exchange,
+)
 from pointline.dim_symbol import check_coverage
 from pointline.io.protocols import (
     BronzeFileMetadata,

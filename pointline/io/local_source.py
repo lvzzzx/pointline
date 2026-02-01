@@ -205,7 +205,9 @@ class LocalBronzeSource:
             table_type = metadata["table_type"]  # "l3_orders" or "l3_ticks"
             date_iso = metadata["date_iso"]
 
-            partition_pattern = f"exchange={exchange}/type={table_type}/date={date_iso}/symbol=*/*.csv.gz"
+            partition_pattern = (
+                f"exchange={exchange}/type={table_type}/date={date_iso}/symbol=*/*.csv.gz"
+            )
             partition_files = list(self.root_path.glob(partition_pattern))
 
             if not partition_files:
@@ -308,7 +310,7 @@ class LocalBronzeSource:
         # Map exchange code to our exchange names
         exchange_map = {
             "SZ": "szse",  # Shenzhen Stock Exchange
-            "SH": "sse",   # Shanghai Stock Exchange
+            "SH": "sse",  # Shanghai Stock Exchange
         }
 
         # Map data_type to table type

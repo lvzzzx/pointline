@@ -299,13 +299,14 @@ def get_exchange_timezone(exchange: str, *, strict: bool = True) -> str:
             )
         else:
             import warnings
+
             warnings.warn(
                 f"Exchange '{exchange}' (normalized: '{normalized}') not found in "
                 f"EXCHANGE_TIMEZONES registry. Falling back to UTC default. "
                 f"This may cause incorrect date partitioning for regional exchanges. "
                 f"Add to EXCHANGE_TIMEZONES to fix.",
                 UserWarning,
-                stacklevel=2
+                stacklevel=2,
             )
             return "UTC"
 

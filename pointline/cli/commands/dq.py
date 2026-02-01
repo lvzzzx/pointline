@@ -150,8 +150,10 @@ def _extract_partition_stats(row: dict) -> tuple[int | None, int | None]:
         return None, None
     file_count = partition.get("file_count")
     total_bytes = partition.get("total_bytes")
-    return (int(file_count) if file_count is not None else None,
-            int(total_bytes) if total_bytes is not None else None)
+    return (
+        int(file_count) if file_count is not None else None,
+        int(total_bytes) if total_bytes is not None else None,
+    )
 
 
 def cmd_dq_summary(args: argparse.Namespace) -> int:
@@ -213,10 +215,7 @@ def cmd_dq_summary(args: argparse.Namespace) -> int:
     if not rollup.is_empty():
         rollup_row = rollup.sort("validated_at", descending=True).row(0, named=True)
         print("  rollup: present")
-        print(
-            f"  rollup rows: {rollup_row.get('row_count')} "
-            f"status={rollup_row.get('status')}"
-        )
+        print(f"  rollup rows: {rollup_row.get('row_count')} status={rollup_row.get('status')}")
     else:
         print("  rollup: none")
 

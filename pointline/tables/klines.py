@@ -305,9 +305,7 @@ def decode_fixed_point(
             .otherwise(None)
             .alias("taker_buy_base_volume"),
             pl.when(pl.col("taker_buy_quote_qty_int").is_not_null())
-            .then(
-                (pl.col("taker_buy_quote_qty_int") * pl.col("quote_increment")).cast(pl.Float64)
-            )
+            .then((pl.col("taker_buy_quote_qty_int") * pl.col("quote_increment")).cast(pl.Float64))
             .otherwise(None)
             .alias("taker_buy_quote_volume"),
         ]
@@ -366,13 +364,15 @@ def validate_klines(df: pl.DataFrame) -> pl.DataFrame:
         & (pl.col("volume_qty_int") >= 0)
         & (pl.col("quote_volume_int") >= 0)
         & (pl.col("taker_buy_quote_qty_int") >= 0)
-        & required_columns_validation_expr([
-            "exchange",
-            "exchange_id",
-            "symbol_id",
-            "quote_volume_int",
-            "taker_buy_quote_qty_int",
-        ])
+        & required_columns_validation_expr(
+            [
+                "exchange",
+                "exchange_id",
+                "symbol_id",
+                "quote_volume_int",
+                "taker_buy_quote_qty_int",
+            ]
+        )
         & exchange_id_validation_expr()
     )
 
@@ -502,7 +502,9 @@ def check_kline_completeness(
         group_cols = ["date", "exchange_symbol"]
     else:
         if "date" not in df.columns or "symbol_id" not in df.columns:
-            raise ValueError("check_kline_completeness: df must have 'date' and 'symbol_id' columns")
+            raise ValueError(
+                "check_kline_completeness: df must have 'date' and 'symbol_id' columns"
+            )
         group_cols = ["date", "symbol_id"]
 
     expected_count = KLINE_INTERVAL_ROWS_PER_DAY.get(interval)
@@ -513,12 +515,17 @@ def check_kline_completeness(
         )
 
     # Count rows per group
-    completeness = df.group_by(group_cols).agg(
-        pl.len().alias("row_count")
-    ).with_columns([
-        pl.lit(expected_count, dtype=pl.Int64).alias("expected_count"),
-        (pl.col("row_count") == expected_count).alias("is_complete"),
-    ]).sort(group_cols)
+    completeness = (
+        df.group_by(group_cols)
+        .agg(pl.len().alias("row_count"))
+        .with_columns(
+            [
+                pl.lit(expected_count, dtype=pl.Int64).alias("expected_count"),
+                (pl.col("row_count") == expected_count).alias("is_complete"),
+            ]
+        )
+        .sort(group_cols)
+    )
 
     if warn_on_gaps:
         incomplete = completeness.filter(~pl.col("is_complete"))
@@ -574,4 +581,3 @@ def _filter_header_row(df: pl.DataFrame) -> pl.DataFrame:
         return df.slice(1, df.height - 1)
 
     return df
-
