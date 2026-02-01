@@ -361,6 +361,7 @@ def derivative_ticker(
     *,
     ts_col: str = "ts_local_us",
     columns: list[str] | tuple[str, ...] | None = None,
+    decoded: bool = False,
     lazy: bool = True,
 ) -> pl.LazyFrame | pl.DataFrame:
     """Load derivative ticker data with automatic symbol resolution.
@@ -378,6 +379,7 @@ def derivative_ticker(
         end: End time (datetime, ISO string, or int microseconds)
         ts_col: Timestamp column to filter on (default: "ts_local_us")
         columns: List of columns to select (default: all)
+        decoded: Ignored for derivative_ticker (data is already float, default: False)
         lazy: Return LazyFrame (True) or DataFrame (False)
 
     Returns:
@@ -404,6 +406,10 @@ def derivative_ticker(
         ...     lazy=False,
         ... )
     """
+    # Note: `decoded` is accepted for API consistency with trades/quotes/book_snapshot_25,
+    # but derivative_ticker data is stored as Float64 (not fixed-point), so no decoding is needed.
+    del decoded  # Unused - derivative_ticker is already float
+
     start_ts_us = core._normalize_timestamp(start, "start")
     end_ts_us = core._normalize_timestamp(end, "end")
 
