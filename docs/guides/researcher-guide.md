@@ -107,7 +107,7 @@ Example:
 | dim_symbol | `${LAKE_ROOT}/silver/dim_symbol` | none | `symbol_id`, `exchange_id`, `exchange_symbol`, validity range |
 | ingest_manifest | `${LAKE_ROOT}/silver/ingest_manifest` | none | `vendor`, `exchange`, `data_type`, `date`, `status` |
 
-**For complete schema definitions, see [Schema Reference](../schemas.md).**
+**For complete schema definitions, see [Schema Reference](../reference/schemas.md).**
 
 ### 3.3 Table catalog (Gold)
 - `gold.book_snapshot_25_wide` (legacy wide format)
@@ -505,7 +505,7 @@ When writing code for this data lake, follow these rules:
 2. **Discovery First:** Always start by checking data availability with discovery API
 3. **Simple Timestamps:** Use ISO strings ("2024-05-01") or datetime objects
 4. **Decoded Prices:** Always use `decoded=True` for human-readable prices
-5. **Schema Awareness:** See [Schema Reference](../schemas.md) for complete table schemas
+5. **Schema Awareness:** See [Schema Reference](../reference/schemas.md) for complete table schemas
 6. **Joins:** Always use `join_asof` on `ts_local_us` for point-in-time correctness
 
 **Example workflow:**
@@ -562,6 +562,6 @@ trades = research.load_trades(symbol_id=symbol_id, start_ts_us=..., end_ts_us=..
 
 - **[Quickstart Guide](../quickstart.md)** - 5-minute tutorial
 - **[Choosing an API](choosing-an-api.md)** - Detailed API selection guide
-- **[Research API Reference](../research_api_guide.md)** - Complete API documentation
-- **[Schema Reference](../schemas.md)** - Table schemas and data types
+- **[Research API Reference](../reference/api-reference.md)** - Complete API documentation
+- **[Schema Reference](../reference/schemas.md)** - Table schemas and data types
 - **[Architecture Design](../architecture/design.md)** - Data lake design principles

@@ -252,9 +252,9 @@ funding = query.derivative_ticker("binance-futures", "BTCUSDT", "2024-05-01", "2
 
 ### 📚 Learn More
 
-- **[Common Recipes](guides/researcher_guide.md#6-common-workflows)** - Copy-paste examples for common tasks
+- **[Common Recipes](guides/researcher-guide.md#6-common-workflows)** - Copy-paste examples for common tasks
 - **[Choosing an API](guides/choosing-an-api.md)** - When to use query API vs core API
-- **[Research API Guide](research_api_guide.md)** - Complete API reference
+- **[Research API Guide](reference/api-reference.md)** - Complete API reference
 
 ### 🔬 Production Research (Core API)
 
@@ -281,7 +281,7 @@ trades = research.load_trades(
 - Performance-critical queries
 - Handling SCD Type 2 symbol changes explicitly
 
-See [Researcher's Guide](guides/researcher_guide.md) for details.
+See [Researcher's Guide](guides/researcher-guide.md) for details.
 
 ---
 

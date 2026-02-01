@@ -10,12 +10,14 @@ This project provides ETL utilities and a structured data lake design optimized 
 
 ## Documentation
 
+📖 **[Full Documentation Hub](docs/README.md)** ← Complete navigation guide
+
+**Quick links:**
 - **[5-Minute Quickstart](docs/quickstart.md)** ← Start here for new users
-- **[Choosing an API](docs/guides/choosing-an-api.md)** - Query API vs Core API decision guide
-- **[Research API Guide](docs/research_api_guide.md)** - Complete API reference
-- **[Researcher's Guide](docs/guides/researcher_guide.md)** - Comprehensive guide
-- **[Architecture](./docs/architecture/design.md)** - Detailed data lake schema and design principles
-- **[Product Vision](./conductor/product.md)** - Goals and target audience
+- **[Researcher's Guide](docs/guides/researcher-guide.md)** - Comprehensive guide
+- **[Choosing an API](docs/guides/choosing-an-api.md)** - Query API vs Core API
+- **[API Reference](docs/reference/api-reference.md)** - Complete API documentation
+- **[Architecture](docs/architecture/design.md)** - System design
 
 ## Getting Started
 
