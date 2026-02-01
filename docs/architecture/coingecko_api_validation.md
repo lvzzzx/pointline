@@ -132,7 +132,7 @@ All required fields are available and the API structure matches our schema desig
    - `last_updated`: "2026-01-12T14:52:42.485Z"
    - Can be parsed to microseconds timestamp
 
-4. **Update Frequency:** 
+4. **Update Frequency:**
    - CoinGecko updates data approximately once per 24 hours
    - `last_updated` field shows when CoinGecko last refreshed the data
 

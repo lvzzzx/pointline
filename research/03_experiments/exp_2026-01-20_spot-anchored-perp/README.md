@@ -57,7 +57,7 @@ Feature families
      - `OI_Shock`: Z-score of dOI (is this a standard rebalance or a regime shift?).
 
    - **Funding Rate (The "Cost" & "Sentiment"):**
-     - `Predicted_Funding_Z`: Z-score of the *real-time predicted* rate (Sentiment). 
+     - `Predicted_Funding_Z`: Z-score of the *real-time predicted* rate (Sentiment).
        - *Note:* Do not use settled rate for signal; it lags by up to 8h.
      - `Funding_Acceleration`: `d(Predicted_Funding) / dt`. Rapid rises often mark local tops.
      - `Carry_Yield`: Annualized `Settled_Funding` (The hurdle rate for any directional trade).

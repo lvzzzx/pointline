@@ -89,7 +89,7 @@ struct ReplayConfig {
 }
 ```
 
-**Ordering key:** `(ts_local_us, file_id, file_line_number)` ascending.  
+**Ordering key:** `(ts_local_us, file_id, file_line_number)` ascending.
 `StreamPos` captures the exact replay position for checkpoints and reproducibility.
 
 ### 5.2 Replay Function

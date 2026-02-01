@@ -20,7 +20,7 @@ Slowly Changing Dimension (SCD) Type 2 table tracking instrument metadata over t
 
 **Storage:** Single unpartitioned Delta table (small size).
 
-**Surrogate Key:** `symbol_id` (i64)  
+**Surrogate Key:** `symbol_id` (i64)
 **Natural Key:** `(exchange_id, exchange_symbol)`
 
 | Column | Type | Description |
@@ -54,14 +54,14 @@ Slowly Changing Dimension (SCD) Type 2 table tracking instrument metadata over t
 
 **Join Pattern:**
 ```sql
-SELECT 
-    b.*, 
+SELECT
+    b.*,
     s.symbol_id
 FROM bronze_data b
-JOIN silver.dim_symbol s 
+JOIN silver.dim_symbol s
   ON  b.exchange_id = s.exchange_id
   AND b.exchange_symbol = s.exchange_symbol
-  AND b.ts_local_us >= s.valid_from_ts 
+  AND b.ts_local_us >= s.valid_from_ts
   AND b.ts_local_us <  s.valid_until_ts
 ```
 
@@ -99,7 +99,7 @@ Daily dimension table tracking asset-level statistics, primarily `circulating_su
 
 **Join Pattern:**
 ```sql
-SELECT 
+SELECT
     s.*,
     a.circulating_supply,
     a.market_cap_usd
@@ -123,7 +123,7 @@ Tracks ingestion status per Bronze file. Enables idempotent re-runs, provides au
 
 **Storage:** Small unpartitioned Delta table.
 
-**Primary Key (logical):** `(vendor, exchange, data_type, symbol, date, bronze_file_name)`  
+**Primary Key (logical):** `(vendor, exchange, data_type, symbol, date, bronze_file_name)`
 **Surrogate Key:** `file_id` (i32) - used for joins from Silver tables
 
 | Column | Type | Description |
@@ -227,7 +227,7 @@ global sort at replay time.
 
 Full top-25 order book snapshots from Tardis `book_snapshot_25`.
 
-**Source:** Tardis `book_snapshot_25`  
+**Source:** Tardis `book_snapshot_25`
 **Partitioned by:** `["exchange", "date"]`
 
 | Column | Type | Notes |
@@ -273,7 +273,7 @@ Full top-25 order book snapshots from Tardis `book_snapshot_25`.
 
 Trade executions from Tardis `trades` dataset.
 
-**Source:** Tardis `trades`  
+**Source:** Tardis `trades`
 **Partitioned by:** `["exchange", "date"]`
 
 | Column | Type | Notes |
@@ -298,7 +298,7 @@ Trade executions from Tardis `trades` dataset.
 
 Top-of-book quotes from Tardis `quotes` dataset or derived from L2.
 
-**Source:** Tardis `quotes` or derived from L2  
+**Source:** Tardis `quotes` or derived from L2
 **Partitioned by:** `["exchange", "date"]`
 
 | Column | Type | Notes |
@@ -324,7 +324,7 @@ Top-of-book quotes from Tardis `quotes` dataset or derived from L2.
 
 Exchange-native `bookTicker` messages (if subscribed directly).
 
-**Source:** Exchange-native `bookTicker`  
+**Source:** Exchange-native `bookTicker`
 **Partitioned by:** `["exchange", "date"]`
 
 Same schema as top-of-book quotes (`silver.quotes`), plus any venue-specific fields (update ids, etc.).
@@ -335,7 +335,7 @@ Same schema as top-of-book quotes (`silver.quotes`), plus any venue-specific fie
 
 Derivative market data including mark/index, funding, open interest, etc.
 
-**Source:** Tardis `derivative_ticker`  
+**Source:** Tardis `derivative_ticker`
 **Partitioned by:** `["exchange", "date"]`
 
 | Column | Type | Notes |
@@ -365,7 +365,7 @@ precision than trade tick size; fixed-point at `price_increment` would truncate.
 
 Liquidation events from Tardis `liquidations` dataset.
 
-**Source:** Tardis `liquidations`  
+**Source:** Tardis `liquidations`
 **Partitioned by:** `["exchange", "date"]`
 
 | Column | Type | Notes |
@@ -389,7 +389,7 @@ Liquidation events from Tardis `liquidations` dataset.
 
 Options chain data, typically cross-sectional and heavy. Store updates per contract.
 
-**Source:** Tardis `options_chain`  
+**Source:** Tardis `options_chain`
 **Partitioned by:** `["exchange", "date"]`
 
 | Column | Type | Notes |
@@ -421,7 +421,7 @@ Options chain data, typically cross-sectional and heavy. Store updates per contr
 
 Vendor-provided 1h OHLCV bars from Binance public data (Spot + USD-M futures).
 
-**Source:** Binance public data `klines`  
+**Source:** Binance public data `klines`
 **Partitioned by:** `["exchange", "date"]`
 
 | Column | Type | Notes |
@@ -462,7 +462,7 @@ Gold tables are derived from Silver tables and optimized for specific research w
 
 Wide-format version of `silver.book_snapshot_25` for legacy tools.
 
-**Source:** Derived from `silver.book_snapshot_25`  
+**Source:** Derived from `silver.book_snapshot_25`
 **Partitioned by:** `["exchange", "date"]`
 
 Columns: `bid_px_01..bid_px_25`, `bid_sz_01..bid_sz_25`, `ask_px_01..ask_px_25`, `ask_sz_01..ask_sz_25`, plus common columns.
@@ -475,7 +475,7 @@ Columns: `bid_px_01..bid_px_25`, `bid_sz_01..bid_sz_25`, `ask_px_01..ask_px_25`,
 
 Top-of-book quotes fast path (if treated as derived table).
 
-**Source:** Derived from `silver.quotes` (or `silver.l2_updates` when implemented)  
+**Source:** Derived from `silver.quotes` (or `silver.l2_updates` when implemented)
 **Partitioned by:** `["exchange", "date"]`
 
 Same schema as `silver.quotes`.
@@ -552,7 +552,7 @@ Dollar-Volume bars (Notional Bars) optimized for Regime Detection. These bars al
 
 Options surface snapshots on a time grid for efficient "entire surface at time t" queries.
 
-**Source:** Derived from `silver.options_chain`  
+**Source:** Derived from `silver.options_chain`
 **Partitioned by:** `["exchange", "date"]`
 
 **Time Grid:** Choose a time grid (e.g., 1s or 100ms). For each grid timestamp, take last-known as-of values per option contract.

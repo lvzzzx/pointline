@@ -14,7 +14,7 @@ def test_config_attributes_exist():
 def test_lake_root_type():
     import pointline.config as config
 
-    assert isinstance(config.LAKE_ROOT, (str, Path))
+    assert isinstance(config.LAKE_ROOT, str | Path)
 
 
 def test_table_paths_structure():

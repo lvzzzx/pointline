@@ -18,6 +18,15 @@ Pointline is a high-performance, point-in-time (PIT) accurate offline data lake 
 ```bash
 # Install Python dependencies
 pip install -e .
+
+# Install development dependencies (includes pre-commit)
+pip install -e ".[dev]"
+
+# Set up pre-commit hooks (recommended for development)
+pre-commit install
+
+# This will automatically run linting before each commit
+# Hooks include: Ruff linting, Ruff formatting, trailing whitespace checks, etc.
 ```
 
 ### Testing
@@ -67,6 +76,18 @@ pointline validate trades --exchange binance-futures --date 2024-05-01
 # Ruff is configured in pyproject.toml (line-length = 100)
 ruff check .
 ruff format .
+
+# Pre-commit hooks (recommended for development)
+# Install pre-commit hooks (one-time setup)
+pip install pre-commit
+pre-commit install
+
+# Hooks will now run automatically on git commit
+# To run manually on all files:
+pre-commit run --all-files
+
+# To skip hooks for a specific commit (use sparingly):
+git commit --no-verify
 ```
 
 ## Architecture
