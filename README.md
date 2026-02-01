@@ -57,6 +57,42 @@ pytest
 
 **Important for Git Worktrees:** If using worktrees, run `pre-commit install` in each worktree. See [Worktree Setup Guide](./docs/development/worktree-setup.md).
 
+### Claude Code Skill (Optional)
+
+Pointline includes a Claude Code skill that enables AI-assisted quantitative research with:
+- 📊 **Data Discovery** - Automatic exploration of exchanges, symbols, and coverage
+- 🔍 **Query API Guidance** - Correct data loading with automatic symbol resolution
+- ✅ **PIT Correctness** - Point-in-time accuracy and reproducibility guarantees
+- 📈 **Analysis Patterns** - Common quant patterns (spreads, VWAP, order flow, market microstructure)
+- 📚 **Best Practices** - Deterministic ordering, avoiding lookahead bias
+
+**Install the skill:**
+
+```bash
+# Option 1: Build and install (recommended)
+cd skills
+./build.sh
+cp pointline-research.skill ~/.claude/skills/
+
+# Option 2: Symlink for live editing (development)
+ln -s $(pwd)/pointline-research ~/.claude/skills/pointline-research
+```
+
+**Usage example with Claude Code:**
+```
+You: "Load BTC trades on Binance Futures for May 1, 2024 and calculate VWAP"
+
+Claude: [Uses the skill to automatically]
+1. Check data coverage (research.data_coverage)
+2. Load with Query API (query.trades with decoded=True)
+3. Apply PIT-correct VWAP calculation (cumulative, ts_local_us ordering)
+4. Ensure reproducibility (deterministic ordering)
+```
+
+**Documentation:**
+- [Skills Integration Guide](docs/skills-integration.md) - Setup and usage
+- [Shipping Guide](docs/shipping-guide.md) - Distribution strategies
+
 ## CLI
 ```bash
 # Discover available data
