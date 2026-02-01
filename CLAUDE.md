@@ -12,6 +12,59 @@ Pointline is a high-performance, point-in-time (PIT) accurate offline data lake 
 - **Performance:** Polars-based processing for high-performance data transformations
 - **Storage efficiency:** Compressed Parquet with integer encoding
 
+**Supported Asset Classes:**
+- **Crypto:** Spot and derivatives (binance-futures, deribit, bybit, etc.)
+- **Chinese Stocks:** SZSE, SSE with Level 3 order book data
+- **Future:** US equities, futures, options, forex (easily extensible)
+
+## Data Discovery (Start Here!)
+
+**IMPORTANT:** Before querying data, ALWAYS use the discovery API to check what's available.
+
+### Quick Discovery Workflow
+
+```python
+from pointline import research
+
+# 1. What exchanges have data?
+exchanges = research.list_exchanges(asset_class="crypto-derivatives")
+
+# 2. What symbols are available?
+symbols = research.list_symbols(exchange="binance-futures", base_asset="BTC")
+
+# 3. Check data coverage for a symbol
+coverage = research.data_coverage("binance-futures", "BTCUSDT")
+print(f"Trades available: {coverage['trades']['available']}")
+
+# 4. Load data
+from pointline.research import query
+trades = query.trades("binance-futures", "BTCUSDT", "2024-05-01", "2024-05-02", decoded=True)
+```
+
+### Discovery API Reference
+
+**`research.list_exchanges(asset_class=None, active_only=True)`**
+- Lists all exchanges with data
+- Filter by asset_class: "crypto", "crypto-spot", "crypto-derivatives", "stocks-cn", or list
+- Returns DataFrame with: exchange, exchange_id, asset_class, description, is_active
+
+**`research.list_symbols(exchange=None, asset_class=None, base_asset=None, search=None)`**
+- Lists symbols with flexible filters
+- Use `search="BTC"` for fuzzy matching
+- Returns DataFrame with symbol metadata
+
+**`research.list_tables(layer="silver")`**
+- Lists available tables
+- Returns DataFrame with: table_name, layer, has_date_partition, description
+
+**`research.data_coverage(exchange, symbol)`**
+- Checks what data exists for a symbol
+- Returns dict: `{"trades": {"available": True, "symbol_id": 12345}, ...}`
+
+**`research.summarize_symbol(symbol, exchange=None)`**
+- Prints rich summary with metadata and coverage
+- Use when user asks "tell me about BTCUSDT"
+
 ## Commands
 
 ### Setup

@@ -53,6 +53,11 @@ pytest
 
 ## CLI
 ```bash
+# Discover available data
+pointline data list-exchanges --asset-class crypto-derivatives
+pointline data list-symbols --exchange binance-futures --base-asset BTC
+pointline data coverage --exchange binance-futures --symbol BTCUSDT
+
 # Show pending bronze files
 pointline ingest discover --pending-only
 
@@ -62,6 +67,38 @@ pointline manifest show
 # Apply dim_symbol updates from a CSV or Parquet file
 pointline dim-symbol upsert --file ./symbols.csv
 ```
+
+## Quick Example: Data Discovery
+
+```python
+from pointline import research
+
+# Step 1: What exchanges have data?
+exchanges = research.list_exchanges(asset_class="crypto-derivatives")
+print(exchanges)
+
+# Step 2: What symbols are available?
+symbols = research.list_symbols(exchange="binance-futures", base_asset="BTC")
+print(f"Found {symbols.height} BTC symbols")
+
+# Step 3: Check data coverage
+coverage = research.data_coverage("binance-futures", "BTCUSDT")
+print(f"Trades: {coverage['trades']['available']}")
+
+# Step 4: Load data
+from pointline.research import query
+
+trades = query.trades(
+    exchange="binance-futures",
+    symbol="BTCUSDT",
+    start="2024-05-01",
+    end="2024-05-02",
+    decoded=True,
+)
+print(f"Loaded {trades.height:,} trades")
+```
+
+See [examples/discovery_example.py](examples/discovery_example.py) for a complete walkthrough.
 
 ## Contributing
 Please review our [Product Guidelines](./conductor/product-guidelines.md) and [Workflow](./conductor/workflow.md) before contributing.

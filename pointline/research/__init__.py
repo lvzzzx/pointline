@@ -65,7 +65,6 @@ from pointline.research.core import (
     _ts_us_to_date,
     _validate_ts_col,
     _validate_ts_range,
-    list_tables,
     load_book_snapshot_25,
     load_book_snapshot_25_decoded,
     load_kline_1h_decoded,
@@ -78,9 +77,17 @@ from pointline.research.core import (
     table_path,
 )
 
+# Import discovery functions (data exploration API)
+from pointline.research.discovery import (
+    data_coverage,
+    list_exchanges,
+    list_symbols,
+    list_tables,
+    summarize_symbol,
+)
+
 __all__ = [
     # Core API functions
-    "list_tables",
     "table_path",
     "scan_table",
     "read_table",
@@ -91,6 +98,12 @@ __all__ = [
     "load_quotes_decoded",
     "load_book_snapshot_25_decoded",
     "load_kline_1h_decoded",
+    # Discovery API functions
+    "list_exchanges",
+    "list_symbols",
+    "list_tables",
+    "data_coverage",
+    "summarize_symbol",
     # Query module (convenience layer)
     "query",
     # Internal functions (exposed for testing/advanced use)
