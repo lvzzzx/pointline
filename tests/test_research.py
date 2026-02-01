@@ -87,9 +87,10 @@ def test_scan_table_time_range_prunes_date(mock_get_path, mock_scan_delta, mock_
 
 def test_list_tables():
     tables = list_tables()
-    assert "trades" in tables
-    assert "quotes" in tables
-    assert "book_snapshot_25" in tables
+    table_names = tables["table_name"].to_list()
+    assert "trades" in table_names
+    assert "quotes" in table_names
+    assert "book_snapshot_25" in table_names
 
 
 @patch("pointline.research.core.scan_table")
