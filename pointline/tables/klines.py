@@ -521,7 +521,7 @@ def check_kline_completeness(
         .with_columns(
             [
                 pl.lit(expected_count, dtype=pl.Int64).alias("expected_count"),
-                (pl.col("row_count") == expected_count).alias("is_complete"),
+                (pl.col("row_count") == pl.lit(expected_count)).alias("is_complete"),
             ]
         )
         .sort(group_cols)

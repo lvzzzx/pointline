@@ -16,18 +16,22 @@ Pointline is a high-performance, point-in-time (PIT) accurate offline data lake 
 
 ### Setup
 ```bash
-# Install Python dependencies
-pip install -e .
+# Install Python dependencies with uv (required)
+uv venv
+source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+uv pip install -e ".[dev]"
 
-# Install development dependencies (includes pre-commit)
-pip install -e ".[dev]"
-
-# Set up pre-commit hooks (recommended for development)
+# IMPORTANT: Install pre-commit hooks for your worktree
+# (Required when creating/switching worktrees)
 pre-commit install
 
-# This will automatically run linting before each commit
-# Hooks include: Ruff linting, Ruff formatting, trailing whitespace checks, etc.
+# Verify pre-commit is working
+pre-commit run --all-files
 ```
+
+**Note for Git Worktrees:** You MUST run `pre-commit install` in each worktree. See [Worktree Setup Guide](docs/development/worktree-setup.md) for details.
+
+**Why uv?** This project uses [uv](https://github.com/astral-sh/uv) for fast, deterministic dependency management. The `uv.lock` file ensures reproducible builds across all environments.
 
 ### Testing
 ```bash
@@ -343,6 +347,7 @@ Each run appends a single JSON object with: run_id, git_commit, lake_root, symbo
 ## Technology Stack
 
 - **Python 3.10+** - Primary language
+- **uv** - Fast Python package installer and resolver (required)
 - **Polars** - Vectorized data processing
 - **Delta Lake (delta-rs)** - Storage layer with ACID
 - **Apache Parquet** - Columnar format
