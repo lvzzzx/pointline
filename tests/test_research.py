@@ -1,9 +1,10 @@
+from datetime import datetime, timezone
 from unittest.mock import MagicMock, patch
 
 import polars as pl
 import pytest
 
-from pointline.research import list_tables, load_trades, scan_table
+from pointline.research import _normalize_timestamp, list_tables, load_trades, scan_table
 
 
 @patch("pointline.research.resolve_symbols")
@@ -120,3 +121,181 @@ def test_scan_table_requires_symbol_id():
 def test_scan_table_requires_time_range():
     with pytest.raises(ValueError, match="start_ts_us and end_ts_us are required"):
         scan_table("trades", symbol_id=[100])
+
+
+# ============================================================================
+# Datetime Support Tests
+# ============================================================================
+
+
+def test_normalize_timestamp_with_int():
+    """Test that _normalize_timestamp passes through int unchanged."""
+    ts_us = 1700000000000000
+    result = _normalize_timestamp(ts_us, "start_ts_us")
+    assert result == ts_us
+    assert isinstance(result, int)
+
+
+def test_normalize_timestamp_with_datetime():
+    """Test that _normalize_timestamp converts datetime to microseconds."""
+    dt = datetime(2023, 11, 14, 12, 0, 0, tzinfo=timezone.utc)
+    result = _normalize_timestamp(dt, "start_ts_us")
+
+    expected = int(dt.timestamp() * 1_000_000)
+    assert result == expected
+    assert isinstance(result, int)
+
+
+def test_normalize_timestamp_with_naive_datetime():
+    """Test that naive datetime triggers a warning but is accepted as UTC."""
+    dt = datetime(2023, 11, 14, 12, 0, 0)  # Naive (no tzinfo)
+
+    with pytest.warns(UserWarning, match="naive datetime interpreted as UTC"):
+        result = _normalize_timestamp(dt, "start_ts_us")
+
+    # Should be treated as UTC
+    dt_utc = dt.replace(tzinfo=timezone.utc)
+    expected = int(dt_utc.timestamp() * 1_000_000)
+    assert result == expected
+
+
+def test_normalize_timestamp_with_none():
+    """Test that _normalize_timestamp returns None for None input."""
+    result = _normalize_timestamp(None, "start_ts_us")
+    assert result is None
+
+
+def test_normalize_timestamp_with_invalid_type():
+    """Test that _normalize_timestamp raises TypeError for invalid types."""
+    with pytest.raises(TypeError, match="must be int.*or datetime"):
+        _normalize_timestamp("invalid", "start_ts_us")
+
+    with pytest.raises(TypeError, match="must be int.*or datetime"):
+        _normalize_timestamp(1.5, "start_ts_us")
+
+
+@patch("pointline.research.resolve_symbols")
+@patch("pointline.research.pl.scan_delta")
+@patch("pointline.research.get_table_path")
+def test_scan_table_accepts_datetime(mock_get_path, mock_scan_delta, mock_resolve_symbols):
+    """Test that scan_table accepts datetime objects."""
+    start = datetime(2023, 11, 14, 12, 0, 0, tzinfo=timezone.utc)
+    end = datetime(2023, 11, 14, 13, 0, 0, tzinfo=timezone.utc)
+
+    # Setup mocks
+    mock_get_path.return_value = "/fake/path"
+    mock_lf = MagicMock(spec=pl.LazyFrame)
+    mock_scan_delta.return_value = mock_lf
+    mock_resolve_symbols.return_value = ["binance"]
+    mock_lf.filter.return_value = mock_lf
+    mock_lf.schema = {
+        "symbol_id": pl.Int64,
+        "exchange": pl.Utf8,
+        "date": pl.Date,
+        "ts_local_us": pl.Int64,
+    }
+
+    # Should not raise TypeError
+    scan_table(
+        "trades",
+        symbol_id=101,
+        start_ts_us=start,
+        end_ts_us=end,
+    )
+
+    # Verify it was called
+    mock_scan_delta.assert_called_once()
+
+
+@patch("pointline.research.resolve_symbols")
+@patch("pointline.research.pl.scan_delta")
+@patch("pointline.research.get_table_path")
+def test_load_trades_with_datetime(mock_get_path, mock_scan_delta, mock_resolve_symbols):
+    """Test that load_trades works with datetime objects."""
+    start = datetime(2023, 11, 14, 12, 0, 0, tzinfo=timezone.utc)
+    end = datetime(2023, 11, 14, 13, 0, 0, tzinfo=timezone.utc)
+
+    # Setup mocks
+    mock_get_path.return_value = "/fake/path"
+    mock_lf = MagicMock(spec=pl.LazyFrame)
+    mock_df = MagicMock(spec=pl.DataFrame)
+    mock_scan_delta.return_value = mock_lf
+    mock_resolve_symbols.return_value = ["binance"]
+    mock_lf.filter.return_value = mock_lf
+    mock_lf.collect.return_value = mock_df
+    mock_lf.schema = {
+        "symbol_id": pl.Int64,
+        "exchange": pl.Utf8,
+        "date": pl.Date,
+        "ts_local_us": pl.Int64,
+    }
+
+    # Should not raise TypeError
+    result = load_trades(
+        symbol_id=101,
+        start_ts_us=start,
+        end_ts_us=end,
+    )
+
+    assert result == mock_df
+
+
+def test_scan_table_enhanced_error_message_symbol_id():
+    """Test enhanced error message when symbol_id is missing."""
+    with pytest.raises(ValueError) as exc_info:
+        scan_table(
+            "trades",
+            start_ts_us=1700000000000000,
+            end_ts_us=1700003600000000,
+        )
+
+    error_msg = str(exc_info.value)
+    assert "symbol_id is required for partition pruning" in error_msg
+    assert "registry.find_symbol" in error_msg
+    assert "symbol_ids = symbols['symbol_id'].to_list()" in error_msg
+
+
+def test_scan_table_enhanced_error_message_timestamps():
+    """Test enhanced error message when timestamps are missing."""
+    with pytest.raises(ValueError) as exc_info:
+        scan_table("trades", symbol_id=101)
+
+    error_msg = str(exc_info.value)
+    assert "start_ts_us and end_ts_us are required" in error_msg
+    assert "Integer microseconds" in error_msg
+    assert "datetime objects" in error_msg
+    assert "timezone.utc" in error_msg
+
+
+def test_scan_table_enhanced_error_message_invalid_range():
+    """Test enhanced error message for invalid timestamp range."""
+    with pytest.raises(ValueError) as exc_info:
+        scan_table(
+            "trades",
+            symbol_id=101,
+            start_ts_us=1700003600000000,
+            end_ts_us=1700000000000000,  # Earlier than start
+        )
+
+    error_msg = str(exc_info.value)
+    assert "1700003600000000" in error_msg
+    assert "1700000000000000" in error_msg
+    assert "must be greater than" in error_msg
+
+
+def test_datetime_backwards_compatibility():
+    """Test that existing int-based code still works."""
+    # This test verifies backward compatibility
+    with (
+        patch("pointline.research.resolve_symbols"),
+        patch("pointline.research.pl.scan_delta"),
+        patch("pointline.research.get_table_path"),
+    ):
+        # Old-style API call with ints should still work
+        scan_table(
+            "trades",
+            symbol_id=101,
+            start_ts_us=1700000000000000,
+            end_ts_us=1700003600000000,
+        )
+        # Should not raise any errors

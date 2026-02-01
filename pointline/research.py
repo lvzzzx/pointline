@@ -2,14 +2,21 @@
 
 from __future__ import annotations
 
+import warnings
 from collections.abc import Iterable, Sequence
 from datetime import date, datetime, timezone
 from pathlib import Path
 
 import polars as pl
 
+from pointline._error_messages import (
+    invalid_timestamp_range_error,
+    symbol_id_required_error,
+    timestamp_required_error,
+)
 from pointline.config import TABLE_HAS_DATE, TABLE_PATHS, get_table_path
 from pointline.registry import resolve_symbols
+from pointline.types import TableName, TimestampInput
 
 
 def list_tables() -> list[str]:
@@ -22,33 +29,114 @@ def table_path(table_name: str) -> Path:
     return get_table_path(table_name)
 
 
+def _normalize_timestamp(ts: TimestampInput | None, param_name: str) -> int | None:
+    """Convert datetime to microseconds since epoch, or pass through int.
+
+    Accepts both int (microseconds since epoch) and datetime objects for convenience.
+    Naive datetimes are interpreted as UTC with a warning.
+
+    Args:
+        ts: Either int (microseconds since epoch) or datetime object
+        param_name: Parameter name for error messages
+
+    Returns:
+        Microseconds since epoch (int) or None if input is None
+
+    Raises:
+        TypeError: If ts is neither int, datetime, nor None
+    """
+    if ts is None:
+        return None
+
+    if isinstance(ts, int):
+        return ts
+
+    if isinstance(ts, datetime):
+        # Warn if naive datetime (ambiguous, but accept as UTC)
+        if ts.tzinfo is None:
+            warnings.warn(
+                f"{param_name}: naive datetime interpreted as UTC. "
+                f"Use timezone-aware datetime for clarity: "
+                f"datetime(..., tzinfo=timezone.utc)",
+                UserWarning,
+                stacklevel=4,
+            )
+            ts = ts.replace(tzinfo=timezone.utc)
+
+        # Convert to UTC then to microseconds
+        return int(ts.timestamp() * 1_000_000)
+
+    raise TypeError(
+        f"{param_name} must be int (microseconds) or datetime object, got {type(ts).__name__}"
+    )
+
+
 def scan_table(
-    table_name: str,
+    table_name: TableName,
     *,
     symbol_id: int | Iterable[int] | None = None,
-    start_ts_us: int | None = None,
-    end_ts_us: int | None = None,
+    start_ts_us: TimestampInput | None = None,
+    end_ts_us: TimestampInput | None = None,
     ts_col: str = "ts_local_us",
     columns: Sequence[str] | None = None,
 ) -> pl.LazyFrame:
-    """
-    Return a filtered LazyFrame for a Delta table.
+    """Return a filtered LazyFrame for a Delta table.
 
     Requires symbol_id + time range. Exchange partitions are derived from symbol_id
-    for pruning.
-    Timestamps are applied to the selected time column and implicitly prune
-    date partitions when available.
+    for pruning. Timestamps are applied to the selected time column and implicitly
+    prune date partitions when available.
+
+    Args:
+        table_name: Name of the table to scan (e.g., "trades", "quotes")
+        symbol_id: Symbol ID(s) to filter. Required for partition pruning.
+        start_ts_us: Start timestamp (microseconds since epoch or datetime object)
+        end_ts_us: End timestamp (microseconds since epoch or datetime object)
+        ts_col: Timestamp column to filter on (default: "ts_local_us")
+        columns: List of columns to select (default: all)
+
+    Returns:
+        Filtered LazyFrame
+
+    Raises:
+        ValueError: If required parameters are missing or invalid
+        TypeError: If timestamp types are invalid
+
+    Examples:
+        >>> from datetime import datetime, timezone
+        >>> from pointline import research
+        >>>
+        >>> # Using int timestamps (existing API)
+        >>> lf = research.scan_table(
+        ...     "trades",
+        ...     symbol_id=101,
+        ...     start_ts_us=1700000000000000,
+        ...     end_ts_us=1700003600000000,
+        ... )
+        >>>
+        >>> # Using datetime objects (new convenience)
+        >>> lf = research.scan_table(
+        ...     "trades",
+        ...     symbol_id=101,
+        ...     start_ts_us=datetime(2023, 11, 14, 12, 0, tzinfo=timezone.utc),
+        ...     end_ts_us=datetime(2023, 11, 14, 13, 0, tzinfo=timezone.utc),
+        ... )
     """
+    # Convert timestamps early (supports both int and datetime)
+    start_ts_us_int = _normalize_timestamp(start_ts_us, "start_ts_us")
+    end_ts_us_int = _normalize_timestamp(end_ts_us, "end_ts_us")
+
+    # Validation with enhanced error messages
     if symbol_id is None:
-        raise ValueError("scan_table: symbol_id is required; resolve IDs first")
-    if start_ts_us is None or end_ts_us is None:
-        raise ValueError("scan_table: start_ts_us and end_ts_us are required")
-    _validate_ts_range(start_ts_us, end_ts_us)
+        raise ValueError(symbol_id_required_error())
+    if start_ts_us_int is None or end_ts_us_int is None:
+        raise ValueError(timestamp_required_error())
+
+    _validate_ts_range(start_ts_us_int, end_ts_us_int)
     _validate_ts_col(ts_col)
 
     resolved_symbol_ids = symbol_id
 
-    start_date, end_date = _derive_date_bounds_from_ts(start_ts_us, end_ts_us)
+    start_date, end_date = _derive_date_bounds_from_ts(start_ts_us_int, end_ts_us_int)
     date_filter_is_implicit = True
 
     lf = pl.scan_delta(str(get_table_path(table_name)))
@@ -58,8 +146,8 @@ def scan_table(
         symbol_id=resolved_symbol_ids,
         start_date=start_date,
         end_date=end_date,
-        start_ts_us=start_ts_us,
-        end_ts_us=end_ts_us,
+        start_ts_us=start_ts_us_int,
+        end_ts_us=end_ts_us_int,
         ts_col=ts_col,
         date_filter_is_implicit=date_filter_is_implicit,
     )
@@ -69,15 +157,39 @@ def scan_table(
 
 
 def read_table(
-    table_name: str,
+    table_name: TableName,
     *,
     symbol_id: int | Iterable[int] | None = None,
-    start_ts_us: int | None = None,
-    end_ts_us: int | None = None,
+    start_ts_us: TimestampInput | None = None,
+    end_ts_us: TimestampInput | None = None,
     ts_col: str = "ts_local_us",
     columns: Sequence[str] | None = None,
 ) -> pl.DataFrame:
-    """Return a filtered DataFrame for a Delta table (symbol_id + time range required)."""
+    """Return a filtered DataFrame for a Delta table.
+
+    This is an eager version of scan_table() that immediately collects results.
+    Requires symbol_id + time range.
+
+    Args:
+        table_name: Name of the table to read
+        symbol_id: Symbol ID(s) to filter
+        start_ts_us: Start timestamp (microseconds since epoch or datetime object)
+        end_ts_us: End timestamp (microseconds since epoch or datetime object)
+        ts_col: Timestamp column to filter on (default: "ts_local_us")
+        columns: List of columns to select (default: all)
+
+    Returns:
+        Filtered DataFrame (eager evaluation)
+
+    Examples:
+        >>> from datetime import datetime, timezone
+        >>> df = research.read_table(
+        ...     "trades",
+        ...     symbol_id=101,
+        ...     start_ts_us=datetime(2023, 11, 14, 12, 0, tzinfo=timezone.utc),
+        ...     end_ts_us=datetime(2023, 11, 14, 13, 0, tzinfo=timezone.utc),
+        ... )
+    """
     return scan_table(
         table_name,
         symbol_id=symbol_id,
@@ -91,13 +203,35 @@ def read_table(
 def load_trades(
     *,
     symbol_id: int | Iterable[int] | None = None,
-    start_ts_us: int | None = None,
-    end_ts_us: int | None = None,
+    start_ts_us: TimestampInput | None = None,
+    end_ts_us: TimestampInput | None = None,
     ts_col: str = "ts_local_us",
     columns: Sequence[str] | None = None,
     lazy: bool = False,
 ) -> pl.DataFrame | pl.LazyFrame:
-    """Load trades with common filters applied (symbol_id + time range required)."""
+    """Load trades with common filters applied.
+
+    Requires symbol_id + time range.
+
+    Args:
+        symbol_id: Symbol ID(s) to filter
+        start_ts_us: Start timestamp (microseconds since epoch or datetime object)
+        end_ts_us: End timestamp (microseconds since epoch or datetime object)
+        ts_col: Timestamp column to filter on (default: "ts_local_us")
+        columns: List of columns to select (default: all)
+        lazy: If True, return LazyFrame; if False, return DataFrame
+
+    Returns:
+        Filtered trades data (DataFrame or LazyFrame based on lazy parameter)
+
+    Examples:
+        >>> from datetime import datetime, timezone
+        >>> trades = research.load_trades(
+        ...     symbol_id=101,
+        ...     start_ts_us=datetime(2023, 11, 14, 12, 0, tzinfo=timezone.utc),
+        ...     end_ts_us=datetime(2023, 11, 14, 13, 0, tzinfo=timezone.utc),
+        ... )
+    """
     lf = scan_table(
         "trades",
         symbol_id=symbol_id,
@@ -112,13 +246,35 @@ def load_trades(
 def load_quotes(
     *,
     symbol_id: int | Iterable[int] | None = None,
-    start_ts_us: int | None = None,
-    end_ts_us: int | None = None,
+    start_ts_us: TimestampInput | None = None,
+    end_ts_us: TimestampInput | None = None,
     ts_col: str = "ts_local_us",
     columns: Sequence[str] | None = None,
     lazy: bool = False,
 ) -> pl.DataFrame | pl.LazyFrame:
-    """Load quotes with common filters applied (symbol_id + time range required)."""
+    """Load quotes with common filters applied.
+
+    Requires symbol_id + time range.
+
+    Args:
+        symbol_id: Symbol ID(s) to filter
+        start_ts_us: Start timestamp (microseconds since epoch or datetime object)
+        end_ts_us: End timestamp (microseconds since epoch or datetime object)
+        ts_col: Timestamp column to filter on (default: "ts_local_us")
+        columns: List of columns to select (default: all)
+        lazy: If True, return LazyFrame; if False, return DataFrame
+
+    Returns:
+        Filtered quotes data (DataFrame or LazyFrame based on lazy parameter)
+
+    Examples:
+        >>> from datetime import datetime, timezone
+        >>> quotes = research.load_quotes(
+        ...     symbol_id=101,
+        ...     start_ts_us=datetime(2023, 11, 14, 12, 0, tzinfo=timezone.utc),
+        ...     end_ts_us=datetime(2023, 11, 14, 13, 0, tzinfo=timezone.utc),
+        ... )
+    """
     lf = scan_table(
         "quotes",
         symbol_id=symbol_id,
@@ -133,13 +289,35 @@ def load_quotes(
 def load_book_snapshot_25(
     *,
     symbol_id: int | Iterable[int] | None = None,
-    start_ts_us: int | None = None,
-    end_ts_us: int | None = None,
+    start_ts_us: TimestampInput | None = None,
+    end_ts_us: TimestampInput | None = None,
     ts_col: str = "ts_local_us",
     columns: Sequence[str] | None = None,
     lazy: bool = False,
 ) -> pl.DataFrame | pl.LazyFrame:
-    """Load top-25 book snapshots with common filters applied (symbol_id + time range required)."""
+    """Load top-25 book snapshots with common filters applied.
+
+    Requires symbol_id + time range.
+
+    Args:
+        symbol_id: Symbol ID(s) to filter
+        start_ts_us: Start timestamp (microseconds since epoch or datetime object)
+        end_ts_us: End timestamp (microseconds since epoch or datetime object)
+        ts_col: Timestamp column to filter on (default: "ts_local_us")
+        columns: List of columns to select (default: all)
+        lazy: If True, return LazyFrame; if False, return DataFrame
+
+    Returns:
+        Filtered book snapshot data (DataFrame or LazyFrame based on lazy parameter)
+
+    Examples:
+        >>> from datetime import datetime, timezone
+        >>> book = research.load_book_snapshot_25(
+        ...     symbol_id=101,
+        ...     start_ts_us=datetime(2023, 11, 14, 12, 0, tzinfo=timezone.utc),
+        ...     end_ts_us=datetime(2023, 11, 14, 13, 0, tzinfo=timezone.utc),
+        ... )
+    """
     lf = scan_table(
         "book_snapshot_25",
         symbol_id=symbol_id,
@@ -233,5 +411,6 @@ def _validate_ts_col(ts_col: str) -> None:
 
 
 def _validate_ts_range(start_ts_us: int | None, end_ts_us: int | None) -> None:
+    """Validate that end_ts_us is greater than start_ts_us."""
     if start_ts_us is not None and end_ts_us is not None and end_ts_us <= start_ts_us:
-        raise ValueError("scan_table: end_ts_us must be greater than start_ts_us")
+        raise ValueError(invalid_timestamp_range_error(start_ts_us, end_ts_us))

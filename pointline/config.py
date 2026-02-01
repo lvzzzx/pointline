@@ -3,6 +3,8 @@ import re
 import warnings
 from pathlib import Path
 
+from pointline._error_messages import exchange_not_found_error
+
 try:
     import tomllib
 except ModuleNotFoundError:  # Python < 3.11
@@ -180,8 +182,7 @@ def normalize_exchange(exchange: str) -> str:
 
 
 def get_exchange_id(exchange: str) -> int:
-    """
-    Get exchange_id for a given exchange name.
+    """Get exchange_id for a given exchange name.
 
     This is the canonical source of truth for exchange → exchange_id mapping.
     Normalizes the exchange name before lookup.
@@ -197,10 +198,7 @@ def get_exchange_id(exchange: str) -> int:
     """
     normalized = normalize_exchange(exchange)
     if normalized not in EXCHANGE_MAP:
-        raise ValueError(
-            f"Exchange '{exchange}' (normalized: '{normalized}') not found in EXCHANGE_MAP. "
-            f"Available exchanges: {sorted(EXCHANGE_MAP.keys())}"
-        )
+        raise ValueError(exchange_not_found_error(exchange, list(EXCHANGE_MAP.keys())))
     return EXCHANGE_MAP[normalized]
 
 
