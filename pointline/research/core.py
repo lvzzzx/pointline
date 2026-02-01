@@ -55,11 +55,15 @@ def _normalize_timestamp(ts: TimestampInput | None, param_name: str) -> int | No
     # Parse ISO string to datetime
     if isinstance(ts, str):
         try:
+            # Handle Z suffix (common UTC indicator not supported by fromisoformat in Python 3.10)
+            if ts.endswith("Z"):
+                ts = ts[:-1] + "+00:00"
             ts = datetime.fromisoformat(ts)
         except ValueError as e:
             raise ValueError(
-                f"{param_name}: Invalid ISO datetime string '{ts}'. "
-                f"Expected format: 'YYYY-MM-DD' or 'YYYY-MM-DDTHH:MM:SS'. "
+                f"{param_name}: Invalid ISO datetime string. "
+                f"Expected formats: 'YYYY-MM-DD', 'YYYY-MM-DDTHH:MM:SS', "
+                f"'YYYY-MM-DDTHH:MM:SSZ', or 'YYYY-MM-DDTHH:MM:SS+00:00'. "
                 f"Error: {e}"
             ) from e
 

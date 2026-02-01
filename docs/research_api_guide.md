@@ -21,6 +21,7 @@ The Pointline research API provides two layers for querying data:
 ```python
 from pointline.research import query
 from datetime import datetime, timezone
+import polars as pl
 
 # Quick exploration - automatic symbol resolution
 book = query.book_snapshot_25(
@@ -232,11 +233,22 @@ print(f"Processed 5 months → {hourly_df.height} hourly rows")
 All functions support:
 - **exchange** (str): Exchange name (e.g., "binance-futures")
 - **symbol** (str): Exchange symbol (e.g., "SOLUSDT")
-- **start** (datetime | int): Start time
-- **end** (datetime | int): End time
-- **ts_col** (str): Timestamp column (default: "ts_local_us")
+- **start** (datetime | int | str): Start time (inclusive)
+  - `datetime`: timezone-aware datetime object
+  - `int`: microseconds since Unix epoch
+  - `str`: ISO 8601 date/datetime ("2024-05-01", "2024-05-01T12:30:45Z", "2024-05-01T12:30:45+00:00")
+- **end** (datetime | int | str): End time (exclusive)
+  - Same formats as `start`
+  - Time range is [start, end) - includes start, excludes end
+- **ts_col** (str): Timestamp column to filter on (default: "ts_local_us")
 - **columns** (list[str]): Columns to select (default: all)
 - **lazy** (bool): Return LazyFrame (True) or DataFrame (False)
+
+**Important Notes:**
+- **Time range semantics**: [start, end) is half-open (includes start, excludes end)
+- **Timestamp units**: Integer timestamps are in **microseconds** (not seconds or milliseconds)
+- **Timezone handling**: Date-only strings ("2024-05-01") are interpreted as midnight UTC with a warning
+- **ISO format support**: Accepts standard ISO 8601 formats including Z suffix for UTC
 
 #### `query.trades(...)`
 Load trades with automatic symbol resolution.

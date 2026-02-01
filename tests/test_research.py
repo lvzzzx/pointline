@@ -189,6 +189,10 @@ def test_normalize_timestamp_with_iso_datetime_string():
     expected = int(expected_dt.timestamp() * 1_000_000)
     assert result == expected
 
+    # With Z suffix (common UTC indicator)
+    result = _normalize_timestamp("2024-05-01T12:30:45Z", "start_ts_us")
+    assert result == expected
+
     # Without timezone (should warn and assume UTC)
     with pytest.warns(UserWarning, match="naive datetime interpreted as UTC"):
         result = _normalize_timestamp("2024-05-01T12:30:45", "start_ts_us")
