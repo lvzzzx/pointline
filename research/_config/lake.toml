@@ -1,5 +1,0 @@
-# This file is for local overrides.
-# Set your lake root to match pointline config, or leave blank and rely on
-# LAKE_ROOT / ~/.config/pointline/config.toml.
-
-# lake_root = "/mnt/pointline/lake"
