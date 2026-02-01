@@ -32,9 +32,8 @@ _STOCK_BASIC_FIELDS = (
 
 def _parse_yyyymmdd_to_date(expr: pl.Expr) -> pl.Expr:
     as_text = expr.cast(pl.Utf8, strict=False)
-    return (
-        as_text.str.strptime(pl.Date, "%Y%m%d", strict=False)
-        .fill_null(as_text.str.strptime(pl.Date, "%Y-%m-%d", strict=False))
+    return as_text.str.strptime(pl.Date, "%Y%m%d", strict=False).fill_null(
+        as_text.str.strptime(pl.Date, "%Y-%m-%d", strict=False)
     )
 
 
@@ -104,29 +103,31 @@ def build_stock_basic_cn_snapshot(
     # Filter unknown exchange rows
     result = result.filter(pl.col("exchange_id") != 0)
 
-    result = result.select([
-        "ts_code",
-        "symbol",
-        "name",
-        "area",
-        "industry",
-        "fullname",
-        "enname",
-        "cnspell",
-        "market",
-        "exchange",
-        "curr_type",
-        "list_status",
-        "list_date",
-        "delist_date",
-        "is_hs",
-        "act_name",
-        "act_ent_type",
-        "exchange_id",
-        "exchange_symbol",
-        "as_of_date",
-        "ingest_ts_us",
-    ])
+    result = result.select(
+        [
+            "ts_code",
+            "symbol",
+            "name",
+            "area",
+            "industry",
+            "fullname",
+            "enname",
+            "cnspell",
+            "market",
+            "exchange",
+            "curr_type",
+            "list_status",
+            "list_date",
+            "delist_date",
+            "is_hs",
+            "act_name",
+            "act_ent_type",
+            "exchange_id",
+            "exchange_symbol",
+            "as_of_date",
+            "ingest_ts_us",
+        ]
+    )
 
     return normalize_stock_basic_cn_schema(result)
 

@@ -138,11 +138,7 @@ def run_dq_for_table(
     lf = pl.scan_delta(str(path))
     schema = lf.collect_schema()
 
-    missing_columns = [
-        col
-        for col in config.key_columns
-        if col not in schema
-    ]
+    missing_columns = [col for col in config.key_columns if col not in schema]
 
     if date_partition and TABLE_HAS_DATE.get(table_name, False):
         lf = lf.filter(pl.col("date") == pl.lit(date_partition))

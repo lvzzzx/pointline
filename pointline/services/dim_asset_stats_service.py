@@ -181,9 +181,7 @@ class DimAssetStatsService(BaseService):
                 logger.warning(f"No data fetched for date range {start_date} to {end_date}")
                 return
             self.update(data)
-            logger.info(
-                f"Synced {data.height} rows for date range {start_date} to {end_date}"
-            )
+            logger.info(f"Synced {data.height} rows for date range {start_date} to {end_date}")
             return
 
         # Fallback to daily syncs (for free tier)

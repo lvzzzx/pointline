@@ -62,9 +62,7 @@ class CoinGeckoAssetStatsProvider(AssetStatsProvider):
                         "base_asset": base_asset,
                         "date": target_date,
                         "coingecko_coin_id": coin_id,
-                        "circulating_supply": _to_float_or_none(
-                            stats.get("circulating_supply")
-                        ),
+                        "circulating_supply": _to_float_or_none(stats.get("circulating_supply")),
                         "total_supply": _to_float_or_none(stats.get("total_supply")),
                         "max_supply": _to_float_or_none(stats.get("max_supply")),
                         "market_cap_usd": _to_float_or_none(stats.get("market_cap_usd")),
@@ -140,8 +138,9 @@ class CoinGeckoAssetStatsProvider(AssetStatsProvider):
                 for day, supply in daily_supplies.items():
                     if start_date <= day <= end_date:
                         updated_at_ts = int(
-                            datetime.combine(day, datetime.min.time(), tzinfo=timezone.utc)
-                            .timestamp()
+                            datetime.combine(
+                                day, datetime.min.time(), tzinfo=timezone.utc
+                            ).timestamp()
                             * 1_000_000
                         )
 
@@ -151,9 +150,7 @@ class CoinGeckoAssetStatsProvider(AssetStatsProvider):
                                 "date": day,
                                 "coingecko_coin_id": coin_id,
                                 "circulating_supply": supply,
-                                "total_supply": _to_float_or_none(
-                                    current_stats.get("total_supply")
-                                )
+                                "total_supply": _to_float_or_none(current_stats.get("total_supply"))
                                 if current_stats
                                 else None,
                                 "max_supply": _to_float_or_none(current_stats.get("max_supply"))

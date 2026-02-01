@@ -49,9 +49,7 @@ def normalize_stock_basic_cn_schema(df: pl.DataFrame) -> pl.DataFrame:
     if missing:
         raise ValueError(f"stock_basic_cn missing required columns: {missing}")
 
-    return df.with_columns([
-        pl.col(col).cast(dtype, strict=False) for col, dtype in SCHEMA.items()
-    ])
+    return df.with_columns([pl.col(col).cast(dtype, strict=False) for col, dtype in SCHEMA.items()])
 
 
 def required_stock_basic_cn_columns() -> tuple[str, ...]:
