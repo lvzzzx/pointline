@@ -92,6 +92,7 @@ def set_config_lake_root(value: str | Path) -> Path:
 # Table Registry (Table Name -> Relative Path from LAKE_ROOT)
 TABLE_PATHS = {
     "dim_symbol": "silver/dim_symbol",
+    "stock_basic_cn": "silver/stock_basic_cn",
     "dim_asset_stats": "silver/dim_asset_stats",
     "ingest_manifest": "silver/ingest_manifest",
     "validation_log": "silver/validation_log",
@@ -108,6 +109,7 @@ TABLE_PATHS = {
 # Table registry for date column availability (used for safe filtering).
 TABLE_HAS_DATE = {
     "dim_symbol": False,
+    "stock_basic_cn": False,
     "dim_asset_stats": True,
     "ingest_manifest": True,
     "validation_log": False,

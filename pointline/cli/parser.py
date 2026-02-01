@@ -11,11 +11,16 @@ from pointline.cli.commands.dim_asset_stats import (
     cmd_dim_asset_stats_backfill,
     cmd_dim_asset_stats_sync,
 )
-from pointline.cli.commands.dim_symbol import cmd_dim_symbol_sync, cmd_dim_symbol_sync_tushare
+from pointline.cli.commands.dim_symbol import (
+    cmd_dim_symbol_sync,
+    cmd_dim_symbol_sync_from_stock_basic_cn,
+    cmd_dim_symbol_sync_tushare,
+)
 from pointline.cli.commands.download import cmd_download
 from pointline.cli.commands.dq import cmd_dq_report, cmd_dq_run, cmd_dq_summary, dq_table_choices
 from pointline.cli.commands.ingest import cmd_ingest_discover, cmd_ingest_run
 from pointline.cli.commands.manifest import cmd_manifest_backfill_sha256, cmd_manifest_show
+from pointline.cli.commands.stock_basic_cn import cmd_stock_basic_cn_sync
 from pointline.cli.commands.symbol import cmd_symbol_search
 from pointline.cli.commands.validate import cmd_validate_quotes, cmd_validate_trades
 from pointline.cli.commands.validation import cmd_validation_show, cmd_validation_stats
@@ -110,6 +115,27 @@ def build_parser() -> argparse.ArgumentParser:
         help="Path to the dim_symbol Delta table",
     )
     symbol_sync_tushare.set_defaults(func=cmd_dim_symbol_sync_tushare)
+
+    symbol_sync_stock_basic = symbol_sub.add_parser(
+        "sync-from-stock-basic-cn",
+        help="Sync dim_symbol from silver.stock_basic_cn snapshot",
+    )
+    symbol_sync_stock_basic.add_argument(
+        "--stock-basic-path",
+        default=str(get_table_path("stock_basic_cn")),
+        help="Path to the stock_basic_cn Delta table",
+    )
+    symbol_sync_stock_basic.add_argument(
+        "--table-path",
+        default=str(get_table_path("dim_symbol")),
+        help="Path to the dim_symbol Delta table",
+    )
+    symbol_sync_stock_basic.add_argument(
+        "--rebuild",
+        action="store_true",
+        help="Perform a full history rebuild for the symbols in the source",
+    )
+    symbol_sync_stock_basic.set_defaults(func=cmd_dim_symbol_sync_from_stock_basic_cn)
 
     # --- Bronze ---
     bronze = subparsers.add_parser("bronze", help="Bronze layer utilities")
@@ -363,6 +389,116 @@ def build_parser() -> argparse.ArgumentParser:
     )
     silver_validate_trades.set_defaults(func=cmd_validate_trades)
 
+    silver_dim_asset_stats = silver_sub.add_parser(
+        "dim-asset-stats", help="dim_asset_stats utilities"
+    )
+    silver_dim_asset_stats_sub = silver_dim_asset_stats.add_subparsers(
+        dest="silver_dim_asset_stats_command"
+    )
+
+    silver_dim_asset_stats_sync = silver_dim_asset_stats_sub.add_parser(
+        "sync", help="Sync dim_asset_stats for a date"
+    )
+    silver_dim_asset_stats_sync.add_argument(
+        "--date",
+        required=True,
+        help="Date to sync (YYYY-MM-DD)",
+    )
+    silver_dim_asset_stats_sync.add_argument(
+        "--base-assets",
+        help=(
+            "Comma-separated list of base assets to sync (e.g., BTC,ETH,SOL). "
+            "If omitted, syncs all assets from dim_symbol"
+        ),
+    )
+    silver_dim_asset_stats_sync.add_argument(
+        "--table-path",
+        default=str(get_table_path("dim_asset_stats")),
+        help="Path to the dim_asset_stats Delta table",
+    )
+    silver_dim_asset_stats_sync.add_argument(
+        "--api-key",
+        default=os.getenv("COINGECKO_API_KEY", ""),
+        help="CoinGecko API key (optional, for higher rate limits)",
+    )
+    silver_dim_asset_stats_sync.add_argument(
+        "--provider",
+        choices=["coingecko", "coinmarketcap"],
+        default="coingecko",
+        help="Data source provider (default: coingecko)",
+    )
+    silver_dim_asset_stats_sync.set_defaults(func=cmd_dim_asset_stats_sync)
+
+    silver_dim_asset_stats_backfill = silver_dim_asset_stats_sub.add_parser(
+        "backfill", help="Backfill historical dim_asset_stats for a date range"
+    )
+    silver_dim_asset_stats_backfill.add_argument(
+        "--start-date",
+        required=True,
+        help="Start date YYYY-MM-DD (inclusive)",
+    )
+    silver_dim_asset_stats_backfill.add_argument(
+        "--end-date",
+        required=True,
+        help="End date YYYY-MM-DD (inclusive)",
+    )
+    silver_dim_asset_stats_backfill.add_argument(
+        "--base-assets",
+        help=(
+            "Comma-separated list of base assets to sync (e.g., BTC,ETH,SOL). "
+            "If omitted, syncs all assets from dim_symbol"
+        ),
+    )
+    silver_dim_asset_stats_backfill.add_argument(
+        "--table-path",
+        default=str(get_table_path("dim_asset_stats")),
+        help="Path to the dim_asset_stats Delta table",
+    )
+    silver_dim_asset_stats_backfill.add_argument(
+        "--api-key",
+        default=os.getenv("COINGECKO_API_KEY", ""),
+        help="CoinGecko API key (optional, for higher rate limits)",
+    )
+    silver_dim_asset_stats_backfill.add_argument(
+        "--provider",
+        choices=["coingecko", "coinmarketcap"],
+        default="coingecko",
+        help="Data source provider (default: coingecko)",
+    )
+    silver_dim_asset_stats_backfill.set_defaults(func=cmd_dim_asset_stats_backfill)
+
+    silver_stock_basic_cn = silver_sub.add_parser(
+        "stock-basic-cn", help="China stock_basic reference table utilities"
+    )
+    silver_stock_basic_cn_sub = silver_stock_basic_cn.add_subparsers(
+        dest="silver_stock_basic_cn_command"
+    )
+    silver_stock_basic_cn_sync = silver_stock_basic_cn_sub.add_parser(
+        "sync", help="Sync stock_basic_cn from Tushare API"
+    )
+    silver_stock_basic_cn_sync.add_argument(
+        "--exchange",
+        choices=["szse", "sse", "all"],
+        default="all",
+        help="Exchange to sync (default: all)",
+    )
+    silver_stock_basic_cn_sync.add_argument(
+        "--include-delisted",
+        action="store_true",
+        help="Include delisted stocks",
+    )
+    silver_stock_basic_cn_sync.add_argument(
+        "--token",
+        default=os.getenv("TUSHARE_TOKEN", ""),
+        help="Tushare API token (or set TUSHARE_TOKEN env var)",
+    )
+    silver_stock_basic_cn_sync.add_argument(
+        "--table-path",
+        default=str(get_table_path("stock_basic_cn")),
+        help="Path to the stock_basic_cn Delta table",
+    )
+    silver_stock_basic_cn_sync.set_defaults(func=cmd_stock_basic_cn_sync)
+
     # --- Manifest ---
     manifest = subparsers.add_parser("manifest", help="Ingestion manifest utilities")
     manifest_sub = manifest.add_subparsers(dest="manifest_command")
@@ -600,67 +736,6 @@ def build_parser() -> argparse.ArgumentParser:
         help="Path to dq_summary table (default: LAKE_ROOT/silver/dq_summary)",
     )
     dq_summary.set_defaults(func=cmd_dq_summary)
-
-    # --- Assets ---
-    assets = subparsers.add_parser("assets", help="Asset stats utilities")
-    assets_sub = assets.add_subparsers(dest="assets_command")
-
-    assets_sync = assets_sub.add_parser("sync", help="Sync dim_asset_stats for a date")
-    assets_sync.add_argument(
-        "--date",
-        required=True,
-        help="Date to sync (YYYY-MM-DD)",
-    )
-    assets_sync.add_argument(
-        "--base-assets",
-        help=(
-            "Comma-separated list of base assets to sync (e.g., BTC,ETH,SOL). "
-            "If omitted, syncs all assets from dim_symbol"
-        ),
-    )
-    assets_sync.add_argument(
-        "--table-path",
-        default=str(get_table_path("dim_asset_stats")),
-        help="Path to the dim_asset_stats Delta table",
-    )
-    assets_sync.add_argument(
-        "--api-key",
-        default=os.getenv("COINGECKO_API_KEY", ""),
-        help="CoinGecko API key (optional, for higher rate limits)",
-    )
-    assets_sync.set_defaults(func=cmd_dim_asset_stats_sync)
-
-    assets_backfill = assets_sub.add_parser(
-        "backfill", help="Backfill historical dim_asset_stats for a date range"
-    )
-    assets_backfill.add_argument(
-        "--start-date",
-        required=True,
-        help="Start date YYYY-MM-DD (inclusive)",
-    )
-    assets_backfill.add_argument(
-        "--end-date",
-        required=True,
-        help="End date YYYY-MM-DD (inclusive)",
-    )
-    assets_backfill.add_argument(
-        "--base-assets",
-        help=(
-            "Comma-separated list of base assets to sync (e.g., BTC,ETH,SOL). "
-            "If omitted, syncs all assets from dim_symbol"
-        ),
-    )
-    assets_backfill.add_argument(
-        "--table-path",
-        default=str(get_table_path("dim_asset_stats")),
-        help="Path to the dim_asset_stats Delta table",
-    )
-    assets_backfill.add_argument(
-        "--api-key",
-        default=os.getenv("COINGECKO_API_KEY", ""),
-        help="CoinGecko API key (optional, for higher rate limits)",
-    )
-    assets_backfill.set_defaults(func=cmd_dim_asset_stats_backfill)
 
     # --- Delta ---
     delta = subparsers.add_parser("delta", help="Delta Lake maintenance utilities")

@@ -34,8 +34,15 @@ class TushareClient:
                 "Get token from: https://tushare.pro/user/token"
             )
 
-        ts.set_token(token)
-        self.pro = ts.pro_api()
+        self.pro = ts.pro_api(token)
+        # Optional monkey patch for custom Tushare gateway.
+        # Enable via TUSHARE_MONKEY_PATCH (default: on) and set TUSHARE_HTTP_URL if needed.
+        monkey_patch = os.getenv("TUSHARE_MONKEY_PATCH", "1").lower() not in {"0", "false", "no"}
+        if monkey_patch:
+            self.pro._DataApi__token = token
+            http_url = os.getenv("TUSHARE_HTTP_URL", "").strip()
+            if http_url:
+                self.pro._DataApi__http_url = http_url
         self._ts = ts
 
     def get_stock_basic(
@@ -56,8 +63,9 @@ class TushareClient:
 
         Returns:
             Polars DataFrame with columns:
-                ts_code, symbol, name, area, industry, fullname, enname,
-                market, exchange, list_status, list_date, delist_date, is_hs
+                ts_code, symbol, name, area, industry, fullname, enname, cnspell,
+                market, exchange, curr_type, list_status, list_date, delist_date, is_hs,
+                act_name, act_ent_type
 
         Example:
             >>> client = TushareClient()
@@ -67,8 +75,8 @@ class TushareClient:
         df_pandas = self.pro.stock_basic(
             exchange=exchange or "",
             list_status=list_status or "",
-            fields="ts_code,symbol,name,area,industry,fullname,enname,"
-            "market,exchange,list_status,list_date,delist_date,is_hs",
+            fields="ts_code,symbol,name,area,industry,fullname,enname,cnspell,market,exchange,"
+            "curr_type,list_status,list_date,delist_date,is_hs,act_name,act_ent_type",
         )
 
         # Convert to Polars

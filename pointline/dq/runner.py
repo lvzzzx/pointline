@@ -11,7 +11,7 @@ from pathlib import Path
 import polars as pl
 
 from pointline.config import TABLE_HAS_DATE, get_table_path
-from pointline.dq.registry import TableDQConfig, get_dq_config, list_dq_tables
+from pointline.dq.registry import get_dq_config, list_dq_tables
 from pointline.tables.dq_summary import create_dq_summary_record
 
 
@@ -138,11 +138,7 @@ def run_dq_for_table(
     lf = pl.scan_delta(str(path))
     schema = lf.collect_schema()
 
-    missing_columns = [
-        col
-        for col in config.key_columns
-        if col not in schema
-    ]
+    missing_columns = [col for col in config.key_columns if col not in schema]
 
     if date_partition and TABLE_HAS_DATE.get(table_name, False):
         lf = lf.filter(pl.col("date") == pl.lit(date_partition))

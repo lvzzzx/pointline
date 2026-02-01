@@ -13,7 +13,6 @@ from datetime import date
 
 import polars as pl
 
-
 DQ_SUMMARY_SCHEMA: dict[str, pl.DataType] = {
     "run_id": pl.Int64,  # Unique run ID (microsecond timestamp)
     "table_name": pl.Utf8,

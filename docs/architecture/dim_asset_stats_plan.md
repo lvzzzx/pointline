@@ -159,9 +159,9 @@ Need to map `base_asset` (from `dim_symbol`) to CoinGecko `coin_id`:
 
 6. **CLI Commands** (`pointline/cli.py`)
    ```bash
-   pointline dim-asset-stats sync --date 2024-01-15
-   pointline dim-asset-stats sync --date-range 2024-01-01 2024-01-31
-   pointline dim-asset-stats backfill --start-date 2020-01-01 --end-date 2024-01-01
+   pointline silver dim-asset-stats sync --date 2024-01-15 --provider coingecko
+   pointline silver dim-asset-stats sync --date-range 2024-01-01 2024-01-31
+   pointline silver dim-asset-stats backfill --start-date 2020-01-01 --end-date 2024-01-01
    ```
 
 ### Phase 4: Automation

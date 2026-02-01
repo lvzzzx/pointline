@@ -11,7 +11,7 @@ The `dim_asset_stats` table tracks daily asset-level statistics (circulating sup
 Sync asset stats for a specific date:
 
 ```bash
-pointline dim-asset-stats sync --date 2024-01-15
+pointline silver dim-asset-stats sync --date 2024-01-15
 ```
 
 **Options:**
@@ -19,14 +19,15 @@ pointline dim-asset-stats sync --date 2024-01-15
 - `--base-assets BTC,ETH,SOL`: Optional comma-separated list of assets (default: all from dim_symbol)
 - `--table-path PATH`: Custom table path (default: `silver/dim_asset_stats`)
 - `--api-key KEY`: CoinGecko API key (optional, for higher rate limits)
+- `--provider coingecko|coinmarketcap`: Data source provider (default: coingecko)
 
 **Example:**
 ```bash
 # Sync all assets for a specific date
-pointline dim-asset-stats sync --date 2024-01-15
+pointline silver dim-asset-stats sync --date 2024-01-15
 
 # Sync only specific assets
-pointline dim-asset-stats sync --date 2024-01-15 --base-assets BTC,ETH,SOL
+pointline silver dim-asset-stats sync --date 2024-01-15 --base-assets BTC,ETH,SOL
 ```
 
 ### 2. Backfill Historical Data (Date Range)
@@ -34,7 +35,7 @@ pointline dim-asset-stats sync --date 2024-01-15 --base-assets BTC,ETH,SOL
 Download historical data for a date range:
 
 ```bash
-pointline dim-asset-stats backfill --start-date 2024-01-01 --end-date 2024-12-31
+pointline silver dim-asset-stats backfill --start-date 2024-01-01 --end-date 2024-12-31
 ```
 
 **Options:**
@@ -43,21 +44,22 @@ pointline dim-asset-stats backfill --start-date 2024-01-01 --end-date 2024-12-31
 - `--base-assets BTC,ETH,SOL`: Optional comma-separated list of assets (default: all from dim_symbol)
 - `--table-path PATH`: Custom table path (default: `silver/dim_asset_stats`)
 - `--api-key KEY`: CoinGecko API key (optional, for higher rate limits)
+- `--provider coingecko|coinmarketcap`: Data source provider (default: coingecko)
 
 **Examples:**
 
 ```bash
 # Backfill entire year 2024 for all assets
-pointline dim-asset-stats backfill --start-date 2024-01-01 --end-date 2024-12-31
+pointline silver dim-asset-stats backfill --start-date 2024-01-01 --end-date 2024-12-31
 
 # Backfill last 30 days for specific assets
-pointline dim-asset-stats backfill \
+pointline silver dim-asset-stats backfill \
   --start-date 2024-12-01 \
   --end-date 2024-12-31 \
   --base-assets BTC,ETH,SOL,BNB
 
 # Backfill with API key (for higher rate limits)
-pointline dim-asset-stats backfill \
+pointline silver dim-asset-stats backfill \
   --start-date 2020-01-01 \
   --end-date 2024-12-31 \
   --api-key YOUR_COINGECKO_API_KEY
@@ -84,7 +86,7 @@ If you have a CoinGecko Pro/Enterprise API key, the service automatically uses t
 **Example with API key:**
 ```bash
 # This will use the efficient chart endpoint automatically
-pointline dim-asset-stats backfill \
+pointline silver dim-asset-stats backfill \
   --start-date 2024-01-01 \
   --end-date 2024-12-31 \
   --api-key YOUR_COINGECKO_API_KEY
@@ -120,7 +122,7 @@ If an asset doesn't have a mapping, it will be skipped with a warning.
 
 ```bash
 # Get data for the past year
-pointline dim-asset-stats backfill \
+pointline silver dim-asset-stats backfill \
   --start-date 2023-01-01 \
   --end-date 2023-12-31
 ```
@@ -130,14 +132,14 @@ pointline dim-asset-stats backfill \
 ```bash
 # Sync yesterday's data (run daily at 02:00 UTC)
 YESTERDAY=$(date -d "yesterday" +%Y-%m-%d)
-pointline dim-asset-stats sync --date $YESTERDAY
+pointline silver dim-asset-stats sync --date $YESTERDAY
 ```
 
 ### Selective Asset Backfill
 
 ```bash
 # Backfill only major assets for a specific period
-pointline dim-asset-stats backfill \
+pointline silver dim-asset-stats backfill \
   --start-date 2024-05-01 \
   --end-date 2024-08-31 \
   --base-assets BTC,ETH,SOL,BNB,TRX,UNI

@@ -4,13 +4,13 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 from datetime import date as date_type
 from pathlib import Path
 
 import polars as pl
 
 from pointline.cli.utils import parse_date_arg
-from pointline.config import get_table_path
 from pointline.dq.registry import list_dq_tables
 from pointline.dq.runner import (
     run_dq_for_all_tables,
@@ -19,6 +19,8 @@ from pointline.dq.runner import (
     run_dq_partitioned,
 )
 from pointline.tables.dq_summary import DQ_SUMMARY_SCHEMA, normalize_dq_summary_schema
+
+logger = logging.getLogger(__name__)
 
 
 def _parse_date(value: str | None) -> date_type | None:
@@ -128,7 +130,8 @@ def _aggregate_issue_counts(rows: list[dict]) -> dict[str, int]:
             continue
         try:
             parsed = json.loads(raw)
-        except Exception:
+        except json.JSONDecodeError as exc:
+            logger.warning("Malformed issue_counts JSON: %s - %s", raw, exc)
             continue
         for key, value in parsed.items():
             if value is None:
@@ -143,15 +146,18 @@ def _extract_partition_stats(row: dict) -> tuple[int | None, int | None]:
         return None, None
     try:
         parsed = json.loads(raw)
-    except Exception:
+    except json.JSONDecodeError as exc:
+        logger.warning("Malformed profile_stats JSON: %s - %s", raw, exc)
         return None, None
     partition = parsed.get("_partition")
     if not isinstance(partition, dict):
         return None, None
     file_count = partition.get("file_count")
     total_bytes = partition.get("total_bytes")
-    return (int(file_count) if file_count is not None else None,
-            int(total_bytes) if total_bytes is not None else None)
+    return (
+        int(file_count) if file_count is not None else None,
+        int(total_bytes) if total_bytes is not None else None,
+    )
 
 
 def cmd_dq_summary(args: argparse.Namespace) -> int:
@@ -213,10 +219,7 @@ def cmd_dq_summary(args: argparse.Namespace) -> int:
     if not rollup.is_empty():
         rollup_row = rollup.sort("validated_at", descending=True).row(0, named=True)
         print("  rollup: present")
-        print(
-            f"  rollup rows: {rollup_row.get('row_count')} "
-            f"status={rollup_row.get('status')}"
-        )
+        print(f"  rollup rows: {rollup_row.get('row_count')} status={rollup_row.get('status')}")
     else:
         print("  rollup: none")
 

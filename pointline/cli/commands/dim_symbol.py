@@ -5,7 +5,6 @@ from __future__ import annotations
 import argparse
 import json
 import os
-from datetime import datetime
 from pathlib import Path
 
 import polars as pl
@@ -79,6 +78,9 @@ def cmd_dim_symbol_sync_tushare(args: argparse.Namespace) -> int:
     """Sync Chinese stock symbols from Tushare to dim_symbol."""
     from pointline.dim_symbol import read_dim_symbol_table, scd2_bootstrap, scd2_upsert
     from pointline.io.vendor.tushare import TushareClient
+    from pointline.io.vendor.tushare.stock_basic_cn import (
+        build_dim_symbol_updates_from_stock_basic_cn,
+    )
 
     try:
         # Initialize Tushare client
@@ -111,78 +113,8 @@ def cmd_dim_symbol_sync_tushare(args: argparse.Namespace) -> int:
 
     print(f"Fetched {len(df)} stocks from Tushare")
 
-    # Transform to dim_symbol schema
-    def parse_tushare_date(date_str: str | None) -> int:
-        """Parse YYYYMMDD string to microseconds timestamp."""
-        if not date_str or date_str == "" or date_str is None:
-            return 0  # Use 0 for missing dates
-        try:
-            dt = datetime.strptime(str(date_str), "%Y%m%d")
-            return int(dt.timestamp() * 1_000_000)
-        except (ValueError, TypeError):
-            return 0
-
     print("Transforming to dim_symbol schema...")
-
-    # Map exchange_id
-    from pointline.config import EXCHANGE_MAP
-
-    szse_id = EXCHANGE_MAP.get("szse", 30)
-    sse_id = EXCHANGE_MAP.get("sse", 31)
-
-    updates = df.with_columns(
-        [
-            # Remove exchange suffix from ts_code: "000001.SZ" -> "000001"
-            pl.col("symbol").alias("exchange_symbol"),
-            # Map exchange name
-            pl.when(pl.col("exchange") == "SZSE")
-            .then(pl.lit("szse"))
-            .when(pl.col("exchange") == "SSE")
-            .then(pl.lit("sse"))
-            .otherwise(pl.lit("unknown"))
-            .alias("exchange"),
-            # Map exchange_id
-            pl.when(pl.col("exchange") == "SZSE")
-            .then(pl.lit(szse_id))
-            .when(pl.col("exchange") == "SSE")
-            .then(pl.lit(sse_id))
-            .otherwise(pl.lit(0))
-            .cast(pl.Int16)
-            .alias("exchange_id"),
-            # Use name as base_asset
-            pl.col("name").alias("base_asset"),
-            # Fixed fields for Chinese A-shares
-            pl.lit("CNY").alias("quote_asset"),
-            pl.lit(0).cast(pl.UInt8).alias("asset_type"),  # spot stocks
-            pl.lit(0.01).alias("tick_size"),  # 1 fen
-            pl.lit(100.0).alias("lot_size"),  # 1 lot = 100 shares
-            pl.lit(0.01).alias("price_increment"),  # tick-based encoding
-            pl.lit(100.0).alias("amount_increment"),  # lot-based encoding
-            pl.lit(1.0).alias("contract_size"),
-            # Parse dates
-            pl.col("list_date")
-            .map_elements(parse_tushare_date, return_dtype=pl.Int64)
-            .alias("valid_from_ts"),
-        ]
-    ).select(
-        [
-            "exchange_id",
-            "exchange",
-            "exchange_symbol",
-            "base_asset",
-            "quote_asset",
-            "asset_type",
-            "tick_size",
-            "lot_size",
-            "price_increment",
-            "amount_increment",
-            "contract_size",
-            "valid_from_ts",
-        ]
-    )
-
-    # Filter out unknown exchanges
-    updates = updates.filter(pl.col("exchange_id") != 0)
+    updates = build_dim_symbol_updates_from_stock_basic_cn(df)
 
     if updates.is_empty():
         print("Warning: No valid symbols after transformation.")
@@ -226,4 +158,39 @@ def cmd_dim_symbol_sync_tushare(args: argparse.Namespace) -> int:
     for row in summary.iter_rows(named=True):
         print(f"  {row['exchange']}: {row['count']}")
 
+    return 0
+
+
+def cmd_dim_symbol_sync_from_stock_basic_cn(args: argparse.Namespace) -> int:
+    """Sync dim_symbol from silver.stock_basic_cn snapshot."""
+    from pointline.io.vendor.tushare.stock_basic_cn import (
+        build_dim_symbol_updates_from_stock_basic_cn,
+    )
+
+    try:
+        stock_basic = pl.read_delta(str(args.stock_basic_path))
+    except Exception as exc:
+        print(f"Error reading stock_basic_cn table: {exc}")
+        return 1
+
+    if stock_basic.is_empty():
+        print("Warning: stock_basic_cn is empty.")
+        return 0
+
+    updates = build_dim_symbol_updates_from_stock_basic_cn(stock_basic)
+    if updates.is_empty():
+        print("Warning: No valid symbols after transformation.")
+        return 0
+
+    repo = BaseDeltaRepository(Path(args.table_path))
+    service = DimSymbolService(repo)
+
+    if args.rebuild:
+        print(f"Rebuilding history for {updates.select('exchange_symbol').n_unique()} symbols...")
+        service.rebuild(updates)
+    else:
+        print("Applying incremental updates...")
+        service.update(updates)
+
+    print("Sync complete.")
     return 0
