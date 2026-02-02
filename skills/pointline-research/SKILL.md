@@ -484,3 +484,4 @@ Load these when needed for detailed guidance:
 - **[references/best_practices.md](references/best_practices.md)** - Reproducibility principles (PIT correctness, deterministic ordering, symbol resolution, avoiding lookahead bias)
 - **[references/schemas.md](references/schemas.md)** - Comprehensive table schemas with all fields and encoding details
 - **[references/exchange_quirks.md](references/exchange_quirks.md)** - "Tribal Knowledge" about exchange-specific behaviors (funding intervals, auction sessions, holiday calendars, etc.)
+- **[references/ml_features.md](references/ml_features.md)** - Feature engineering guide for ML models (Order Book Imbalance, Trade Flow Toxicity, Volatility)
