@@ -18,7 +18,14 @@ from pointline.cli.commands.dim_symbol import (
     cmd_dim_symbol_sync_tushare,
 )
 from pointline.cli.commands.download import cmd_download
-from pointline.cli.commands.dq import cmd_dq_report, cmd_dq_run, cmd_dq_summary, dq_table_choices
+from pointline.cli.commands.dq import (
+    cmd_dq_cross_table,
+    cmd_dq_report,
+    cmd_dq_run,
+    cmd_dq_summary,
+    cross_table_check_choices,
+    dq_table_choices,
+)
 from pointline.cli.commands.ingest import cmd_ingest_discover, cmd_ingest_run
 from pointline.cli.commands.manifest import cmd_manifest_backfill_sha256, cmd_manifest_show
 from pointline.cli.commands.stock_basic_cn import cmd_stock_basic_cn_sync
@@ -781,6 +788,44 @@ def build_parser() -> argparse.ArgumentParser:
         help="Path to dq_summary table (default: LAKE_ROOT/silver/dq_summary)",
     )
     dq_summary.set_defaults(func=cmd_dq_summary)
+
+    # Cross-table consistency checks
+    dq_cross = dq_sub.add_parser("cross-table", help="Run cross-table consistency checks")
+    dq_cross.add_argument(
+        "--check",
+        default="all",
+        choices=cross_table_check_choices(),
+        help="Check to run (default: all)",
+    )
+    dq_cross.add_argument(
+        "--table",
+        required=True,
+        choices=dq_table_choices()[1:],  # Exclude 'all'
+        help="Table to check",
+    )
+    dq_cross.add_argument(
+        "--date",
+        default=None,
+        help="Optional partition date (YYYY-MM-DD)",
+    )
+    dq_cross.add_argument(
+        "--verbose",
+        action="store_true",
+        help="Show detailed output including recommendations",
+    )
+    dq_cross.add_argument(
+        "--show-passed",
+        action="store_true",
+        default=True,
+        help="Show passed checks in output (default: True)",
+    )
+    dq_cross.add_argument(
+        "--format",
+        default="text",
+        choices=["text", "compact", "json", "csv"],
+        help="Output format (default: text)",
+    )
+    dq_cross.set_defaults(func=cmd_dq_cross_table)
 
     # --- Delta ---
     delta = subparsers.add_parser("delta", help="Delta Lake maintenance utilities")

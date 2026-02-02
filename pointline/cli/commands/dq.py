@@ -11,7 +11,13 @@ from pathlib import Path
 import polars as pl
 
 from pointline.cli.utils import parse_date_arg
+from pointline.dq.cross_table import (
+    list_cross_table_checks,
+    run_all_cross_table_checks,
+    run_cross_table_check,
+)
 from pointline.dq.registry import list_dq_tables
+from pointline.dq.reporter import print_report
 from pointline.dq.runner import (
     run_dq_for_all_tables,
     run_dq_for_all_tables_partitioned,
@@ -228,3 +234,61 @@ def cmd_dq_summary(args: argparse.Namespace) -> int:
 
 def dq_table_choices() -> list[str]:
     return ["all", *list_dq_tables()]
+
+
+def cmd_dq_cross_table(args: argparse.Namespace) -> int:
+    """Run cross-table consistency checks."""
+
+    date_partition: date_type | None = None
+    if args.date:
+        parsed = parse_date_arg(args.date)
+        if parsed is None:
+            print(f"Invalid date: {args.date}")
+            return 1
+        date_partition = parsed
+
+    check_name = args.check
+
+    if check_name == "all":
+        # Run all checks for the table
+        report = run_all_cross_table_checks(args.table, date_partition)
+        print_report(
+            report,
+            verbose=args.verbose,
+            show_passed=args.show_passed,
+            format_type=args.format,
+        )
+        return 0 if report.overall_passed else 1
+    else:
+        # Run single check
+        try:
+            result = run_cross_table_check(check_name, args.table, date_partition)
+        except ValueError as e:
+            print(f"Error: {e}")
+            return 1
+
+        # Print single result
+        print(f"Cross-Table Check: {check_name}")
+        print(f"Table: {args.table}")
+        print(f"Date: {date_partition or 'all dates'}")
+        print("-" * 50)
+
+        icon = "✅" if result.passed else "❌"
+        status = "PASSED" if result.passed else "FAILED"
+        print(f"{icon} {status} [{result.severity.value}]")
+        print(f"Violations: {result.violation_count:,} / {result.total_count:,}")
+        print(f"Rate: {result.violation_rate:.2%}")
+        print(f"Duration: {result.duration_ms}ms")
+
+        if result.recommendation:
+            print(f"\nRecommendation: {result.recommendation}")
+
+        if args.verbose and result.details:
+            print(f"\nDetails: {json.dumps(result.details, indent=2, default=str)}")
+
+        return 0 if result.passed else 1
+
+
+def cross_table_check_choices() -> list[str]:
+    """Return available cross-table check names."""
+    return ["all", *list_cross_table_checks()]
