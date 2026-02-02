@@ -7,13 +7,27 @@ description: "Guide for using Pointline, a high-performance point-in-time (PIT) 
 
 Guide LLM agents through efficient, correct usage of the Pointline data lake for quantitative research.
 
+## 1. Profile Selection (Context Switching)
+
+**Step 1: CLASSIFY** the user's request into one of these profiles.
+**Step 2: ADOPT** the specific priorities and checks for that profile.
+
+| Profile | Triggers | Key Data | Reference |
+| :--- | :--- | :--- | :--- |
+| **HFT (Microstructure)** | "latency", "L3", "queue", "ticks", "imbalance" | `szse_l3_orders`, `book_snapshot` | [profile_hft_microstructure.md](references/profile_hft_microstructure.md) |
+| **MFT (Alpha/StatArb)** | "rebalance", "funding", "RSI", "portfolio", "4h" | `klines`, `derivative_ticker` | [profile_mft_alpha.md](references/profile_mft_alpha.md) |
+| **Execution (TCA)** | "slippage", "impact", "fill rate", "vwap" | `trades`, `quotes` | [profile_execution.md](references/profile_execution.md) |
+
+---
+
 ## Quick Start Workflow
 
 **ALWAYS follow this sequence:**
 
-1. **Discover** → Check what data exists
-2. **Query** → Load data with Query API (default)
-3. **Analyze** → Apply analysis patterns with PIT correctness
+1. **Discover** → Check what data exists (Exchanges, Symbols)
+2. **Validate** → **CRITICAL:** Check `research.data_coverage` before querying
+3. **Query** → Load data with Query API (default)
+4. **Analyze** → Apply analysis patterns with PIT correctness
 
 ```python
 from pointline import research
@@ -21,17 +35,42 @@ from pointline import research
 # Step 1: Discover
 exchanges = research.list_exchanges(asset_class="crypto-derivatives")
 symbols = research.list_symbols(exchange="binance-futures", base_asset="BTC")
-coverage = research.data_coverage("binance-futures", "BTCUSDT")
 
-# Step 2: Query (decoded=True returns floats)
+# Step 2: Validate (The "Sanity Check")
+# NEVER skip this. Loading empty data is the root cause of 90% of failures.
+coverage = research.data_coverage("binance-futures", "BTCUSDT")
+if not coverage["trades"]["available"]:
+    raise ValueError("No trade data available for BTCUSDT on this day")
+
+# Step 3: Query (decoded=True returns floats)
 from pointline.research import query
 trades = query.trades("binance-futures", "BTCUSDT", "2024-05-01", "2024-05-02", decoded=True)
 
-# Step 3: Analyze (use ts_local_us for PIT correctness)
+# Step 4: Analyze (use ts_local_us for PIT correctness)
 import polars as pl
 trades = trades.sort("ts_local_us")  # Arrival order (PIT correct)
 vwap = (trades["price"] * trades["qty"]).sum() / trades["qty"].sum()
 ```
+
+---
+
+## Sanity Check Protocols (Self-Correction)
+
+**Act as a "Research Partner", not just a tool.**
+
+1.  **Pre-Flight Check:** Before running any heavy computation (VWAP, Backtest), write code to verify:
+    *   Does the symbol exist? (`list_symbols`)
+    *   Is there data for this date? (`data_coverage`)
+    *   Is the date range valid? (Start < End)
+
+2.  **Empty Data Handling:**
+    *   **IF** a query returns 0 rows:
+    *   **DO NOT** simply print "Empty DataFrame".
+    *   **DO** investigate *why*: "Data missing for date 2024-05-01. Checked coverage: False. Possible holiday or outage?"
+
+3.  **Domain Validation:**
+    *   If a user asks for "Binance Spot Funding Rates", **CORRECT THEM**: "Binance Spot does not have funding rates. Did you mean Binance Futures?"
+    *   If a user asks for "SZSE data on Sunday", **WARN THEM**: "SZSE is closed on weekends. Data will be empty."
 
 ---
 
@@ -457,3 +496,8 @@ Load these when needed for detailed guidance:
 - **[references/analysis_patterns.md](references/analysis_patterns.md)** - Common quant analysis patterns (spreads, volume, order flow, market microstructure, execution quality)
 - **[references/best_practices.md](references/best_practices.md)** - Reproducibility principles (PIT correctness, deterministic ordering, symbol resolution, avoiding lookahead bias)
 - **[references/schemas.md](references/schemas.md)** - Comprehensive table schemas with all fields and encoding details
+- **[references/exchange_quirks.md](references/exchange_quirks.md)** - "Tribal Knowledge" about exchange-specific behaviors (funding intervals, auction sessions, holiday calendars, etc.)
+- **[references/ml_features.md](references/ml_features.md)** - Feature engineering guide for ML models (Order Book Imbalance, Trade Flow Toxicity, Volatility)
+- **[references/profile_hft_microstructure.md](references/profile_hft_microstructure.md)** - **HFT Context:** Latency, queue simulation, packet gaps, L3 data.
+- **[references/profile_mft_alpha.md](references/profile_mft_alpha.md)** - **MFT Context:** Factor modeling, funding rates, portfolio rebalancing.
+- **[references/profile_execution.md](references/profile_execution.md)** - **TCA Context:** Slippage, market impact, execution quality.
