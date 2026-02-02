@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
@@ -9,6 +10,8 @@ from pathlib import Path
 import requests
 
 from pointline.config import get_bronze_root
+
+logger = logging.getLogger(__name__)
 
 BINANCE_PUBLIC_BASE_URL = "https://data.binance.vision"
 
@@ -136,10 +139,19 @@ def download_binance_klines(
                 remote_path=remote_path,
             )
             tasks.append((url, dest))
+            logger.debug("Queued download: %s -> %s", url, dest)
 
     result = BinanceDownloadResult()
     if not tasks:
+        logger.info("No download tasks generated for %s %s", exchange, symbols)
         return result
+
+    logger.info(
+        "Starting download of %d files for %s (concurrency=%d)",
+        len(tasks),
+        exchange,
+        concurrency,
+    )
 
     from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -159,13 +171,23 @@ def download_binance_klines(
             status, payload = future.result()
             if status == "downloaded":
                 result.downloaded.append(payload)
+                logger.debug("Downloaded: %s", payload)
             elif status == "skipped":
                 result.skipped.append(payload)
             elif status == "missing":
                 result.missing.append(payload)
+                logger.warning("File not found (404): %s", payload)
             else:
                 result.failed.append(payload)
+                logger.error("Download failed: %s - %s", payload[0], payload[1])
 
+    logger.info(
+        "Download complete: %d downloaded, %d skipped, %d missing, %d failed",
+        len(result.downloaded),
+        len(result.skipped),
+        len(result.missing),
+        len(result.failed),
+    )
     return result
 
 
@@ -201,8 +223,12 @@ def _iter_time_labels(start: date, end: date, timeframe: str) -> Iterable[str]:
             current += timedelta(days=1)
         return
 
+    # Monthly timeframe: include all months that have at least one day in range
+    # Start from the first day of start's month
     current = date(start.year, start.month, 1)
-    end_month = date(end.year, end.month, 1)
+    # End at the first day of the month AFTER end's month to include partial months
+    end_month = date(end.year + 1, 1, 1) if end.month == 12 else date(end.year, end.month + 1, 1)
+
     while current < end_month:
         yield current.strftime("%Y-%m")
         current = _add_month(current)
