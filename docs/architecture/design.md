@@ -46,8 +46,8 @@ can coexist for the same exchange and data type.
 `/lake/bronze/{vendor}/exchange={exchange}/type={data_type}/date={date}/symbol={symbol}/...`
 
 **Example (Tardis):**
-`/lake/bronze/tardis/exchange=deribit/type=incremental_book_L2/date=2025-12-28/`
-`symbol=BTC-PERPETUAL/deribit_incremental_book_L2_2025-12-28_BTC-PERPETUAL.csv.gz`
+`/lake/bronze/tardis/exchange=deribit/type=book_snapshot_25/date=2025-12-28/`
+`symbol=BTC-PERPETUAL/deribit_book_snapshot_25_2025-12-28_BTC-PERPETUAL.csv.gz`
 
 **Example (Binance Public Data):**
 `/lake/bronze/binance_vision/spot/exchange=binance/type=klines/date=2025-01-01/`
@@ -80,7 +80,6 @@ Silver is the canonical research foundation.
 ### Gold (research-optimized derived tables)
 Precomputed “fast paths”:
 - top-of-book quotes (`tob_quotes`)
-- top-N snapshots in wide format (`book_snapshot_25_wide`)
 - merged “event tape” for replay (optional)
 - options surface snapshots on a time grid (optional)
 
@@ -89,9 +88,6 @@ Gold tables are reproducible from Silver (and versioned).
 Current scope decision:
 - Keep **Bronze (vendor raw)** + **Silver (canonical)** as the foundation.
 - Defer Gold adoption until a concrete need is identified.
-
-Additional replay accelerator (derived from `silver.l2_updates`) - **Planned for future implementation**:
-- `gold.l2_state_checkpoint` for full-depth replay checkpoints (not yet implemented)
 
 ---
 
@@ -170,115 +166,9 @@ Store both:
 
 ## 5) Silver schemas per Tardis dataset
 
-> **⚠️ Note:** Section 5.1 describes `l2_updates` table that is **not yet implemented**. L2 order book functionality is planned for implementation in a separate stateful replay framework repository. This section is retained as design documentation.
-
 **Schema Reference:** For complete column definitions, see [Schema Reference - Silver Tables](../schemas.md#silver-tables).
 
-**Related design:** For the Rust + PyO3 replay engine and build interfaces (not yet implemented), see
-[`docs/architecture/l2_replay_engine.md`](l2_replay_engine.md).
-
-### 5.1 `l2_updates` (from `incremental_book_L2`) ⚠️ NOT YET IMPLEMENTED
-Tardis incremental L2 updates are **absolute sizes** at a price level (not deltas).
-- `size == 0` means delete the level.
-- `is_snapshot` marks snapshot rows.
-- If a new snapshot appears after incremental updates, **reset book state** before applying it.
-
-**Table:** `silver.l2_updates` (not yet implemented)
-**Schema:** See [Schema Reference - l2_updates](../schemas.md#21-silverl2_updates)
-
-**Optional convenience columns:**
-- `file_id` (lineage tracking)
-- `file_line_number` (lineage tracking)
-
-**Replay accelerator (Gold) - Planned:**
-- `gold.l2_state_checkpoint` to jump close to a target time and replay forward (not yet implemented)
-- Partition by `exchange` + `date`, cluster/Z-order by `symbol_id` + `ts_local_us`; rebuilds should upsert scoped to `(exchange, date, symbol_id)`.
-
-#### 5.1.1 Build Recipes (Data Infra)
-
-These tables are owned by **data infra** and should be built as scheduled jobs.
-
-**Polars + Python: full-depth checkpoints (skeleton)**
-```python
-from datetime import datetime, timezone
-import polars as pl
-from pointline import research
-from pointline.config import LAKE_ROOT
-
-lake_root = str(LAKE_ROOT)
-
-checkpoint_every_us = 10_000_000
-checkpoint_every_updates = 10_000
-
-updates = (
-    research.scan_table(
-        "l2_updates",
-        symbol_id=1234,
-        start_ts_us=1700000000000000,
-        end_ts_us=1700003600000000,
-        columns=[
-            "ts_local_us",
-            "file_id",
-            "file_line_number",
-            "is_snapshot",
-            "side",
-            "price_int",
-            "size_int",
-        ],
-    )
-    .sort(["ts_local_us", "file_id", "file_line_number"])
-    .collect()
-)
-
-bids: dict[int, int] = {}
-asks: dict[int, int] = {}
-checkpoints: list[dict] = []
-last_checkpoint_us = None
-updates_since = 0
-
-for row in updates.iter_rows(named=True):
-    if row["is_snapshot"]:
-        bids.clear()
-        asks.clear()
-
-    side_map = bids if row["side"] == 0 else asks
-    if row["size_int"] == 0:
-        side_map.pop(row["price_int"], None)
-    else:
-        side_map[row["price_int"]] = row["size_int"]
-
-    now_us = row["ts_local_us"]
-    if last_checkpoint_us is None:
-        last_checkpoint_us = now_us
-
-    updates_since += 1
-    if (now_us - last_checkpoint_us) >= checkpoint_every_us or updates_since >= checkpoint_every_updates:
-        date = datetime.fromtimestamp(now_us / 1_000_000, tz=timezone.utc).date().isoformat()
-        checkpoints.append(
-            {
-                "exchange_id": 21,
-                "symbol_id": 1234,
-                "date": date,
-                "ts_local_us": now_us,
-                "bids": [{"price_int": p, "size_int": s} for p, s in sorted(bids.items(), reverse=True)],
-                "asks": [{"price_int": p, "size_int": s} for p, s in sorted(asks.items())],
-                "file_id": row["file_id"],
-                "file_line_number": row["file_line_number"],
-                "checkpoint_kind": "periodic",
-            }
-        )
-        last_checkpoint_us = now_us
-        updates_since = 0
-
-pl.DataFrame(checkpoints).write_delta(f"{lake_root}/gold/l2_state_checkpoint", mode="append")
-```
-
-This checkpoint loop is intentionally simple. In production, stream by partition and write
-incrementally to avoid collecting large ranges in memory.
-
----
-
-### 5.2 `book_snapshot_25` (from Tardis snapshots)
+### 5.1 `book_snapshot_25` (from Tardis snapshots)
 Snapshots are full top-N book states (e.g., 25 levels).
 
 **Source schema (Tardis `book_snapshot_25`)**
@@ -308,11 +198,6 @@ Snapshots are full top-N book states (e.g., 25 levels).
 **Table:** `silver.book_snapshot_25`
 **Partitioned by:** `["exchange", "date"]` (same strategy as trades/quotes tables)
 **Schema:** See [Schema Reference - book_snapshot_25](../schemas.md#22-silverbook_snapshot_25)
-
-**Gold option: wide columns (Legacy Support)**
-`gold.book_snapshot_25_wide` with columns:
-- `bid_px_01..bid_px_25`, `bid_sz_01..bid_sz_25`, ...
-Use this strictly for Gold if legacy tools (Pandas without explode) require it. See [Schema Reference - Gold Tables](../schemas.md#gold-tables) for details.
 
 ---
 
@@ -372,18 +257,7 @@ Options chain is typically cross-sectional and heavy. Store updates per contract
 - `exchange`
 - `date` (daily partitions, derived from `ts_local_us` in UTC)
 
-**`silver.l2_updates` (ingest-ordered for replay) - Not yet implemented:**
-- `exchange`
-- `date`
-- `symbol_id`
-
-This extra `symbol_id` partition makes replay ordering guarantees enforceable without a global
-sort, at the cost of more partitions (acceptable in development).
-
-**Path structure (l2_updates - planned):**
-`/lake/silver/l2_updates/exchange=deribit/date=2025-12-28/symbol_id=1234/part-000-uuid.parquet`
-
-**Handling Massive Universes (e.g., Options):**
+**Handling Massive Universes (e.g., Options):
 For datasets like `options_chain` where a single day is massive:
 - The `exchange/date` strategy still holds.
 - Delta Lake will automatically split the data into multiple files (e.g., 1GB each) within that folder.
@@ -393,28 +267,11 @@ For datasets like `options_chain` where a single day is massive:
 
 ## 7) Book reconstruction rules (PIT correctness)
 
-### 7.1 Reconstructing L2 state from `l2_updates` (planned)
-Maintain:
-- `book_bids: map(price_int -> size_int)`
-- `book_asks: map(price_int -> size_int)`
-
-Apply in strict order (per symbol, per day):
-- `(ts_local_us ASC, file_id ASC, file_line_number ASC)`
-- Ingest must write **sorted** files within each `exchange/date/symbol_id` partition.
-  Readers may skip global sort only if this invariant is guaranteed.
-
-Rules:
-1. If `is_snapshot = true` and you are currently in incremental mode (or you see a snapshot after updates):
-   - **reset** bids/asks maps.
-2. For each update row:
-   - if `size_int == 0`: delete that price level
-   - else: set `size_int` at that price level for that side
-
-### 7.2 Snapshots as anchors
+### 7.1 Snapshots as anchors
 Use snapshots (top-25) to accelerate random access:
 - Find the snapshot with max `ts_local_us <= t`
-- Apply only subsequent L2 updates after that snapshot time to get exact book at `t`
-- If you need deeper-than-25, you must use full incremental L2 state (if available) or accept top-25 limitations.
+- Use as the starting point for book state at time `t`
+- Note: Full-depth book state beyond 25 levels requires alternative data sources.
 
 ---
 
@@ -429,7 +286,7 @@ This prevents lookahead bias from “future” book states.
 
 ### 8.1 The "Clock" Stream
 For true PIT replay, include a `clock` stream (e.g., 1s or 1m ticks).
-- **Why:** `l2_updates` (when implemented) only exist when market moves. A backtest iterating only on data updates will skip quiet periods, missing scheduled timer events (e.g., "close position at 16:00:00").
+- **Why:** Market data events only exist when market moves. A backtest iterating only on data updates will skip quiet periods, missing scheduled timer events (e.g., "close position at 16:00:00").
 - **Implementation:** Union the data stream with a `clock` stream, sorted by `ts_local_us`.
 
 ---
@@ -448,11 +305,8 @@ Define a contract:
 All latencies are explicit and versioned.
 
 ### 9.2 Fill modeling by data depth
-- If you only have L2: you cannot reproduce FIFO queue exactly.
-  - Use a documented approximation:
-    - queue-position model based on observed size at price
-    - or trade-through / volume-at-price heuristics
-- If you have only top-25 snapshots: fills must acknowledge truncated depth.
+- If you have top-25 snapshots: fills must acknowledge truncated depth.
+- For more accurate queue-position modeling, detailed order book data or execution feed is required.
 
 Version the fill model and store `fill_model_version` in results.
 
@@ -523,7 +377,6 @@ Recommended patterns:
 - Use Polars LazyFrame scans (`pl.read_delta`) for feature pipelines.
 
 Core "safe" APIs (suggested):
-- `load_l2_updates(exchange, symbols, start, end)` -> wraps `deltalake` reader (planned)
 - `load_snapshots_top25(exchange, symbols, start, end)`
 - `load_trades(symbol_id, start_ts_us, end_ts_us)`
 - `asof_join(left, right, on="ts_local_us", by=["exchange_id","symbol_id"])`
@@ -548,8 +401,7 @@ pl.read_delta("/lake/silver/trades", version=None) \
 ### Dataset naming
 - Bronze mirrors Tardis dataset names.
 - Silver uses domain names:
-  - `trades`, `quotes`, `book_snapshot_25`, `book_ticker`, `derivative_ticker`, `liquidations` (implemented)
-  - `l2_updates`, `options_chain` (planned)
+  - `trades`, `quotes`, `book_snapshot_25`, `book_ticker`, `derivative_ticker`, `liquidations`, `options_chain`
 
 ### Timestamp units
 - Store `*_us` (microseconds) as int64 consistently

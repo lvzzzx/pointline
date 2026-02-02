@@ -221,46 +221,7 @@ Silver tables are the canonical research foundation. They are normalized, typed 
 
 ---
 
-### 2.1 `silver.l2_updates` ⚠️ NOT YET IMPLEMENTED
-
-> **Note:** L2 order book functionality is planned for implementation in a separate stateful replay framework repository. This table schema is documented for future reference.
-
-Incremental Level 2 order book updates from Tardis `incremental_book_L2`. Updates are **absolute sizes** at a price level (not deltas).
-
-**Source:** Tardis `incremental_book_L2`
-**Partitioned by:** `["exchange", "date", "symbol_id"]` (planned)
-
-| Column | Type | Notes |
-|---|---:|---|
-| date | date | derived from `ts_local_us` in UTC |
-| exchange | string | partitioned by (not stored in Parquet files) |
-| exchange_id | i16 | dictionary-encoded |
-| symbol_id | i64 | partitioned by (not stored in Parquet files) |
-| ts_local_us | i64 | primary replay timeline |
-| ts_exch_us | i64 | exchange time if available |
-| is_snapshot | bool | snapshot row marker |
-| side | u8 | 0=bid, 1=ask |
-| price_int | i64 | fixed-point ticks |
-| size_int | i64 | fixed-point units |
-| file_id | i32 | lineage tracking |
-| file_line_number | i32 | lineage tracking |
-
-**Optional convenience columns:**
-- `event_group_id` (if vendor provides transaction IDs spanning multiple updates)
-
-**Data Semantics:**
-- `size == 0` means delete the level.
-- `is_snapshot` marks snapshot rows.
-- If a new snapshot appears after incremental updates, **reset book state** before applying it.
-
-**Reconstruction Order (per symbol, per day):** Apply updates in strict order:
-`(ts_local_us ASC, file_id ASC, file_line_number ASC)`.
-Ingest must write sorted files within each `exchange/date/symbol_id` partition to avoid a
-global sort at replay time.
-
----
-
-### 2.2 `silver.book_snapshot_25`
+### 2.1 `silver.book_snapshot_25`
 
 Full top-25 order book snapshots from Tardis `book_snapshot_25`.
 
@@ -502,63 +463,18 @@ Vendor-provided 1h OHLCV bars from Binance public data (Spot + USD-M futures).
 
 Gold tables are derived from Silver tables and optimized for specific research workflows. They are reproducible from Silver and versioned.
 
----
-
-### 3.2 `gold.book_snapshot_25_wide`
-
-Wide-format version of `silver.book_snapshot_25` for legacy tools.
-
-**Source:** Derived from `silver.book_snapshot_25`
-**Partitioned by:** `["exchange", "date"]`
-
-Columns: `bid_px_01..bid_px_25`, `bid_sz_01..bid_sz_25`, `ask_px_01..ask_px_25`, `ask_sz_01..ask_sz_25`, plus common columns.
-
-**Use Case:** Strictly for Gold if legacy tools (Pandas without explode) require it.
-
----
-
-### 3.3 `gold.tob_quotes`
+### 3.2 `gold.tob_quotes`
 
 Top-of-book quotes fast path (if treated as derived table).
 
-**Source:** Derived from `silver.quotes` (or `silver.l2_updates` when implemented)
+**Source:** Derived from `silver.quotes`
 **Partitioned by:** `["exchange", "date"]`
 
 Same schema as `silver.quotes`.
 
 ---
 
-### 3.4 `gold.l2_state_checkpoint` ⚠️ NOT YET IMPLEMENTED
-
-> **Note:** L2 order book functionality is planned for implementation in a separate stateful replay framework repository. This table schema is documented for future reference.
-
-Full-depth book checkpoints to accelerate incremental replay over long ranges.
-
-**Source:** Derived from `silver.l2_updates` (planned)
-**Partitioned by:** `["exchange", "date"]` (planned)
-**Cluster/Z-order (recommended):** `["symbol_id", "ts_local_us"]`
-
-| Column | Type | Notes |
-|---|---:|---|
-| date | date | derived from `ts_local_us` in UTC |
-| exchange | string | partitioned by (not stored in Parquet files) |
-| exchange_id | i16 | |
-| symbol_id | i64 | |
-| ts_local_us | i64 | checkpoint timestamp (replay timeline) |
-| bids | list<struct<price_int: i64, size_int: i64>> | descending by price |
-| asks | list<struct<price_int: i64, size_int: i64>> | ascending by price |
-| file_id | i32 | lineage tracking |
-| file_line_number | i32 | deterministic ordering |
-| checkpoint_kind | string | optional (`periodic` or `snapshot`) |
-
-**Semantics:**
-- Checkpoints store **full depth** state plus the exact stream position used to create them.
-- Safe replay start point for long-range queries (replay forward from checkpoint).
-- Checkpoint build jobs should upsert by `(exchange, date, symbol_id)` to avoid deleting other symbols.
-
----
-
-### 3.5 `gold.reflexivity_bars`
+### 3.4 `gold.reflexivity_bars`
 
 Dollar-Volume bars (Notional Bars) optimized for Regime Detection. These bars align the "Driver" (Perpetual Trades) with the "Truth Serum" (Spot Trades) and "Market State" (OI, Funding) into a single statistically synchronized timeline.
 
@@ -710,7 +626,6 @@ Delta Lake (via Parquet) does not support unsigned integer types `UInt16` and `U
 |---|---|---|---|
 | `dim_symbol` | Silver (Reference) | none | `symbol_id`, `exchange_id`, `exchange_symbol`, validity range |
 | `ingest_manifest` | Silver (Reference) | none | `vendor`, `exchange`, `data_type`, `date`, `status` |
-| `l2_updates` ⚠️ | Silver | `exchange`, `date`, `symbol_id` | ⚠️ **Planned** - Not yet implemented |
 | `book_snapshot_25` | Silver | `exchange`, `date` | `ts_local_us`, `symbol_id`, `bids_px`, `asks_px` |
 | `trades` | Silver | `exchange`, `date` | `ts_local_us`, `symbol_id`, `price_int`, `qty_int` |
 | `quotes` | Silver | `exchange`, `date` | `ts_local_us`, `symbol_id`, `bid_px_int`, `ask_px_int` |
@@ -719,9 +634,7 @@ Delta Lake (via Parquet) does not support unsigned integer types `UInt16` and `U
 | `liquidations` | Silver | `exchange`, `date` | `ts_local_us`, `symbol_id`, `price_int`, `qty_int` |
 | `options_chain` | Silver | `exchange`, `date` | `ts_local_us`, `underlying_symbol_id`, `option_symbol_id` |
 | `kline_1h` | Silver | `exchange`, `date` | `ts_bucket_start_us`, `symbol_id`, OHLCV |
-| `book_snapshot_25_wide` | Gold | `exchange`, `date` | Wide format for legacy tools |
 | `tob_quotes` | Gold | `exchange`, `date` | Fast path for top-of-book |
-| `l2_state_checkpoint` ⚠️ | Gold | `exchange`, `date` | ⚠️ **Planned** - Not yet implemented |
 | `reflexivity_bars` | Gold | `exchange`, `date` | Dollar-bars with Spot/OI/Funding context |
 | `options_surface_grid` | Gold | `exchange`, `date` | Time-gridded options surface |
 

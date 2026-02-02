@@ -91,8 +91,7 @@ print(f"VWAP: ${vwap:.2f}")
 - **Gold:** derived tables for convenience (optional)
 
 **Partitioning:** Most Silver tables are partitioned by `exchange` and `date` (with `date`
-derived from `ts_local_us` in the exchange's local timezone). The planned `silver.l2_updates` table would additionally partition by
-`symbol_id` to preserve replay ordering without a global sort.
+derived from `ts_local_us` in the exchange's local timezone).
 
 Example:
 `${LAKE_ROOT}/silver/trades/exchange=binance-futures/date=2024-05-01/part-*.parquet`
@@ -103,14 +102,12 @@ Example:
 | trades | `${LAKE_ROOT}/silver/trades` | `exchange`, `date` | `ts_local_us`, `symbol_id`, `price_int`, `qty_int` |
 | quotes | `${LAKE_ROOT}/silver/quotes` | `exchange`, `date` | `ts_local_us`, `symbol_id`, `bid_px_int`, `ask_px_int` |
 | book_snapshot_25 | `${LAKE_ROOT}/silver/book_snapshot_25` | `exchange`, `date` | `ts_local_us`, `symbol_id`, `bids_px`, `asks_px` |
-| l2_updates ⚠️ | `${LAKE_ROOT}/silver/l2_updates` | `exchange`, `date`, `symbol_id` | ⚠️ **Planned** - Not yet implemented |
 | dim_symbol | `${LAKE_ROOT}/silver/dim_symbol` | none | `symbol_id`, `exchange_id`, `exchange_symbol`, validity range |
 | ingest_manifest | `${LAKE_ROOT}/silver/ingest_manifest` | none | `vendor`, `exchange`, `data_type`, `date`, `status` |
 
 **For complete schema definitions, see [Schema Reference](../reference/schemas.md).**
 
 ### 3.3 Table catalog (Gold)
-- `gold.book_snapshot_25_wide` (legacy wide format)
 - `gold.tob_quotes` (top-of-book)
 - Other derived tables are reproducible from Silver.
 
