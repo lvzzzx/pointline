@@ -852,12 +852,11 @@ class DateIntegrityCheck(BaseCrossTableCheck):
             except Exception:
                 ts_col = "ts_local_us"
 
-            # Calculate expected date from timestamp (simplified - assumes UTC)
-            # Note: Full implementation would use exchange timezone
+            # Calculate expected date from timestamp (assumes UTC for crypto)
+            # Note: Full implementation would use exchange timezone for non-crypto
             ts_to_date = (
                 (pl.col(ts_col) / 1_000_000)
                 .cast(pl.Datetime(time_unit="us", time_zone="UTC"))
-                .dt.convert_time_zone("UTC")
                 .dt.date()
             )
 
