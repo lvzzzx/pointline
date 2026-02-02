@@ -7,10 +7,24 @@ a Hive-style partitioned structure for ETL ingestion.
 from __future__ import annotations
 
 import gzip
+import logging
 import re
+import shutil
 import subprocess
 from datetime import date, datetime
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
+
+
+def _check_7z_available() -> None:
+    """Check if 7z command-line tool is available."""
+    if shutil.which("7z") is None:
+        raise RuntimeError(
+            "7z command-line tool not found. "
+            "Please install p7zip (e.g., 'apt-get install p7zip-full' on Ubuntu, "
+            "'brew install p7zip' on macOS, or download from https://www.7-zip.org/)"
+        )
 
 
 def parse_quant360_filename(filename: str) -> dict[str, str] | None:
@@ -57,7 +71,12 @@ def list_archive_contents(archive_path: Path) -> list[str]:
 
     Returns:
         List of file paths within archive (e.g., "order_new_STK_SZ_20240930/000001.csv")
+
+    Raises:
+        RuntimeError: If 7z tool is not available
+        subprocess.CalledProcessError: If 7z command fails
     """
+    _check_7z_available()
     result = subprocess.run(
         ["7z", "l", "-slt", str(archive_path)],
         capture_output=True,
@@ -94,7 +113,12 @@ def extract_and_compress_file(
         archive_path: Path to .7z archive
         file_path_in_archive: Path within archive (e.g., "order_new_STK_SZ_20240930/000001.csv")
         output_path: Target path for compressed file (e.g., ".../000001.csv.gz")
+
+    Raises:
+        RuntimeError: If 7z tool is not available or extraction fails
     """
+    _check_7z_available()
+
     # Ensure output directory exists
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -169,17 +193,17 @@ def reorganize_archive(
     }
     table_type = type_map[data_type]
 
-    print(f"Processing {archive_path.name}")
-    print(f"  Exchange: {exchange}")
-    print(f"  Type: {table_type}")
-    print(f"  Date: {date_str}")
+    logger.info("Processing %s", archive_path.name)
+    logger.info("  Exchange: %s", exchange)
+    logger.info("  Type: %s", table_type)
+    logger.info("  Date: %s", date_str)
 
     # List files in archive
     csv_files = list_archive_contents(archive_path)
-    print(f"  Found {len(csv_files)} CSV files")
+    logger.info("  Found %d CSV files", len(csv_files))
 
     if dry_run:
-        print("  [DRY RUN] Would extract and reorganize these files:")
+        logger.info("  [DRY RUN] Would extract and reorganize these files:")
         for csv_file in csv_files[:5]:  # Show first 5
             symbol = Path(csv_file).stem  # Extract symbol from filename
             target = (
@@ -191,9 +215,9 @@ def reorganize_archive(
                 / f"symbol={symbol}"
                 / f"{symbol}.csv.gz"
             )
-            print(f"    {csv_file} -> {target}")
+            logger.info("    %s -> %s", csv_file, target)
         if len(csv_files) > 5:
-            print(f"    ... and {len(csv_files) - 5} more files")
+            logger.info("    ... and %d more files", len(csv_files) - 5)
         return len(csv_files)
 
     # Extract and reorganize each CSV
@@ -213,14 +237,14 @@ def reorganize_archive(
 
         # Skip if already exists
         if target_path.exists():
-            print(f"  [{i}/{len(csv_files)}] Skipping {symbol} (already exists)")
+            logger.info("  [%d/%d] Skipping %s (already exists)", i, len(csv_files), symbol)
             continue
 
-        print(f"  [{i}/{len(csv_files)}] Extracting {symbol}...", end=" ", flush=True)
+        logger.info("  [%d/%d] Extracting %s...", i, len(csv_files), symbol)
         extract_and_compress_file(archive_path, csv_file, target_path)
-        print(f"✓ {target_path}")
+        logger.info("  ✓ %s", target_path)
 
-    print(f"✓ Completed {archive_path.name}")
+    logger.info("✓ Completed %s", archive_path.name)
     return len(csv_files)
 
 
@@ -250,37 +274,34 @@ def reorganize_quant360_archives(
     # Find all matching archives
     archives = list(source_dir.glob(pattern))
     if not archives:
-        print(f"No archives found matching {pattern} in {source_dir}")
+        logger.warning("No archives found matching %s in %s", pattern, source_dir)
         return {}
 
-    print(f"Found {len(archives)} archives to process")
-    print()
+    logger.info("Found %d archives to process", len(archives))
 
     results = {}
     for archive in sorted(archives):
         try:
             count = reorganize_archive(archive, bronze_root, vendor, dry_run)
             results[archive.name] = count
-            print()
         except Exception as e:
-            print(f"✗ Error processing {archive.name}: {e}")
-            print()
+            logger.error("✗ Error processing %s: %s", archive.name, e)
             results[archive.name] = -1
 
     # Summary
-    print("=" * 60)
-    print("SUMMARY")
-    print("=" * 60)
+    logger.info("=" * 60)
+    logger.info("SUMMARY")
+    logger.info("=" * 60)
     total_files = sum(c for c in results.values() if c > 0)
     successful = sum(1 for c in results.values() if c > 0)
     failed = sum(1 for c in results.values() if c < 0)
 
     for archive_name, count in sorted(results.items()):
         status = "✓" if count > 0 else "✗"
-        print(f"{status} {archive_name}: {count if count > 0 else 'FAILED'} files")
+        logger.info("%s %s: %s files", status, archive_name, count if count > 0 else "FAILED")
 
-    print()
-    print(f"Processed {successful} archives successfully, {failed} failed")
-    print(f"Total files reorganized: {total_files}")
+    logger.info("")
+    logger.info("Processed %d archives successfully, %d failed", successful, failed)
+    logger.info("Total files reorganized: %d", total_files)
 
     return results

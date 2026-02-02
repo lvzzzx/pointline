@@ -5,9 +5,13 @@ from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 
-from tardis_dev import datasets
-
 from pointline.config import get_bronze_root
+
+try:
+    from tardis_dev import datasets as tardis_datasets
+except ImportError as _import_error:
+    tardis_datasets = None
+    _TARDIS_IMPORT_ERROR = _import_error
 
 
 def download_tardis_datasets(
@@ -25,6 +29,13 @@ def download_tardis_datasets(
     http_proxy: str | None = None,
 ) -> None:
     """Download datasets from Tardis using the official SDK."""
+    if tardis_datasets is None:
+        raise ImportError(
+            "tardis-dev package is required. "
+            "Install with: pip install tardis-dev\n"
+            f"Original error: {_TARDIS_IMPORT_ERROR}"
+        )
+
     api_key = api_key or os.getenv("TARDIS_API_KEY", "")
     if not api_key:
         raise ValueError("Tardis API key is required.")
@@ -36,7 +47,7 @@ def download_tardis_datasets(
 
     get_filename = _build_get_filename(filename_template)
 
-    datasets.download(
+    tardis_datasets.download(
         exchange=exchange,
         data_types=data_types,
         symbols=symbols,

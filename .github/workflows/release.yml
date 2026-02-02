@@ -6,27 +6,6 @@ on:
       - 'v*'
 
 jobs:
-  build-skill:
-    name: Build Claude Code Skill
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
-
-      - name: Set up Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.11'
-
-      - name: Build skill (requires skill-creator)
-        run: |
-          cd skills
-          chmod +x build.sh
-          # Note: This requires skill-creator to be available
-          # For now, users can download pre-built from releases or build locally
-          echo "⚠️  Skill build skipped (requires skill-creator setup in CI)"
-          echo "Users can build locally with: cd skills && ./build.sh"
-
   release:
     name: Create GitHub Release
     runs-on: ubuntu-latest
@@ -34,10 +13,10 @@ jobs:
       contents: write
     steps:
       - name: Checkout code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Create Release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
           body: |

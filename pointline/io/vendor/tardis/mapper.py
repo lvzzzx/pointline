@@ -148,7 +148,7 @@ def _history_rows(
 
     for i, change in enumerate(sorted_changes):
         # This change describes the state valid UNTIL this change's 'until'
-        _parse_iso_to_us(change["until"])
+        # (The 'until' timestamp is used implicitly via sorted_changes[i+1] or valid_from_ts)
 
         # Apply the change to our running state to see what it was BEFORE this 'until'
         running_state = _apply_change_fields(running_state, change)

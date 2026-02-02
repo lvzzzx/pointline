@@ -39,6 +39,10 @@
   - changed-files:
     - any-glob-to-any-file: 'tests/**'
 
+'area: vendor':
+  - changed-files:
+    - any-glob-to-any-file: 'pointline/io/vendor/**'
+
 'dependencies':
   - changed-files:
     - any-glob-to-any-file: 'pyproject.toml'
