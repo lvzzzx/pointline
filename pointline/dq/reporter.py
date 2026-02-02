@@ -119,9 +119,8 @@ def format_compact_report(report: CheckReport) -> str:
 
     status_icon = "✅" if report.overall_passed else "❌"
 
-    return (
-        f"{status_icon} {report.table_name} ({date_str}): "
-        f"{total - failed}/{total} passed" + (f" ({critical} critical)" if critical > 0 else "")
+    return f"{status_icon} {report.table_name} ({date_str}): {total - failed}/{total} passed" + (
+        f" ({critical} critical)" if critical > 0 else ""
     )
 
 
@@ -151,7 +150,7 @@ def format_json_report(report: CheckReport) -> dict[str, Any]:
 
 def format_csv_report(report: CheckReport) -> str:
     """Format report as CSV."""
-    lines = ["check_name,severity,passed,violation_count,total_count," "violation_rate,duration_ms"]
+    lines = ["check_name,severity,passed,violation_count,total_count,violation_rate,duration_ms"]
 
     for r in report.results:
         lines.append(
