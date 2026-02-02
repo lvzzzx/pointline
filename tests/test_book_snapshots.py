@@ -21,6 +21,7 @@ from pointline.tables.book_snapshots import (
     resolve_symbol_ids,
     validate_book_snapshots,
 )
+from pointline.validation_utils import DataQualityWarning
 
 
 def _sample_tardis_book_snapshots_csv() -> pl.DataFrame:
@@ -242,7 +243,8 @@ def test_validate_book_snapshots_crossed_book():
         }
     )
 
-    validated = validate_book_snapshots(df)
+    with pytest.warns(DataQualityWarning, match="validate_book_snapshots: filtered"):
+        validated = validate_book_snapshots(df)
     assert validated.height == 0  # Should filter out crossed book
 
 
@@ -263,7 +265,8 @@ def test_validate_book_snapshots_invalid_ordering():
         }
     )
 
-    validated = validate_book_snapshots(df)
+    with pytest.warns(DataQualityWarning, match="validate_book_snapshots: filtered"):
+        validated = validate_book_snapshots(df)
     # Should filter out invalid ordering
     assert validated.height == 0
 

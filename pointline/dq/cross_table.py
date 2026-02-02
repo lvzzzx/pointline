@@ -382,23 +382,31 @@ class ManifestConsistencyCheck(BaseCrossTableCheck):
                 .select([pl.col("file_id"), pl.col("silver_rows")])
             )
 
-            # Join and find mismatches
-            comparison = manifest_counts.join(silver_counts, on="file_id", how="left").collect()
+            # Join and find mismatches, including silver-only file_ids
+            comparison = manifest_counts.join(silver_counts, on="file_id", how="full").collect()
 
             # Calculate mismatches
             comparison = comparison.with_columns(
-                pl.col("silver_rows").fill_null(0).alias("silver_rows_filled")
+                pl.col("manifest_rows").fill_null(0).alias("manifest_rows_filled"),
+                pl.col("silver_rows").fill_null(0).alias("silver_rows_filled"),
+                pl.col("manifest_rows").is_null().alias("missing_manifest"),
             ).with_columns(
-                (pl.col("manifest_rows") - pl.col("silver_rows_filled")).alias("row_diff")
+                (pl.col("manifest_rows_filled") - pl.col("silver_rows_filled")).alias("row_diff")
             )
 
             mismatches = comparison.filter(pl.col("row_diff") != 0)
 
-            total_manifest_rows = comparison["manifest_rows"].sum()
+            total_manifest_rows = comparison["manifest_rows_filled"].sum()
+            silver_only_rows = (
+                comparison.filter(pl.col("missing_manifest"))
+                .select(pl.sum("silver_rows_filled"))
+                .item()
+            )
             total_diff = abs(mismatches["row_diff"]).sum()
             mismatch_files = mismatches.height
 
-            violation_rate = total_diff / total_manifest_rows if total_manifest_rows > 0 else 0.0
+            total_reference_rows = total_manifest_rows + silver_only_rows
+            violation_rate = total_diff / total_reference_rows if total_reference_rows > 0 else 0.0
             passed = violation_rate <= self.THRESHOLD
 
             duration_ms = int(time.time() * 1000) - start_ms
@@ -854,11 +862,7 @@ class DateIntegrityCheck(BaseCrossTableCheck):
 
             # Calculate expected date from timestamp (assumes UTC for crypto)
             # Note: Full implementation would use exchange timezone for non-crypto
-            ts_to_date = (
-                (pl.col(ts_col) / 1_000_000)
-                .cast(pl.Datetime(time_unit="us", time_zone="UTC"))
-                .dt.date()
-            )
+            ts_to_date = pl.col(ts_col).cast(pl.Datetime(time_unit="us", time_zone="UTC")).dt.date()
 
             # Find rows where partition date doesn't match timestamp date
             mismatches = (
