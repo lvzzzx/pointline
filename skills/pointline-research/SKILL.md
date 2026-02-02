@@ -7,6 +7,19 @@ description: "Guide for using Pointline, a high-performance point-in-time (PIT) 
 
 Guide LLM agents through efficient, correct usage of the Pointline data lake for quantitative research.
 
+## 1. Profile Selection (Context Switching)
+
+**Step 1: CLASSIFY** the user's request into one of these profiles.
+**Step 2: ADOPT** the specific priorities and checks for that profile.
+
+| Profile | Triggers | Key Data | Reference |
+| :--- | :--- | :--- | :--- |
+| **HFT (Microstructure)** | "latency", "L3", "queue", "ticks", "imbalance" | `szse_l3_orders`, `book_snapshot` | [profile_hft_microstructure.md](references/profile_hft_microstructure.md) |
+| **MFT (Alpha/StatArb)** | "rebalance", "funding", "RSI", "portfolio", "4h" | `klines`, `derivative_ticker` | [profile_mft_alpha.md](references/profile_mft_alpha.md) |
+| **Execution (TCA)** | "slippage", "impact", "fill rate", "vwap" | `trades`, `quotes` | [profile_execution.md](references/profile_execution.md) |
+
+---
+
 ## Quick Start Workflow
 
 **ALWAYS follow this sequence:**
@@ -485,3 +498,6 @@ Load these when needed for detailed guidance:
 - **[references/schemas.md](references/schemas.md)** - Comprehensive table schemas with all fields and encoding details
 - **[references/exchange_quirks.md](references/exchange_quirks.md)** - "Tribal Knowledge" about exchange-specific behaviors (funding intervals, auction sessions, holiday calendars, etc.)
 - **[references/ml_features.md](references/ml_features.md)** - Feature engineering guide for ML models (Order Book Imbalance, Trade Flow Toxicity, Volatility)
+- **[references/profile_hft_microstructure.md](references/profile_hft_microstructure.md)** - **HFT Context:** Latency, queue simulation, packet gaps, L3 data.
+- **[references/profile_mft_alpha.md](references/profile_mft_alpha.md)** - **MFT Context:** Factor modeling, funding rates, portfolio rebalancing.
+- **[references/profile_execution.md](references/profile_execution.md)** - **TCA Context:** Slippage, market impact, execution quality.
