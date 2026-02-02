@@ -25,6 +25,7 @@ from pointline.tables.trades import (
     resolve_symbol_ids,
     validate_trades,
 )
+from pointline.validation_utils import DataQualityWarning
 
 
 def _sample_tardis_trades_csv() -> pl.DataFrame:
@@ -224,7 +225,8 @@ def test_validate_trades_basic():
         }
     )
 
-    validated = validate_trades(df)
+    with pytest.warns(DataQualityWarning, match="validate_trades: filtered"):
+        validated = validate_trades(df)
 
     # Should filter out the negative price
     assert validated.height == 2
@@ -246,7 +248,8 @@ def test_validate_trades_invalid_side():
         }
     )
 
-    validated = validate_trades(df)
+    with pytest.warns(DataQualityWarning, match="validate_trades: filtered"):
+        validated = validate_trades(df)
 
     assert validated.height == 2
 
@@ -356,7 +359,8 @@ def test_trades_service_validate():
         }
     )
 
-    validated = service.validate(df)
+    with pytest.warns(DataQualityWarning, match="validate_trades: filtered"):
+        validated = service.validate(df)
 
     assert validated.height == 1  # Negative price filtered
 

@@ -145,8 +145,8 @@ def test_query_trades_with_string_dates():
         result = query.trades(
             "binance-futures",
             "SOLUSDT",
-            start="2024-05-01",
-            end="2024-05-02",
+            start="2024-05-01T00:00:00+00:00",
+            end="2024-05-02T00:00:00+00:00",
         )
 
         mock_load.assert_called_once()

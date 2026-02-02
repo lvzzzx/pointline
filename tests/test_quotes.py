@@ -22,6 +22,7 @@ from pointline.tables.quotes import (
     resolve_symbol_ids,
     validate_quotes,
 )
+from pointline.validation_utils import DataQualityWarning
 
 
 def _sample_tardis_quotes_csv() -> pl.DataFrame:
@@ -215,7 +216,8 @@ def test_validate_quotes_basic():
         }
     )
 
-    validated = validate_quotes(df)
+    with pytest.warns(DataQualityWarning, match="validate_quotes: filtered"):
+        validated = validate_quotes(df)
 
     # Should filter out the negative bid price
     assert validated.height == 2
@@ -238,7 +240,8 @@ def test_validate_quotes_crossed_book():
         }
     )
 
-    validated = validate_quotes(df)
+    with pytest.warns(DataQualityWarning, match="validate_quotes: filtered"):
+        validated = validate_quotes(df)
 
     # Should filter out the crossed book
     assert validated.height == 2
@@ -310,7 +313,8 @@ def test_validate_quotes_both_missing():
     if "exchange" not in df.columns:
         df = df.with_columns(pl.lit("binance", dtype=pl.Utf8).alias("exchange"))
 
-    validated = validate_quotes(df)
+    with pytest.warns(DataQualityWarning, match="validate_quotes: filtered"):
+        validated = validate_quotes(df)
 
     # Should filter out the row with both missing
     assert validated.height == 2
@@ -492,7 +496,8 @@ def test_quotes_service_validate():
         }
     )
 
-    validated = service.validate(df)
+    with pytest.warns(DataQualityWarning, match="validate_quotes: filtered"):
+        validated = service.validate(df)
 
     assert validated.height == 1  # Negative bid price filtered
 

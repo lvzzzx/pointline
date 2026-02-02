@@ -16,6 +16,7 @@ from pointline.tables.klines import (
     parse_binance_klines_csv,
     validate_klines,
 )
+from pointline.validation_utils import DataQualityWarning
 
 # --- Fixtures ---
 
@@ -463,7 +464,8 @@ def test_validate_klines_filters_invalid():
         }
     )
 
-    result = validate_klines(df)
+    with pytest.warns(DataQualityWarning, match="validate_klines: filtered"):
+        result = validate_klines(df)
     assert result.height == 1  # Only first row valid
 
 
@@ -491,7 +493,8 @@ def test_validate_klines_high_lt_low():
         }
     )
 
-    result = validate_klines(df)
+    with pytest.warns(DataQualityWarning, match="validate_klines: filtered"):
+        result = validate_klines(df)
     assert result.is_empty()  # Invalid row filtered
 
 

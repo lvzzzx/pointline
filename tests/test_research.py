@@ -224,7 +224,8 @@ def test_normalize_timestamp_with_none():
 
 def test_normalize_timestamp_with_iso_date_string():
     """Test that _normalize_timestamp parses ISO date strings."""
-    result = _normalize_timestamp("2024-05-01", "start_ts_us")
+    with pytest.warns(UserWarning, match="naive datetime interpreted as UTC"):
+        result = _normalize_timestamp("2024-05-01", "start_ts_us")
 
     # ISO date without time is parsed as midnight UTC (with warning)
     expected_dt = datetime(2024, 5, 1, 0, 0, 0, tzinfo=timezone.utc)
