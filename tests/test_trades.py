@@ -12,6 +12,7 @@ from pointline.dim_symbol import SCHEMA as DIM_SYMBOL_SCHEMA
 from pointline.dim_symbol import scd2_bootstrap
 from pointline.io.base_repository import BaseDeltaRepository
 from pointline.io.protocols import BronzeFileMetadata
+from pointline.io.vendors.tardis.parsers.trades import parse_tardis_trades_csv
 from pointline.tables.trades import (
     SIDE_BUY,
     SIDE_SELL,
@@ -20,7 +21,6 @@ from pointline.tables.trades import (
     decode_fixed_point,
     encode_fixed_point,
     normalize_trades_schema,
-    parse_tardis_trades_csv,
     required_trades_columns,
     resolve_symbol_ids,
     validate_trades,

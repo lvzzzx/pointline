@@ -19,10 +19,10 @@ from pointline.cli.utils import (
     resolve_manifest_file_id,
 )
 from pointline.config import get_exchange_id, get_table_path, normalize_exchange
+from pointline.io.vendors import get_parser
 from pointline.tables.quotes import (
     QUOTES_SCHEMA,
     normalize_quotes_schema,
-    parse_tardis_quotes_csv,
 )
 from pointline.tables.quotes import (
     encode_fixed_point as encode_quotes_fixed_point,
@@ -33,7 +33,6 @@ from pointline.tables.quotes import (
 from pointline.tables.trades import (
     TRADES_SCHEMA,
     normalize_trades_schema,
-    parse_tardis_trades_csv,
 )
 from pointline.tables.trades import (
     encode_fixed_point as encode_trades_fixed_point,
@@ -57,6 +56,19 @@ def cmd_validate_quotes(args: argparse.Namespace) -> int:
     exchange = args.exchange or inferred.get("exchange")
     symbol = args.symbol or inferred.get("symbol")
     date_str = args.date or inferred.get("date")
+
+    # Infer vendor from bronze path (e.g., bronze/tardis/exchange=...)
+    vendor = args.vendor if hasattr(args, "vendor") and args.vendor else None
+    if not vendor:
+        # Try to extract vendor from path
+        path_parts = path.as_posix().split("/")
+        if "bronze" in path_parts:
+            bronze_idx = path_parts.index("bronze")
+            if bronze_idx + 1 < len(path_parts):
+                vendor = path_parts[bronze_idx + 1]
+        if not vendor:
+            vendor = "tardis"  # Default fallback
+
     if not exchange or not symbol or not date_str:
         raise ValueError(
             "validate quotes: --exchange, --symbol, and --date required (or inferable from path)"
@@ -86,7 +98,9 @@ def cmd_validate_quotes(args: argparse.Namespace) -> int:
         print(f"Empty CSV file: {path}")
         return 0
 
-    parsed_df = parse_tardis_quotes_csv(raw_df)
+    # Get vendor-specific parser
+    parse_quotes = get_parser(vendor, "quotes")
+    parsed_df = parse_quotes(raw_df)
     dim_symbol = pl.read_delta(str(get_table_path("dim_symbol")))
     resolved_df = resolve_quotes_symbol_ids(parsed_df, dim_symbol, exchange_id, symbol)
     encoded_df = encode_quotes_fixed_point(resolved_df, dim_symbol)
@@ -189,6 +203,19 @@ def cmd_validate_trades(args: argparse.Namespace) -> int:
     exchange = args.exchange or inferred.get("exchange")
     symbol = args.symbol or inferred.get("symbol")
     date_str = args.date or inferred.get("date")
+
+    # Infer vendor from bronze path (e.g., bronze/tardis/exchange=...)
+    vendor = args.vendor if hasattr(args, "vendor") and args.vendor else None
+    if not vendor:
+        # Try to extract vendor from path
+        path_parts = path.as_posix().split("/")
+        if "bronze" in path_parts:
+            bronze_idx = path_parts.index("bronze")
+            if bronze_idx + 1 < len(path_parts):
+                vendor = path_parts[bronze_idx + 1]
+        if not vendor:
+            vendor = "tardis"  # Default fallback
+
     if not exchange or not symbol or not date_str:
         raise ValueError(
             "validate trades: --exchange, --symbol, and --date required (or inferable from path)"
@@ -218,7 +245,9 @@ def cmd_validate_trades(args: argparse.Namespace) -> int:
         print(f"Empty CSV file: {path}")
         return 0
 
-    parsed_df = parse_tardis_trades_csv(raw_df)
+    # Get vendor-specific parser
+    parse_trades = get_parser(vendor, "trades")
+    parsed_df = parse_trades(raw_df)
     dim_symbol = pl.read_delta(str(get_table_path("dim_symbol")))
     resolved_df = resolve_trades_symbol_ids(parsed_df, dim_symbol, exchange_id, symbol)
     encoded_df = encode_trades_fixed_point(resolved_df, dim_symbol)

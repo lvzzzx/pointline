@@ -12,12 +12,12 @@ from pointline.dim_symbol import SCHEMA as DIM_SYMBOL_SCHEMA
 from pointline.dim_symbol import scd2_bootstrap
 from pointline.io.base_repository import BaseDeltaRepository
 from pointline.io.protocols import BronzeFileMetadata
+from pointline.io.vendors.tardis.parsers.quotes import parse_tardis_quotes_csv
 from pointline.tables.quotes import (
     QUOTES_SCHEMA,
     decode_fixed_point,
     encode_fixed_point,
     normalize_quotes_schema,
-    parse_tardis_quotes_csv,
     required_quotes_columns,
     resolve_symbol_ids,
     validate_quotes,

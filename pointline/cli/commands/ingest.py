@@ -23,15 +23,12 @@ def cmd_ingest_discover(args: argparse.Namespace) -> int:
     else:
         bronze_root = Path(args.bronze_root)
 
-    enable_prehooks = not getattr(args, "no_prehook", False)
-
     # When using --pending-only, we need checksums to match against the manifest
     # Otherwise, skip checksums for faster discovery
     compute_checksums = args.pending_only
 
     source = LocalBronzeSource(
         bronze_root,
-        enable_prehooks=enable_prehooks,
         compute_checksums=compute_checksums,
     )
     files = list(source.list_files(args.glob))

@@ -11,12 +11,12 @@ from pointline.dim_symbol import scd2_bootstrap
 from pointline.io.base_repository import BaseDeltaRepository
 from pointline.io.delta_manifest_repo import DeltaManifestRepository
 from pointline.io.protocols import BronzeFileMetadata
+from pointline.io.vendors.tardis.parsers.book_snapshots import parse_tardis_book_snapshots_csv
 from pointline.tables.book_snapshots import (
     BOOK_SNAPSHOTS_SCHEMA,
     decode_fixed_point,
     encode_fixed_point,
     normalize_book_snapshots_schema,
-    parse_tardis_book_snapshots_csv,
     required_book_snapshots_columns,
     resolve_symbol_ids,
     validate_book_snapshots,
