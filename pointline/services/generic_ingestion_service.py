@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import gzip
 import logging
+import zipfile
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -65,6 +66,7 @@ class TableStrategy:
         validate: Apply quality checks and filter invalid rows
         normalize_schema: Cast to canonical schema and select only schema columns
         resolve_symbol_ids: Map exchange symbols to symbol_ids with SCD Type 2 handling
+        normalize_symbol: Normalize exchange symbol for dim_symbol matching (optional)
     """
 
     encode_fixed_point: Callable[[pl.DataFrame, pl.DataFrame], pl.DataFrame]
@@ -73,6 +75,9 @@ class TableStrategy:
     resolve_symbol_ids: Callable[
         [pl.DataFrame, pl.DataFrame, int, str, str], pl.DataFrame
     ]  # (df, dim_symbol, exchange_id, symbol, ts_col) -> df
+    normalize_symbol: Callable[[str, str], str] = lambda symbol, exchange: symbol
+    # Default: identity function (no normalization)
+    # Signature: (symbol: str, exchange: str) -> normalized_symbol: str
 
 
 class GenericIngestionService(BaseService):
@@ -203,9 +208,13 @@ class GenericIngestionService(BaseService):
             # 3. Load dim_symbol for quarantine check
             dim_symbol = self.dim_symbol_repo.read_all()
 
-            # 4. Quarantine check
+            # 4. Quarantine check (using normalized symbol for dim_symbol matching)
+            # Normalize symbol once for both quarantine check and symbol resolution
             exchange_id = self._resolve_exchange_id(meta.exchange)
-            is_valid, error_msg = self._check_quarantine(meta, dim_symbol, exchange_id, parsed_df)
+            normalized_symbol = self.strategy.normalize_symbol(meta.symbol, meta.exchange)
+            is_valid, error_msg = self._check_quarantine(
+                meta, dim_symbol, exchange_id, parsed_df, normalized_symbol
+            )
 
             if not is_valid:
                 logger.warning(f"File quarantined: {meta.bronze_file_path} - {error_msg}")
@@ -216,12 +225,12 @@ class GenericIngestionService(BaseService):
                     error_message=error_msg,
                 )
 
-            # 5. Resolve symbol IDs (SCD Type 2 as-of join)
+            # 5. Resolve symbol IDs (SCD Type 2 as-of join using normalized symbol)
             resolved_df = self.strategy.resolve_symbol_ids(
                 parsed_df,
                 dim_symbol,
                 exchange_id,
-                meta.symbol,
+                normalized_symbol,
                 ts_col="ts_local_us",
             )
 
@@ -281,10 +290,10 @@ class GenericIngestionService(BaseService):
             )
 
     def _read_bronze_csv(self, path: Path, meta: BronzeFileMetadata) -> pl.DataFrame:
-        """Read a bronze CSV file, handling gzip compression and headerless formats.
+        """Read a bronze CSV file, handling ZIP and gzip compression and headerless formats.
 
         Args:
-            path: Path to the CSV file
+            path: Path to the CSV file (may be .csv, .csv.gz, or .zip)
             meta: Bronze file metadata (needed to detect headerless formats)
 
         Returns:
@@ -295,6 +304,11 @@ class GenericIngestionService(BaseService):
             handling, polars will consume the first data row as column names, causing
             data loss. This method checks HEADERLESS_FORMATS registry and configures
             has_header=False with explicit column names when needed.
+
+            ZIP files: Assumes a single CSV file inside the ZIP archive.
+
+            Row numbering: For headerless CSVs, row numbers start at 1 (first data row).
+            For CSVs with headers, row numbers start at 2 (first data row after header).
         """
         read_options = {
             "infer_schema_length": 10000,
@@ -303,28 +317,52 @@ class GenericIngestionService(BaseService):
 
         # Check if this is a headerless format
         key = (meta.vendor.lower(), meta.data_type.lower())
-        if key in HEADERLESS_FORMATS:
+        is_headerless = key in HEADERLESS_FORMATS
+
+        if is_headerless:
             read_options["has_header"] = False
             read_options["new_columns"] = HEADERLESS_FORMATS[key]
 
-        # Preserve raw CSV line numbers (1-based data rows + header).
-        import inspect
+        # Note: For headerless CSVs, we add row index AFTER reading to avoid
+        # column name conflicts with new_columns parameter
+        add_row_index_after = is_headerless
 
-        if "row_index_name" in inspect.signature(pl.read_csv).parameters:
-            read_options["row_index_name"] = "file_line_number"
-            # For headerless CSVs, offset is 1 (first row is data row 1)
-            # For CSVs with headers, offset is 2 (skip header row, first data row is line 2)
-            read_options["row_index_offset"] = 1 if key in HEADERLESS_FORMATS else 2
-        else:
-            read_options["row_count_name"] = "file_line_number"
-            read_options["row_count_offset"] = 1 if key in HEADERLESS_FORMATS else 2
+        if not add_row_index_after:
+            # For CSVs with headers, add row index during read
+            import inspect
+
+            if "row_index_name" in inspect.signature(pl.read_csv).parameters:
+                read_options["row_index_name"] = "file_line_number"
+                read_options["row_index_offset"] = 2  # Skip header row
+            else:
+                read_options["row_count_name"] = "file_line_number"
+                read_options["row_count_offset"] = 2
 
         try:
-            if path.suffix == ".gz" or str(path).endswith(".csv.gz"):
+            if path.suffix == ".zip":
+                with zipfile.ZipFile(path) as zf:
+                    # Find first CSV file in ZIP
+                    csv_name = next(
+                        (name for name in zf.namelist() if name.endswith(".csv")),
+                        None,
+                    )
+                    if csv_name is None:
+                        logger.warning(f"No CSV file found in ZIP archive: {path}")
+                        return pl.DataFrame()
+                    with zf.open(csv_name) as handle:
+                        df = pl.read_csv(handle, **read_options)
+            elif path.suffix == ".gz" or str(path).endswith(".csv.gz"):
                 with gzip.open(path, "rt", encoding="utf-8") as f:
-                    return pl.read_csv(f, **read_options)
+                    df = pl.read_csv(f, **read_options)
             else:
-                return pl.read_csv(path, **read_options)
+                df = pl.read_csv(path, **read_options)
+
+            # Add row index after reading for headerless CSVs
+            if add_row_index_after and not df.is_empty():
+                df = df.with_row_index(name="file_line_number", offset=1)
+
+            return df
+
         except pl.exceptions.NoDataError:
             return pl.DataFrame()
 
@@ -338,8 +376,16 @@ class GenericIngestionService(BaseService):
         dim_symbol: pl.DataFrame,
         exchange_id: int,
         parsed_df: pl.DataFrame,
+        normalized_symbol: str,
     ) -> tuple[bool, str]:
         """Check if file should be quarantined based on symbol metadata coverage.
+
+        Args:
+            meta: Bronze file metadata
+            dim_symbol: Symbol dimension table
+            exchange_id: Resolved exchange ID
+            parsed_df: Parsed DataFrame (unused, for future validation)
+            normalized_symbol: Normalized symbol for dim_symbol matching
 
         Returns:
             (is_valid, error_message) tuple
@@ -357,19 +403,20 @@ class GenericIngestionService(BaseService):
         )
         day_end_us = int(day_end.timestamp() * 1_000_000)
 
-        # Check coverage
+        # Check coverage using normalized symbol
         has_coverage = check_coverage(
             dim_symbol,
             exchange_id,
-            meta.symbol,
+            normalized_symbol,
             day_start_us,
             day_end_us,
         )
 
         if not has_coverage:
-            # Determine specific reason
+            # Determine specific reason (also use normalized symbol)
             rows = dim_symbol.filter(
-                (pl.col("exchange_id") == exchange_id) & (pl.col("exchange_symbol") == meta.symbol)
+                (pl.col("exchange_id") == exchange_id)
+                & (pl.col("exchange_symbol") == normalized_symbol)
             )
 
             if rows.is_empty():

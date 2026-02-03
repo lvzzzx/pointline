@@ -12,15 +12,30 @@ from pointline.io.parsers.registry import (
 )
 
 
-@pytest.fixture(autouse=True)
+@pytest.fixture
 def clear_registry():
-    """Clear registry before each test."""
+    """Clear registry before test, then restore it after.
+
+    NOTE: This fixture must be explicitly requested by tests that need registry isolation.
+    Do NOT use autouse=True as it would affect all tests in the suite.
+
+    This fixture saves the current registry state, clears it for the test,
+    then restores the original state after the test completes.
+    """
+    # Save current registry state
+    saved_registry = _PARSER_REGISTRY.copy()
+
+    # Clear for test
     _PARSER_REGISTRY.clear()
+
     yield
+
+    # Restore original state
     _PARSER_REGISTRY.clear()
+    _PARSER_REGISTRY.update(saved_registry)
 
 
-def test_register_parser_basic():
+def test_register_parser_basic(clear_registry):
     """Test basic parser registration."""
 
     @register_parser(vendor="test", data_type="foo")
@@ -31,7 +46,7 @@ def test_register_parser_basic():
     assert ("test", "foo") in list_supported_combinations()
 
 
-def test_register_parser_case_insensitive():
+def test_register_parser_case_insensitive(clear_registry):
     """Test that registration keys are case-insensitive."""
 
     @register_parser(vendor="TEST", data_type="FOO")
@@ -43,7 +58,7 @@ def test_register_parser_case_insensitive():
     assert is_parser_registered("Test", "Foo")
 
 
-def test_register_parser_duplicate_error():
+def test_register_parser_duplicate_error(clear_registry):
     """Test that duplicate registration raises ValueError."""
 
     @register_parser(vendor="test", data_type="foo")
@@ -57,7 +72,7 @@ def test_register_parser_duplicate_error():
             return df
 
 
-def test_get_parser_success():
+def test_get_parser_success(clear_registry):
     """Test successful parser retrieval."""
 
     @register_parser(vendor="test", data_type="foo")
@@ -75,7 +90,7 @@ def test_get_parser_success():
     assert result["result"].to_list() == [42, 42, 42]
 
 
-def test_get_parser_not_found():
+def test_get_parser_not_found(clear_registry):
     """Test that get_parser raises KeyError for unknown parser."""
 
     @register_parser(vendor="test", data_type="foo")
@@ -89,7 +104,7 @@ def test_get_parser_not_found():
         get_parser("unknown", "foo")
 
 
-def test_list_supported_combinations():
+def test_list_supported_combinations(clear_registry):
     """Test listing all registered parsers."""
 
     @register_parser(vendor="vendor1", data_type="type1")
@@ -111,7 +126,7 @@ def test_list_supported_combinations():
     assert ("vendor2", "type1") in combos
 
 
-def test_is_parser_registered():
+def test_is_parser_registered(clear_registry):
     """Test checking if parser is registered."""
 
     assert not is_parser_registered("test", "foo")
