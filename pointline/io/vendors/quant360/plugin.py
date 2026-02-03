@@ -43,15 +43,20 @@ class Quant360Vendor:
         """
         raise NotImplementedError(f"{self.name} does not support downloads")
 
-    def run_prehook(self, bronze_root: Path) -> None:
+    def run_prehook(self, bronze_root: Path, source_dir: Path | None = None) -> None:
         """Run prehook to reorganize .7z archives into Hive-partitioned structure.
 
         Args:
-            bronze_root: Bronze layer root directory
+            bronze_root: Bronze layer root directory (output location)
+            source_dir: Directory containing .7z archives (input location).
+                       If None, uses bronze_root as source.
         """
         from pointline.io.vendors.quant360.reorganize import reorganize_quant360_archives
 
-        reorganize_quant360_archives(bronze_root)
+        if source_dir is None:
+            source_dir = bronze_root
+
+        reorganize_quant360_archives(source_dir, bronze_root)
 
     def can_handle(self, path: Path) -> bool:
         """Detect Quant360 data by archive patterns or directory structure.

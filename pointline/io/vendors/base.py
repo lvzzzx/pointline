@@ -75,14 +75,16 @@ class VendorPlugin(Protocol):
         """
         ...
 
-    def run_prehook(self, bronze_root: Path) -> None:
+    def run_prehook(self, bronze_root: Path, source_dir: Path | None = None) -> None:
         """Run vendor-specific preprocessing before ingestion.
 
         Some vendors (e.g., Quant360) deliver data in archives that must be
         reorganized before ingestion. This hook allows vendor-specific preprocessing.
 
         Args:
-            bronze_root: Root directory for bronze files
+            bronze_root: Root directory for bronze files (output location)
+            source_dir: Source directory containing raw archives (input location).
+                       If None, assumes archives are in bronze_root.
 
         Raises:
             NotImplementedError: If vendor doesn't support prehooks

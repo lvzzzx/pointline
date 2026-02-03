@@ -37,7 +37,7 @@ class CoingeckoVendor:
 
         return CoinGeckoClient
 
-    def run_prehook(self, bronze_root) -> None:
+    def run_prehook(self, bronze_root, source_dir=None) -> None:
         """Run prehook for this vendor (not supported)."""
         raise NotImplementedError(f"{self.name} does not support prehooks")
 

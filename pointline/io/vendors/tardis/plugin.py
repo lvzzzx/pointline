@@ -59,7 +59,7 @@ class TardisVendor:
 
         return TardisClient()
 
-    def run_prehook(self, bronze_root: Path) -> None:
+    def run_prehook(self, bronze_root: Path, source_dir: Path | None = None) -> None:
         """Tardis doesn't need prehooks."""
         raise NotImplementedError("Tardis vendor doesn't support prehooks")
 
