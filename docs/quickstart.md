@@ -88,7 +88,7 @@ print(trades.head(5))
 # Output:
 # Loaded 1,234,567 trades
 # ┌──────────────────┬───────────┬──────────┬──────┬──────┐
-# │ ts_local_us      │ symbol_id │ price    │ qty  │ side │
+# │ ts_local_us      │ symbol_id │ price_px │ qty  │ side │
 # ├──────────────────┼───────────┼──────────┼──────┼──────┤
 # │ 1714521600000000 │ 12345     │ 67123.45 │ 0.12 │ 0    │
 # │ 1714521600123456 │ 12345     │ 67123.50 │ 0.45 │ 1    │
@@ -128,11 +128,11 @@ import polars as pl
 print(trades.head(5))
 
 # Summary statistics
-print(trades.select(["price", "qty"]).describe())
+print(trades.select(["price_px", "qty"]).describe())
 
 # Output:
 # ┌────────┬──────────┬──────────┐
-# │ stat   │ price    │ qty      │
+# │ stat   │ price_px │ qty      │
 # ├────────┼──────────┼──────────┤
 # │ mean   │ 67123.45 │ 0.234    │
 # │ std    │ 234.56   │ 0.456    │
@@ -148,7 +148,7 @@ print(f"Large trades: {large_trades.height:,}")
 
 # Calculate VWAP (Volume-Weighted Average Price)
 vwap = trades.select([
-    (pl.col("price") * pl.col("qty")).sum() / pl.col("qty").sum()
+    (pl.col("price_px") * pl.col("qty")).sum() / pl.col("qty").sum()
 ]).item()
 print(f"VWAP: ${vwap:.2f}")
 
@@ -161,7 +161,7 @@ print(f"VWAP: ${vwap:.2f}")
 # Group by side (buy/sell)
 by_side = trades.group_by("side").agg([
     pl.col("qty").sum().alias("total_volume"),
-    pl.col("price").mean().alias("avg_price"),
+    pl.col("price_px").mean().alias("avg_price"),
     pl.count().alias("trade_count"),
 ])
 print(by_side)
@@ -199,7 +199,7 @@ trades_df = trades_df.with_columns(
 
 # Plot price over time
 plt.figure(figsize=(12, 6))
-plt.plot(trades_df["timestamp"], trades_df["price"], linewidth=0.5)
+plt.plot(trades_df["timestamp"], trades_df["price_px"], linewidth=0.5)
 plt.xlabel("Time")
 plt.ylabel("Price (USD)")
 plt.title("BTC-USDT Price on 2024-05-01")
@@ -218,10 +218,10 @@ bars = trades_with_dt.group_by_dynamic(
     "ts_dt",
     every="1m",
 ).agg([
-    pl.col("price").first().alias("open"),
-    pl.col("price").max().alias("high"),
-    pl.col("price").min().alias("low"),
-    pl.col("price").last().alias("close"),
+    pl.col("price_px").first().alias("open"),
+    pl.col("price_px").max().alias("high"),
+    pl.col("price_px").min().alias("low"),
+    pl.col("price_px").last().alias("close"),
     pl.col("qty").sum().alias("volume"),
 ])
 

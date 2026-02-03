@@ -39,7 +39,7 @@ Trade executions with fixed-point integer encoding.
 | `ts_local_us` | Int64 | Arrival timestamp (UTC, microseconds) | Integer |
 | `ts_exch_us` | Int64 | Exchange timestamp (UTC, microseconds) | Integer |
 | `side` | UInt8 | Trade side: 0=buy, 1=sell, 2=unknown | Enum |
-| `price_int` | Int64 | Price in fixed-point integer | `round(price / price_increment)` |
+| `px_int` | Int64 | Price in fixed-point integer | `round(price / price_increment)` |
 | `qty_int` | Int64 | Quantity in fixed-point integer | `round(qty / qty_increment)` |
 | `file_id` | Int32 | Bronze file identifier (SHA256-based) | Hash |
 | `file_line_number` | Int32 | Line number within bronze file | Integer |
@@ -257,14 +257,14 @@ SZSE Level 3 order placements and cancellations.
 | `order_id` | Int64 | Exchange order ID | Integer |
 | `side` | UInt8 | Order side: 0=buy, 1=sell | Enum |
 | `order_type` | UInt8 | Order type: 0=limit, 1=market, 2=cancel | Enum |
-| `price_int` | Int64 | Limit price (lot-based, nullable) | `round(price / 0.01 / 100)` |
+| `px_int` | Int64 | Limit price (lot-based, nullable) | `round(price / 0.01 / 100)` |
 | `qty_int` | Int64 | Order quantity (lot-based) | `round(qty / 100)` |
 | `file_id` | Int32 | Bronze file identifier | Hash |
 | `file_line_number` | Int32 | Line number within bronze file | Integer |
 
 **Lot-Based Encoding:**
 - Chinese A-shares trade in lots (1 lot = 100 shares)
-- Price: `price_int = round(price / 0.01 / 100)` (0.01 CNY per share, 100 shares/lot)
+- Price: `px_int = round(price / 0.01 / 100)` (0.01 CNY per share, 100 shares/lot)
 - Quantity: `qty_int = round(qty / 100)` (lots)
 
 **Ordering:** `(ts_local_us, file_id, file_line_number)` ascending
@@ -303,7 +303,7 @@ SZSE Level 3 trade executions and cancellations.
 | `ts_exch_us` | Int64 | Exchange timestamp (UTC, microseconds) | Integer |
 | `buy_order_id` | Int64 | Buy order ID | Integer |
 | `sell_order_id` | Int64 | Sell order ID | Integer |
-| `price_int` | Int64 | Execution price (lot-based, 0 for cancellations) | `round(price / 0.01 / 100)` |
+| `px_int` | Int64 | Execution price (lot-based, 0 for cancellations) | `round(price / 0.01 / 100)` |
 | `qty_int` | Int64 | Execution quantity (lot-based) | `round(qty / 100)` |
 | `tick_type` | UInt8 | Tick type: 0=fill, 1=cancellation | Enum |
 | `file_id` | Int32 | Bronze file identifier | Hash |
@@ -519,13 +519,13 @@ manifest_repo.update_status(
 
 **Encoding:**
 ```python
-price_int = round(price / price_increment)
+px_int = round(price / price_increment)
 qty_int = round(qty / qty_increment)
 ```
 
 **Decoding:**
 ```python
-price = price_int * price_increment
+price = px_int * price_increment
 qty = qty_int * qty_increment
 ```
 
@@ -533,7 +533,7 @@ qty = qty_int * qty_increment
 ```python
 # BTCUSDT: price_increment = 0.01
 price = 50123.45
-price_int = round(50123.45 / 0.01) = 5012345  # Stored as Int64
+px_int = round(50123.45 / 0.01) = 5012345  # Stored as Int64
 
 # Decode
 price = 5012345 * 0.01 = 50123.45  # Exact!
@@ -545,20 +545,20 @@ price = 5012345 * 0.01 = 50123.45  # Exact!
 
 **Encoding:**
 ```python
-price_int = round(price / 0.01 / 100)  # CNY/share → lots
+px_int = round(price / 0.01 / 100)  # CNY/share → lots
 qty_int = round(qty / 100)  # shares → lots
 ```
 
 **Decoding:**
 ```python
-price = price_int * 0.01 * 100  # lots → CNY/share
+price = px_int * 0.01 * 100  # lots → CNY/share
 qty = qty_int * 100  # lots → shares
 ```
 
 **Example:**
 ```python
 # Stock price: 15.23 CNY/share, quantity: 500 shares
-price_int = round(15.23 / 0.01 / 100) = 15  # Stored as Int64
+px_int = round(15.23 / 0.01 / 100) = 15  # Stored as Int64
 qty_int = round(500 / 100) = 5  # Stored as Int64
 
 # Decode

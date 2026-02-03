@@ -317,14 +317,15 @@ def book_snapshot_25(
         ...     "SOLUSDT",
         ...     "2024-05-01",
         ...     "2024-09-30",
+        ...     decoded=True,
         ...     lazy=True,
         ... )
         >>>
         >>> # Feature engineering before collecting
         >>> features = book.select([
         ...     "ts_local_us",
-        ...     pl.col("bids_px").list.first().alias("best_bid"),
-        ...     pl.col("asks_px").list.first().alias("best_ask"),
+        ...     pl.col("bids_px").list.first().alias("best_bid_px"),
+        ...     pl.col("asks_px").list.first().alias("best_ask_px"),
         ... ])
         >>> df = features.collect()
     """

@@ -45,7 +45,7 @@ TRADES_SCHEMA: dict[str, pl.DataType] = {
     "ts_exch_us": pl.Int64,
     "trade_id": pl.Utf8,
     "side": pl.UInt8,  # UInt8 is supported (maps to TINYINT)
-    "price_int": pl.Int64,
+    "px_int": pl.Int64,
     "qty_int": pl.Int64,
     "flags": pl.Int32,  # Delta Lake stores as Int32 (not UInt32)
     "file_id": pl.Int32,  # Delta Lake stores as Int32 (not UInt32)
@@ -75,7 +75,7 @@ def parse_tardis_trades_csv(df: pl.DataFrame) -> pl.DataFrame:
     - ts_exch_us (i64): exchange timestamp in microseconds since epoch (nullable)
     - trade_id (str): trade identifier (nullable)
     - side (u8): 0=buy, 1=sell, 2=unknown
-    - price (f64): trade price
+    - price_px (f64): trade price
     - qty (f64): trade quantity
     """
     result = df.clone()
@@ -159,12 +159,12 @@ def parse_tardis_trades_csv(df: pl.DataFrame) -> pl.DataFrame:
     price_col = None
     for col in df.columns:
         col_lower = col.lower()
-        if col_lower in ("price", "tradeprice", "trade_price", "tradePrice"):
+        if col_lower in ("price", "price_px", "tradeprice", "trade_price", "tradeprice"):
             price_col = col
             break
 
     if price_col:
-        result = result.with_columns(pl.col(price_col).cast(pl.Float64).alias("price"))
+        result = result.with_columns(pl.col(price_col).cast(pl.Float64).alias("price_px"))
     else:
         raise ValueError("Could not find price column in CSV")
 
@@ -187,7 +187,7 @@ def parse_tardis_trades_csv(df: pl.DataFrame) -> pl.DataFrame:
         "ts_exch_us",
         "trade_id",
         "side",
-        "price",
+        "price_px",
         "qty",
     ]
     if "file_line_number" in result.columns:
@@ -232,7 +232,7 @@ def validate_trades(df: pl.DataFrame) -> pl.DataFrame:
     """Apply quality checks to trades data.
 
     Validates:
-    - Non-negative price_int and qty_int
+    - Non-negative px_int and qty_int
     - Valid timestamp ranges (reasonable values) for local and exchange times
     - Valid side codes (0-2)
     - Non-null required fields
@@ -246,7 +246,7 @@ def validate_trades(df: pl.DataFrame) -> pl.DataFrame:
 
     # Check required columns
     required = [
-        "price_int",
+        "px_int",
         "qty_int",
         "ts_local_us",
         "ts_exch_us",
@@ -263,7 +263,7 @@ def validate_trades(df: pl.DataFrame) -> pl.DataFrame:
     df_with_expected = with_expected_exchange_id(df)
 
     combined_filter = (
-        (pl.col("price_int") > 0)
+        (pl.col("px_int") > 0)
         & (pl.col("qty_int") > 0)
         & timestamp_validation_expr("ts_local_us")
         & timestamp_validation_expr("ts_exch_us")
@@ -274,7 +274,7 @@ def validate_trades(df: pl.DataFrame) -> pl.DataFrame:
 
     # Define validation rules for diagnostics
     rules = [
-        ("price_int", pl.col("price_int").is_null() | (pl.col("price_int") <= 0)),
+        ("px_int", pl.col("px_int").is_null() | (pl.col("px_int") <= 0)),
         ("qty_int", pl.col("qty_int").is_null() | (pl.col("qty_int") <= 0)),
         (
             "ts_local_us",
@@ -308,7 +308,7 @@ def encode_fixed_point(
     df: pl.DataFrame,
     dim_symbol: pl.DataFrame,
     *,
-    price_col: str = "price",
+    price_col: str = "price_px",
     qty_col: str = "qty",
 ) -> pl.DataFrame:
     """Encode price and quantity as fixed-point integers using dim_symbol metadata.
@@ -318,10 +318,10 @@ def encode_fixed_point(
     - dim_symbol must have 'symbol_id', 'price_increment', 'amount_increment' columns
 
     Computes:
-    - price_int = round(price / price_increment)
+    - px_int = round(price / price_increment)
     - qty_int = round(qty / amount_increment)
 
-    Returns DataFrame with price_int and qty_int columns added.
+    Returns DataFrame with px_int and qty_int columns added.
     """
     if "symbol_id" not in df.columns:
         raise ValueError("encode_fixed_point: df must have 'symbol_id' column")
@@ -349,10 +349,7 @@ def encode_fixed_point(
     # Encode to fixed-point
     result = joined.with_columns(
         [
-            (pl.col(price_col) / pl.col("price_increment"))
-            .round()
-            .cast(pl.Int64)
-            .alias("price_int"),
+            (pl.col(price_col) / pl.col("price_increment")).round().cast(pl.Int64).alias("px_int"),
             (pl.col(qty_col) / pl.col("amount_increment")).round().cast(pl.Int64).alias("qty_int"),
         ]
     )
@@ -365,7 +362,7 @@ def decode_fixed_point(
     df: pl.DataFrame,
     dim_symbol: pl.DataFrame,
     *,
-    price_col: str = "price",
+    price_col: str = "price_px",
     qty_col: str = "qty",
     keep_ints: bool = False,
 ) -> pl.DataFrame:
@@ -373,7 +370,7 @@ def decode_fixed_point(
 
     Requires:
     - df must have 'symbol_id' column
-    - df must have 'price_int' and 'qty_int' columns
+    - df must have 'px_int' and 'qty_int' columns
     - dim_symbol must have 'symbol_id', 'price_increment', 'amount_increment' columns
 
     Returns DataFrame with price_col and qty_col added (Float64).
@@ -382,7 +379,7 @@ def decode_fixed_point(
     if "symbol_id" not in df.columns:
         raise ValueError("decode_fixed_point: df must have 'symbol_id' column")
 
-    required_cols = ["price_int", "qty_int"]
+    required_cols = ["px_int", "qty_int"]
     missing = [c for c in required_cols if c not in df.columns]
     if missing:
         raise ValueError(f"decode_fixed_point: df missing columns: {missing}")
@@ -407,8 +404,8 @@ def decode_fixed_point(
 
     result = joined.with_columns(
         [
-            pl.when(pl.col("price_int").is_not_null())
-            .then((pl.col("price_int") * pl.col("price_increment")).cast(pl.Float64))
+            pl.when(pl.col("px_int").is_not_null())
+            .then((pl.col("px_int") * pl.col("price_increment")).cast(pl.Float64))
             .otherwise(None)
             .alias(price_col),
             pl.when(pl.col("qty_int").is_not_null())

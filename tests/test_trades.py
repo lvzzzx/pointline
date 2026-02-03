@@ -85,7 +85,7 @@ def test_parse_tardis_trades_csv_basic():
     assert "ts_exch_us" in parsed.columns
     assert "trade_id" in parsed.columns
     assert "side" in parsed.columns
-    assert "price" in parsed.columns
+    assert "price_px" in parsed.columns
     assert "qty" in parsed.columns
 
     # Check timestamps are parsed correctly
@@ -126,7 +126,7 @@ def test_parse_tardis_trades_csv_alternative_columns():
 
     assert parsed.height == 1
     assert parsed["side"][0] == SIDE_SELL
-    assert parsed["price"][0] == 50000.0
+    assert parsed["price_px"][0] == 50000.0
     assert parsed["qty"][0] == 0.1
 
 
@@ -137,7 +137,7 @@ def test_parse_tardis_trades_csv_missing_optional():
         {
             "local_timestamp": [base_ts],
             "side": ["buy"],
-            "price": [50000.0],
+            "price_px": [50000.0],
             "amount": [0.1],
         }
     )
@@ -156,7 +156,7 @@ def test_parse_tardis_trades_csv_side_encoding():
         {
             "local_timestamp": [base_ts] * 4,
             "side": ["buy", "sell", "unknown", None],
-            "price": [50000.0] * 4,
+            "price_px": [50000.0] * 4,
             "amount": [0.1] * 4,
         }
     )
@@ -181,7 +181,7 @@ def test_normalize_trades_schema():
             "ts_exch_us": [1714550400100000],
             "trade_id": ["t1"],
             "side": [0],
-            "price_int": [5000000],
+            "px_int": [5000000],
             "qty_int": [10000],
             "flags": [0],
             "file_id": [1],
@@ -214,7 +214,7 @@ def test_validate_trades_basic():
     """Test basic validation of trades data."""
     df = pl.DataFrame(
         {
-            "price_int": [5000000, 5000100, -100],  # Last one invalid
+            "px_int": [5000000, 5000100, -100],  # Last one invalid
             "qty_int": [10000, 20000, 5000],
             "ts_local_us": [1714550400000000, 1714550401000000, 1714550402000000],
             "ts_exch_us": [1714550400000000, 1714550401000000, 1714550402000000],
@@ -230,14 +230,14 @@ def test_validate_trades_basic():
 
     # Should filter out the negative price
     assert validated.height == 2
-    assert validated["price_int"].min() > 0
+    assert validated["px_int"].min() > 0
 
 
 def test_validate_trades_invalid_side():
     """Test validation filters invalid side codes."""
     df = pl.DataFrame(
         {
-            "price_int": [5000000] * 3,
+            "px_int": [5000000] * 3,
             "qty_int": [10000] * 3,
             "ts_local_us": [1714550400000000] * 3,
             "ts_exch_us": [1714550400000000] * 3,
@@ -262,18 +262,18 @@ def test_encode_fixed_point():
     df = pl.DataFrame(
         {
             "symbol_id": dim_symbol["symbol_id"].to_list() * 3,
-            "price": [50000.0, 50001.0, 50002.0],
+            "price_px": [50000.0, 50001.0, 50002.0],
             "qty": [0.1, 0.2, 0.15],
         }
     )
 
     encoded = encode_fixed_point(df, dim_symbol)
 
-    assert "price_int" in encoded.columns
+    assert "px_int" in encoded.columns
     assert "qty_int" in encoded.columns
 
     # With price_increment=0.01, price=50000.0 should become 5000000
-    assert encoded["price_int"][0] == 5000000
+    assert encoded["px_int"][0] == 5000000
     # With amount_increment=0.00001, qty=0.1 should become 10000
     assert encoded["qty_int"][0] == 10000
 
@@ -287,7 +287,7 @@ def test_encode_fixed_point_missing_symbol():
     df = pl.DataFrame(
         {
             "symbol_id": [999999],  # Not in dim_symbol
-            "price": [50000.0],
+            "price_px": [50000.0],
             "qty": [0.1],
         }
     )
@@ -304,18 +304,18 @@ def test_decode_fixed_point():
     df = pl.DataFrame(
         {
             "symbol_id": [symbol_id],
-            "price_int": [5000000],
+            "px_int": [5000000],
             "qty_int": [10000],
         }
     )
 
     decoded = decode_fixed_point(df, dim_symbol)
 
-    assert "price_int" not in decoded.columns
+    assert "px_int" not in decoded.columns
     assert "qty_int" not in decoded.columns
-    assert decoded["price"].dtype == pl.Float64
+    assert decoded["price_px"].dtype == pl.Float64
     assert decoded["qty"].dtype == pl.Float64
-    assert decoded["price"][0] == 50000.0
+    assert decoded["price_px"][0] == 50000.0
     assert decoded["qty"][0] == 0.1
 
 
@@ -348,7 +348,7 @@ def test_trades_service_validate():
 
     df = pl.DataFrame(
         {
-            "price_int": [5000000, -100],
+            "px_int": [5000000, -100],
             "qty_int": [10000, 5000],
             "ts_local_us": [1714550400000000, 1714550401000000],
             "ts_exch_us": [1714550400000000, 1714550401000000],
@@ -383,7 +383,7 @@ def test_trades_service_compute_state():
             "ts_exch_us": [1714550400100000],
             "trade_id": ["t1"],
             "side": [0],
-            "price_int": [5000000],
+            "px_int": [5000000],
             "qty_int": [10000],
             "flags": [0],
             "file_id": [1],
@@ -416,7 +416,7 @@ def test_trades_service_write():
             "ts_exch_us": [1714550400100000],
             "trade_id": ["t1"],
             "side": [0],
-            "price_int": [5000000],
+            "px_int": [5000000],
             "qty_int": [10000],
             "flags": [0],
             "file_id": [1],

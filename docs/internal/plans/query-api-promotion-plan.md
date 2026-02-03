@@ -228,14 +228,14 @@ import polars as pl
 trades.head(5)
 
 # Summary statistics
-trades.select(["price", "qty"]).describe()
+trades.select(["price_px", "qty"]).describe()
 
 # Filter large trades
 large_trades = trades.filter(pl.col("qty") > 1.0)
 
 # Calculate VWAP
 vwap = trades.select([
-    (pl.col("price") * pl.col("qty")).sum() / pl.col("qty").sum()
+    (pl.col("price_px") * pl.col("qty")).sum() / pl.col("qty").sum()
 ]).item()
 
 print(f"VWAP: ${vwap:.2f}")
@@ -256,7 +256,7 @@ trades_df = trades_df.with_columns(
 
 # Plot price over time
 plt.figure(figsize=(12, 6))
-plt.plot(trades_df["timestamp"], trades_df["price"])
+plt.plot(trades_df["timestamp"], trades_df["price_px"])
 plt.xlabel("Time")
 plt.ylabel("Price (USD)")
 plt.title("BTC-USDT Price on 2024-05-01")
@@ -489,7 +489,7 @@ def load_trades(
         lazy: Return LazyFrame (True) or DataFrame (False)
 
     Returns:
-        Trades with fixed-point integer columns (price_int, qty_int).
+        Trades with fixed-point integer columns (px_int, qty_int).
         Use `decode_fixed_point()` or `load_trades_decoded()` for floats.
 
     Examples:
@@ -557,8 +557,8 @@ def trades(
 
     Returns:
         Trades data (LazyFrame or DataFrame depending on lazy parameter).
-        With decoded=True: price/qty as floats.
-        With decoded=False: price_int/qty_int as integers.
+        With decoded=True: price_px/qty as floats.
+        With decoded=False: px_int/qty_int as integers.
 
     Examples:
         >>> from pointline.research import query

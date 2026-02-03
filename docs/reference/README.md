@@ -138,9 +138,9 @@ See CLI Reference (coming soon) for complete command list.
 
 | Table | Columns | Partitions |
 |-------|---------|------------|
-| `trades` | ts_local_us, symbol_id, price_int, qty_int, side | exchange, date |
+| `trades` | ts_local_us, symbol_id, px_int, qty_int, side | exchange, date |
 | `quotes` | ts_local_us, symbol_id, bid_px_int, ask_px_int, bid_sz_int, ask_sz_int | exchange, date |
-| `book_snapshot_25` | ts_local_us, symbol_id, bids_px[], asks_px[], bids_sz[], asks_sz[] | exchange, date |
+| `book_snapshot_25` | ts_local_us, symbol_id, bids_px_int[], asks_px_int[], bids_sz_int[], asks_sz_int[] | exchange, date |
 | `dim_symbol` | symbol_id, exchange_id, exchange_symbol, tick_size, valid_from_ts, valid_until_ts | (none) |
 
 See [Schemas](../reference/schemas.md) for complete details.

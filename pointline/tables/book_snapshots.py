@@ -49,10 +49,10 @@ BOOK_SNAPSHOTS_SCHEMA: dict[str, pl.DataType] = {
     "symbol_id": pl.Int64,  # Match dim_symbol's symbol_id type
     "ts_local_us": pl.Int64,
     "ts_exch_us": pl.Int64,
-    "bids_px": pl.List(pl.Int64),  # List of 25 bid prices (nulls for missing levels)
-    "bids_sz": pl.List(pl.Int64),  # List of 25 bid sizes (nulls for missing levels)
-    "asks_px": pl.List(pl.Int64),  # List of 25 ask prices (nulls for missing levels)
-    "asks_sz": pl.List(pl.Int64),  # List of 25 ask sizes (nulls for missing levels)
+    "bids_px_int": pl.List(pl.Int64),  # List of 25 bid prices (nulls for missing levels)
+    "bids_sz_int": pl.List(pl.Int64),  # List of 25 bid sizes (nulls for missing levels)
+    "asks_px_int": pl.List(pl.Int64),  # List of 25 ask prices (nulls for missing levels)
+    "asks_sz_int": pl.List(pl.Int64),  # List of 25 ask sizes (nulls for missing levels)
     "file_id": pl.Int32,  # Delta Lake stores as Int32 (not UInt32)
     "file_line_number": pl.Int32,  # Delta Lake stores as Int32 (not UInt32)
 }
@@ -163,8 +163,8 @@ def validate_book_snapshots(df: pl.DataFrame) -> pl.DataFrame:
     Validates:
     - Required columns exist
     - List lengths are 25 (or pad/truncate to 25)
-    - Bid prices are descending (bids_px[0] >= bids_px[1] >= ...)
-    - Ask prices are ascending (asks_px[0] <= asks_px[1] <= ...)
+    - Bid prices are descending (bids_px_int[0] >= bids_px_int[1] >= ...)
+    - Ask prices are ascending (asks_px_int[0] <= asks_px_int[1] <= ...)
     - Crossed book check: best bid < best ask
     - Non-negative sizes when present
     - Valid timestamp ranges (reasonable values)
@@ -177,10 +177,10 @@ def validate_book_snapshots(df: pl.DataFrame) -> pl.DataFrame:
 
     # Check required columns
     required = [
-        "bids_px",
-        "bids_sz",
-        "asks_px",
-        "asks_sz",
+        "bids_px_int",
+        "bids_sz_int",
+        "asks_px_int",
+        "asks_sz_int",
         "ts_local_us",
         "exchange",
         "exchange_id",
@@ -224,37 +224,37 @@ def validate_book_snapshots(df: pl.DataFrame) -> pl.DataFrame:
     # Normalize all list columns to length 25
     result = df_with_expected.with_columns(
         [
-            normalize_list_length("bids_px").alias("bids_px"),
-            normalize_list_length("bids_sz").alias("bids_sz"),
-            normalize_list_length("asks_px").alias("asks_px"),
-            normalize_list_length("asks_sz").alias("asks_sz"),
+            normalize_list_length("bids_px_int").alias("bids_px_int"),
+            normalize_list_length("bids_sz_int").alias("bids_sz_int"),
+            normalize_list_length("asks_px_int").alias("asks_px_int"),
+            normalize_list_length("asks_sz_int").alias("asks_sz_int"),
         ]
     )
 
-    # Validate bid prices are descending (bids_px[0] >= bids_px[1] >= ...)
+    # Validate bid prices are descending (bids_px_int[0] >= bids_px_int[1] >= ...)
     # Vectorized monotonicity check using list.diff on non-null values.
     def validate_bid_ordering() -> pl.Expr:
         """Check that bid prices are descending (non-increasing) across all adjacent levels."""
-        bids = pl.col("bids_px").list.drop_nulls()
+        bids = pl.col("bids_px_int").list.drop_nulls()
         diffs = bids.list.diff()
         max_diff = diffs.list.max()
         return pl.when(max_diff.is_null()).then(True).otherwise(max_diff <= 0)
 
-    # Validate ask prices are ascending (asks_px[0] <= asks_px[1] <= ...)
+    # Validate ask prices are ascending (asks_px_int[0] <= asks_px_int[1] <= ...)
     # Vectorized monotonicity check using list.diff on non-null values.
     def validate_ask_ordering() -> pl.Expr:
         """Check that ask prices are ascending (non-decreasing) across all adjacent levels."""
-        asks = pl.col("asks_px").list.drop_nulls()
+        asks = pl.col("asks_px_int").list.drop_nulls()
         diffs = asks.list.diff()
         min_diff = diffs.list.min()
         return pl.when(min_diff.is_null()).then(True).otherwise(min_diff >= 0)
 
-    # Crossed book check: bids_px[i] < asks_px[i] at each level
-    # Check that best bid < best ask (bids_px[0] < asks_px[0])
+    # Crossed book check: bids_px_int[i] < asks_px_int[i] at each level
+    # Check that best bid < best ask (bids_px_int[0] < asks_px_int[0])
     def validate_crossed_book() -> pl.Expr:
         """Check that best bid < best ask."""
-        best_bid = pl.col("bids_px").list.first()
-        best_ask = pl.col("asks_px").list.first()
+        best_bid = pl.col("bids_px_int").list.first()
+        best_ask = pl.col("asks_px_int").list.first()
         return (
             pl.when(best_bid.is_not_null() & best_ask.is_not_null())
             .then(best_bid < best_ask)
@@ -264,8 +264,8 @@ def validate_book_snapshots(df: pl.DataFrame) -> pl.DataFrame:
     # Non-negative sizes when present
     def validate_non_negative_sizes() -> pl.Expr:
         """Check that sizes are non-negative when present."""
-        bid_sz_min = pl.col("bids_sz").list.min()
-        ask_sz_min = pl.col("asks_sz").list.min()
+        bid_sz_min = pl.col("bids_sz_int").list.min()
+        ask_sz_min = pl.col("asks_sz_int").list.min()
         return (bid_sz_min.is_null() | (bid_sz_min >= 0)) & (
             ask_sz_min.is_null() | (ask_sz_min >= 0)
         )
@@ -316,7 +316,7 @@ def encode_fixed_point(
     - asks_px_int = [ceil(price / price_increment) for price in asks_px]
     - asks_sz_int = [round(size / amount_increment) for size in asks_sz]
 
-    Returns DataFrame with bids_px, bids_sz, asks_px, asks_sz as Int64 lists.
+    Returns DataFrame with bids_px_int, bids_sz_int, asks_px_int, asks_sz_int as Int64 lists.
     Supports multiple symbol_id values by encoding per symbol and restoring row order.
     """
     if "symbol_id" not in df.columns:
@@ -404,25 +404,25 @@ def encode_fixed_point(
                     existing_asks_price,
                     price_inc,
                     mode="ceil",
-                ).alias("asks_px"),
+                ).alias("asks_px_int"),
                 encode_list(
                     asks_amount_cols,
                     existing_asks_amount,
                     amount_inc,
                     mode="round",
-                ).alias("asks_sz"),
+                ).alias("asks_sz_int"),
                 encode_list(
                     bids_price_cols,
                     existing_bids_price,
                     price_inc,
                     mode="floor",
-                ).alias("bids_px"),
+                ).alias("bids_px_int"),
                 encode_list(
                     bids_amount_cols,
                     existing_bids_amount,
                     amount_inc,
                     mode="round",
-                ).alias("bids_sz"),
+                ).alias("bids_sz_int"),
             ]
         )
 
@@ -449,7 +449,7 @@ def decode_fixed_point(
 
     Requires:
     - df must have 'symbol_id' column
-    - df must have 'bids_px', 'bids_sz', 'asks_px', 'asks_sz' columns (lists of ints)
+    - df must have 'bids_px_int', 'bids_sz_int', 'asks_px_int', 'asks_sz_int' columns (lists of ints)
     - dim_symbol must have 'symbol_id', 'price_increment', 'amount_increment' columns
 
     Returns DataFrame with bids_px, bids_sz, asks_px, asks_sz replaced with Float64 lists.
@@ -458,7 +458,7 @@ def decode_fixed_point(
     if "symbol_id" not in df.columns:
         raise ValueError("decode_fixed_point: df must have 'symbol_id' column")
 
-    list_cols = ["bids_px", "bids_sz", "asks_px", "asks_sz"]
+    list_cols = ["bids_px_int", "bids_sz_int", "asks_px_int", "asks_sz_int"]
     missing = [c for c in list_cols if c not in df.columns]
     if missing:
         raise ValueError(f"decode_fixed_point: df missing columns: {missing}")
@@ -496,28 +496,28 @@ def decode_fixed_point(
         amount_inc = group["amount_increment"][0]
         return group.with_columns(
             [
-                pl.col("bids_px")
+                pl.col("bids_px_int")
                 .list.eval(
                     pl.when(pl.element().is_not_null())
                     .then((pl.element() * pl.lit(price_inc)).cast(pl.Float64))
                     .otherwise(None)
                 )
                 .alias("bids_px"),
-                pl.col("bids_sz")
+                pl.col("bids_sz_int")
                 .list.eval(
                     pl.when(pl.element().is_not_null())
                     .then((pl.element() * pl.lit(amount_inc)).cast(pl.Float64))
                     .otherwise(None)
                 )
                 .alias("bids_sz"),
-                pl.col("asks_px")
+                pl.col("asks_px_int")
                 .list.eval(
                     pl.when(pl.element().is_not_null())
                     .then((pl.element() * pl.lit(price_inc)).cast(pl.Float64))
                     .otherwise(None)
                 )
                 .alias("asks_px"),
-                pl.col("asks_sz")
+                pl.col("asks_sz_int")
                 .list.eval(
                     pl.when(pl.element().is_not_null())
                     .then((pl.element() * pl.lit(amount_inc)).cast(pl.Float64))

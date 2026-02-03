@@ -12,9 +12,9 @@ def test_get_schema_trades():
 
     assert isinstance(schema, dict)
     assert "ts_local_us" in schema
-    assert "price_int" in schema
+    assert "px_int" in schema
     assert "qty_int" in schema
-    assert schema["price_int"] == pl.Int64
+    assert schema["px_int"] == pl.Int64
     assert schema["side"] == pl.UInt8
     assert schema["symbol_id"] == pl.Int64
 
@@ -38,10 +38,10 @@ def test_get_schema_book_snapshot_25():
 
     assert isinstance(schema, dict)
     # book_snapshot_25 uses Lists, not individual columns
-    assert "bids_px" in schema
-    assert "asks_px" in schema
-    assert "bids_sz" in schema
-    assert "asks_sz" in schema
+    assert "bids_px_int" in schema
+    assert "asks_px_int" in schema
+    assert "bids_sz_int" in schema
+    assert "asks_sz_int" in schema
 
 
 def test_get_schema_dim_symbol():
@@ -104,7 +104,7 @@ def test_list_columns_trades():
 
     assert isinstance(columns, list)
     assert "ts_local_us" in columns
-    assert "price_int" in columns
+    assert "px_int" in columns
     assert "qty_int" in columns
     assert "symbol_id" in columns
     assert "side" in columns
@@ -132,9 +132,9 @@ def test_get_schema_info_trades():
     info = get_schema_info("trades")
 
     assert isinstance(info, dict)
-    assert "price_int" in info
-    assert info["price_int"]["type"] == "Int64"
-    assert info["price_int"]["dtype"] == pl.Int64
+    assert "px_int" in info
+    assert info["px_int"]["type"] == "Int64"
+    assert info["px_int"]["dtype"] == pl.Int64
 
     assert "side" in info
     assert info["side"]["type"] == "UInt8"

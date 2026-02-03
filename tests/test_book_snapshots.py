@@ -168,10 +168,10 @@ def test_normalize_book_snapshots_schema():
             "symbol_id": [100, 100],
             "ts_local_us": [base_ts, base_ts + 1_000_000],
             "ts_exch_us": [base_ts + 100_000, base_ts + 1_100_000],
-            "bids_px": [[50000.0, None] * 12 + [None], [50001.0, None] * 12 + [None]],
-            "bids_sz": [[0.1, None] * 12 + [None], [0.2, None] * 12 + [None]],
-            "asks_px": [[50000.5, None] * 12 + [None], [50001.5, None] * 12 + [None]],
-            "asks_sz": [[0.15, None] * 12 + [None], [0.25, None] * 12 + [None]],
+            "bids_px_int": [[5000000, None] * 12 + [None], [5000100, None] * 12 + [None]],
+            "bids_sz_int": [[10000, None] * 12 + [None], [20000, None] * 12 + [None]],
+            "asks_px_int": [[5000050, None] * 12 + [None], [5000150, None] * 12 + [None]],
+            "asks_sz_int": [[15000, None] * 12 + [None], [25000, None] * 12 + [None]],
             "file_id": [1, 1],
             "file_line_number": [1, 2],
             "extra_col": ["extra", "extra"],  # Should be dropped
@@ -189,8 +189,8 @@ def test_normalize_book_snapshots_schema():
     assert normalized["exchange"].dtype == pl.Utf8
     assert normalized["exchange_id"].dtype == pl.Int16
     assert normalized["symbol_id"].dtype == pl.Int64
-    assert normalized["bids_px"].dtype == pl.List(pl.Int64)
-    assert normalized["asks_px"].dtype == pl.List(pl.Int64)
+    assert normalized["bids_px_int"].dtype == pl.List(pl.Int64)
+    assert normalized["asks_px_int"].dtype == pl.List(pl.Int64)
 
 
 def test_validate_book_snapshots_basic():
@@ -203,21 +203,21 @@ def test_validate_book_snapshots_basic():
             "exchange_id": [1, 1],
             "symbol_id": [100, 100],
             "ts_local_us": [base_ts, base_ts + 1_000_000],
-            "bids_px": [
-                [50000.0, 49999.9, 49999.8] + [None] * 22,
-                [50001.0, 50000.9, 50000.8] + [None] * 22,
+            "bids_px_int": [
+                [5000000, 4999990, 4999980] + [None] * 22,
+                [5000100, 5000090, 5000080] + [None] * 22,
             ],
-            "bids_sz": [
-                [0.1, 0.15, 0.2] + [None] * 22,
-                [0.2, 0.25, 0.3] + [None] * 22,
+            "bids_sz_int": [
+                [10000, 15000, 20000] + [None] * 22,
+                [20000, 25000, 30000] + [None] * 22,
             ],
-            "asks_px": [
-                [50000.5, 50000.6, 50000.7] + [None] * 22,
-                [50001.5, 50001.6, 50001.7] + [None] * 22,
+            "asks_px_int": [
+                [5000050, 5000060, 5000070] + [None] * 22,
+                [5000150, 5000160, 5000170] + [None] * 22,
             ],
-            "asks_sz": [
-                [0.15, 0.2, 0.25] + [None] * 22,
-                [0.25, 0.3, 0.35] + [None] * 22,
+            "asks_sz_int": [
+                [15000, 20000, 25000] + [None] * 22,
+                [25000, 30000, 35000] + [None] * 22,
             ],
         }
     )
@@ -236,10 +236,10 @@ def test_validate_book_snapshots_crossed_book():
             "exchange_id": [1],
             "symbol_id": [100],
             "ts_local_us": [base_ts],
-            "bids_px": [[50000.5, None] * 12 + [None]],  # Best bid = 50000.5
-            "bids_sz": [[0.1, None] * 12 + [None]],
-            "asks_px": [[50000.5, None] * 12 + [None]],  # Best ask = 50000.5 (same!)
-            "asks_sz": [[0.15, None] * 12 + [None]],
+            "bids_px_int": [[5000050, None] * 12 + [None]],  # Best bid = 50000.5
+            "bids_sz_int": [[10000, None] * 12 + [None]],
+            "asks_px_int": [[5000050, None] * 12 + [None]],  # Best ask = 50000.5 (same!)
+            "asks_sz_int": [[15000, None] * 12 + [None]],
         }
     )
 
@@ -258,10 +258,10 @@ def test_validate_book_snapshots_invalid_ordering():
             "exchange_id": [1],
             "symbol_id": [100],
             "ts_local_us": [base_ts],
-            "bids_px": [[49999.9, 50000.0, None] * 8 + [None]],  # Ascending (wrong!)
-            "bids_sz": [[0.1, 0.15, None] * 8 + [None]],
-            "asks_px": [[50000.5, 50000.6, None] * 8 + [None]],
-            "asks_sz": [[0.15, 0.2, None] * 8 + [None]],
+            "bids_px_int": [[4999990, 5000000, None] * 8 + [None]],  # Ascending (wrong!)
+            "bids_sz_int": [[10000, 15000, None] * 8 + [None]],
+            "asks_px_int": [[5000050, 5000060, None] * 8 + [None]],
+            "asks_sz_int": [[15000, 20000, None] * 8 + [None]],
         }
     )
 
@@ -298,20 +298,20 @@ def test_encode_fixed_point():
     encoded = encode_fixed_point(df, dim_symbol)
 
     # Check types are now Int64 lists
-    assert encoded["bids_px"].dtype == pl.List(pl.Int64)
-    assert encoded["bids_sz"].dtype == pl.List(pl.Int64)
-    assert encoded["asks_px"].dtype == pl.List(pl.Int64)
-    assert encoded["asks_sz"].dtype == pl.List(pl.Int64)
+    assert encoded["bids_px_int"].dtype == pl.List(pl.Int64)
+    assert encoded["bids_sz_int"].dtype == pl.List(pl.Int64)
+    assert encoded["asks_px_int"].dtype == pl.List(pl.Int64)
+    assert encoded["asks_sz_int"].dtype == pl.List(pl.Int64)
 
     # Check encoding: 50000.0 / 0.01 = 5000000
-    first_bid_px = encoded["bids_px"][0]
+    first_bid_px = encoded["bids_px_int"][0]
     assert len(first_bid_px) == 25
     assert first_bid_px[0] == 5000000  # 50000.0 / 0.01
     assert first_bid_px[1] == 4999990  # 49999.9 / 0.01
     assert first_bid_px[2] is None  # Null preserved
 
     # Check sizes: 0.1 / 0.00001 = 10000
-    first_bid_sz = encoded["bids_sz"][0]
+    first_bid_sz = encoded["bids_sz_int"][0]
     assert first_bid_sz[0] == 10000  # 0.1 / 0.00001
 
 
@@ -350,10 +350,10 @@ def test_encode_fixed_point_multi_symbol():
 
     encoded = encode_fixed_point(df, dim_symbol)
 
-    assert encoded["asks_px"][0][0] == 5000001
-    assert encoded["bids_px"][0][0] == 5000000
-    assert encoded["asks_px"][1][0] == 2501
-    assert encoded["bids_px"][1][0] == 2499
+    assert encoded["asks_px_int"][0][0] == 5000001
+    assert encoded["bids_px_int"][0][0] == 5000000
+    assert encoded["asks_px_int"][1][0] == 2501
+    assert encoded["bids_px_int"][1][0] == 2499
 
 
 def test_decode_fixed_point():
@@ -365,10 +365,10 @@ def test_decode_fixed_point():
         {
             "symbol_id": [100],
             "ts_local_us": [base_ts],
-            "bids_px": [[5000000, 4999990, None] + [None] * 22],
-            "bids_sz": [[10000, 15000, None] + [None] * 22],
-            "asks_px": [[5000050, 5000060, None] + [None] * 22],
-            "asks_sz": [[15000, 20000, None] + [None] * 22],
+            "bids_px_int": [[5000000, 4999990, None] + [None] * 22],
+            "bids_sz_int": [[10000, 15000, None] + [None] * 22],
+            "asks_px_int": [[5000050, 5000060, None] + [None] * 22],
+            "asks_sz_int": [[15000, 20000, None] + [None] * 22],
         }
     )
 
@@ -413,10 +413,10 @@ def test_decode_fixed_point_multi_symbol():
         {
             "symbol_id": [btc_id, eth_id],
             "ts_local_us": [base_ts, base_ts + 1],
-            "bids_px": [[5000000, None], [2500, None]],
-            "bids_sz": [[10000, None], [1500, None]],
-            "asks_px": [[5000050, None], [2501, None]],
-            "asks_sz": [[15000, None], [1600, None]],
+            "bids_px_int": [[5000000, None], [2500, None]],
+            "bids_sz_int": [[10000, None], [1500, None]],
+            "asks_px_int": [[5000050, None], [2501, None]],
+            "asks_sz_int": [[15000, None], [1600, None]],
         }
     )
 
@@ -436,21 +436,21 @@ def test_resolve_symbol_ids():
     df = pl.DataFrame(
         {
             "ts_local_us": [base_ts, base_ts + 1_000_000],
-            "bids_px": [
-                [50000.0, None] * 12 + [None],
-                [50001.0, None] * 12 + [None],
+            "bids_px_int": [
+                [5000000, None] * 12 + [None],
+                [5000100, None] * 12 + [None],
             ],
-            "bids_sz": [
-                [0.1, None] * 12 + [None],
-                [0.2, None] * 12 + [None],
+            "bids_sz_int": [
+                [10000, None] * 12 + [None],
+                [20000, None] * 12 + [None],
             ],
-            "asks_px": [
-                [50000.5, None] * 12 + [None],
-                [50001.5, None] * 12 + [None],
+            "asks_px_int": [
+                [5000050, None] * 12 + [None],
+                [5000150, None] * 12 + [None],
             ],
-            "asks_sz": [
-                [0.15, None] * 12 + [None],
-                [0.25, None] * 12 + [None],
+            "asks_sz_int": [
+                [15000, None] * 12 + [None],
+                [25000, None] * 12 + [None],
             ],
         }
     )
@@ -530,10 +530,10 @@ def test_book_snapshots_ingestion_service_ingest_file(
     # Check data was written
     written = repo.read_all()
     assert written.height == result.row_count
-    assert "bids_px" in written.columns
-    assert "asks_px" in written.columns
-    assert written["bids_px"].dtype == pl.List(pl.Int64)
-    assert written["asks_px"].dtype == pl.List(pl.Int64)
+    assert "bids_px_int" in written.columns
+    assert "asks_px_int" in written.columns
+    assert written["bids_px_int"].dtype == pl.List(pl.Int64)
+    assert written["asks_px_int"].dtype == pl.List(pl.Int64)
 
 
 def test_book_snapshots_ingestion_service_empty_file(

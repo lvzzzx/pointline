@@ -212,13 +212,13 @@ trades_with_quotes = trades.join(quotes, on="ts_local_us", how="left")
 Pointline stores all prices as **fixed-point integers** to avoid floating-point precision errors:
 
 ```
-price_int = round(price / price_increment)
+px_int = round(price / price_increment)
 ```
 
 **Example:**
 - BTCUSDT price: 50,123.45
 - price_increment: 0.01
-- price_int: 5,012,345 (stored as Int64)
+- px_int: 5,012,345 (stored as Int64)
 
 ### Decoding Workflow
 

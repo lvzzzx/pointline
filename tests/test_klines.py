@@ -92,8 +92,8 @@ def test_parse_binance_klines_csv_basic(raw_kline_data: pl.DataFrame):
     assert result["ts_bucket_end_us"][0] == 1609462799999000
 
     # Check numeric conversions
-    assert result["open"][0] == pytest.approx(29000.50)
-    assert result["high"][0] == pytest.approx(29200.75)
+    assert result["open_px"][0] == pytest.approx(29000.50)
+    assert result["high_px"][0] == pytest.approx(29200.75)
     assert result["volume"][0] == pytest.approx(123.45678)
     assert result["quote_volume"][0] == pytest.approx(3582345.67)
 
@@ -107,7 +107,7 @@ def test_parse_klines_with_header(raw_kline_data_with_header: pl.DataFrame):
 
     # First data row should be the actual data, not the header
     assert result["ts_bucket_start_us"][0] == 1609459200000000
-    assert result["open"][0] == pytest.approx(29000.50)
+    assert result["open_px"][0] == pytest.approx(29000.50)
 
 
 def test_parse_klines_without_header(raw_kline_data: pl.DataFrame):
@@ -135,10 +135,10 @@ def test_encode_quote_volume_with_computed_increment(sample_dim_symbol: pl.DataF
     df = pl.DataFrame(
         {
             "symbol_id": [101],  # BTCUSDT
-            "open": [29000.00],
-            "high": [29100.00],
-            "low": [28900.00],
-            "close": [29050.00],
+            "open_px": [29000.00],
+            "high_px": [29100.00],
+            "low_px": [28900.00],
+            "close_px": [29050.00],
             "volume": [100.0],  # 100 BTC
             "quote_volume": [2905000.0],  # 100 BTC × $29050 = $2,905,000
             "taker_buy_base_volume": [50.0],
@@ -169,10 +169,10 @@ def test_encode_fixed_point_multi_symbol(sample_dim_symbol: pl.DataFrame):
     df = pl.DataFrame(
         {
             "symbol_id": [101, 102, 103],
-            "open": [29000.0, 1800.0, 100.5],
-            "high": [29100.0, 1850.0, 102.0],
-            "low": [28900.0, 1750.0, 99.0],
-            "close": [29050.0, 1825.0, 101.25],
+            "open_px": [29000.0, 1800.0, 100.5],
+            "high_px": [29100.0, 1850.0, 102.0],
+            "low_px": [28900.0, 1750.0, 99.0],
+            "close_px": [29050.0, 1825.0, 101.25],
             "volume": [100.0, 500.0, 10000.0],
             "quote_volume": [2905000.0, 912500.0, 1012500.0],
             "taker_buy_base_volume": [50.0, 250.0, 5000.0],
@@ -203,7 +203,7 @@ def test_encode_fixed_point_multi_symbol(sample_dim_symbol: pl.DataFrame):
 
 def test_encode_fixed_point_missing_symbol_id():
     """Test encoding raises error when symbol_id column is missing."""
-    df = pl.DataFrame({"open": [100.0], "volume": [10.0]})
+    df = pl.DataFrame({"open_px": [100.0], "volume": [10.0]})
     dim_symbol = pl.DataFrame(
         {"symbol_id": [101], "price_increment": [0.01], "amount_increment": [0.001]}
     )
@@ -217,10 +217,10 @@ def test_encode_fixed_point_symbol_not_in_dim():
     df = pl.DataFrame(
         {
             "symbol_id": [999],  # Not in dim_symbol
-            "open": [100.0],
-            "high": [101.0],
-            "low": [99.0],
-            "close": [100.5],
+            "open_px": [100.0],
+            "high_px": [101.0],
+            "low_px": [99.0],
+            "close_px": [100.5],
             "volume": [10.0],
             "quote_volume": [1005.0],
             "taker_buy_base_volume": [5.0],
@@ -243,10 +243,10 @@ def test_encode_fixed_point_invalid_increments():
     df = pl.DataFrame(
         {
             "symbol_id": [101],
-            "open": [100.0],
-            "high": [101.0],
-            "low": [99.0],
-            "close": [100.5],
+            "open_px": [100.0],
+            "high_px": [101.0],
+            "low_px": [99.0],
+            "close_px": [100.5],
             "volume": [10.0],
             "quote_volume": [1005.0],
             "taker_buy_base_volume": [5.0],
@@ -271,10 +271,10 @@ def test_quote_volume_overflow_detection():
     df = pl.DataFrame(
         {
             "symbol_id": [101],
-            "open": [100.0],
-            "high": [101.0],
-            "low": [99.0],
-            "close": [100.5],
+            "open_px": [100.0],
+            "high_px": [101.0],
+            "low_px": [99.0],
+            "close_px": [100.5],
             "volume": [10.0],
             "quote_volume": [1e20],  # Very large value
             "taker_buy_base_volume": [5.0],
@@ -305,10 +305,10 @@ def test_decode_quote_volume_roundtrip(sample_dim_symbol: pl.DataFrame):
     original = pl.DataFrame(
         {
             "symbol_id": [101, 102],
-            "open": [29000.50, 1800.25],
-            "high": [29100.75, 1850.50],
-            "low": [28900.25, 1750.10],
-            "close": [29050.00, 1825.75],
+            "open_px": [29000.50, 1800.25],
+            "high_px": [29100.75, 1850.50],
+            "low_px": [28900.25, 1750.10],
+            "close_px": [29050.00, 1825.75],
             "volume": [123.45678, 456.78901],
             "quote_volume": [3582345.67, 834567.89],
             "taker_buy_base_volume": [61.72839, 228.39450],
@@ -327,7 +327,7 @@ def test_decode_quote_volume_roundtrip(sample_dim_symbol: pl.DataFrame):
 
     # Verify round-trip (within reasonable tolerance for floating-point)
     # Note: Fixed-point encoding rounds, so we use relative tolerance
-    assert decoded["open"][0] == pytest.approx(original["open"][0], rel=1e-6)
+    assert decoded["open_px"][0] == pytest.approx(original["open_px"][0], rel=1e-6)
     assert decoded["quote_volume"][0] == pytest.approx(original["quote_volume"][0], rel=1e-6)
     assert decoded["taker_buy_quote_volume"][0] == pytest.approx(
         original["taker_buy_quote_volume"][0], rel=1e-6
@@ -356,7 +356,7 @@ def test_decode_fixed_point_keep_ints(sample_dim_symbol: pl.DataFrame):
     result = decode_fixed_point(encoded, sample_dim_symbol, keep_ints=True)
 
     # Should have both float and int columns
-    assert "open" in result.columns
+    assert "open_px" in result.columns
     assert "open_px_int" in result.columns
     assert "quote_volume" in result.columns
     assert "quote_volume_int" in result.columns
@@ -378,10 +378,10 @@ def test_quote_increment_calculation(sample_dim_symbol: pl.DataFrame):
     df = pl.DataFrame(
         {
             "symbol_id": [101],
-            "open": [29000.0],
-            "high": [29000.0],
-            "low": [29000.0],
-            "close": [29000.0],
+            "open_px": [29000.0],
+            "high_px": [29000.0],
+            "low_px": [29000.0],
+            "close_px": [29000.0],
             "volume": [1.0],
             "quote_volume": [29000.0],  # 1 BTC × $29000
             "taker_buy_base_volume": [0.5],

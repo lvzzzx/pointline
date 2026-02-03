@@ -29,17 +29,18 @@ book = query.book_snapshot_25(
     symbol="SOLUSDT",
     start=datetime(2024, 5, 1, tzinfo=timezone.utc),
     end=datetime(2024, 9, 30, tzinfo=timezone.utc),
+    decoded=True,
     lazy=True,  # Don't load all data into memory
 )
 
 # Feature engineering on LazyFrame
 features = book.select([
     "ts_local_us",
-    pl.col("bids_px").list.get(0).alias("best_bid"),
-    pl.col("asks_px").list.get(0).alias("best_ask"),
+    pl.col("bids_px").list.get(0).alias("best_bid_px"),
+    pl.col("asks_px").list.get(0).alias("best_ask_px"),
 ]).with_columns([
     pl.from_epoch("ts_local_us", time_unit="us").alias("ts_dt"),
-    (pl.col("best_ask") - pl.col("best_bid")).alias("spread"),
+    (pl.col("best_ask_px") - pl.col("best_bid_px")).alias("spread"),
 ])
 
 # Aggregate before collecting
@@ -259,7 +260,7 @@ Load trades with automatic symbol resolution.
 Load quotes with automatic symbol resolution.
 
 **Decoded columns (when `decoded=True`):**
-`bid_price`, `bid_amount`, `ask_price`, `ask_amount`
+`bid_px`, `bid_sz`, `ask_px`, `ask_sz`
 
 #### `query.book_snapshot_25(...)`
 Load book snapshots with automatic symbol resolution.

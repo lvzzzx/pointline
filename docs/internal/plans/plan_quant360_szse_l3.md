@@ -17,8 +17,8 @@ This is fundamentally different from the existing Tardis L2 updates (which are a
 ### Level 3 vs Level 2 Storage
 
 **Key Difference:**
-- **L2 (existing Tardis):** Aggregated by price level: `{price_int: 50000, size_int: 1000}` (all orders at this price)
-- **L3 (SZSE):** Order-by-order: `{order_id: 12345, price_int: 50000, qty_int: 100}` (individual orders tracked)
+- **L2 (existing Tardis):** Aggregated by price level: `{px_int: 50000, size_int: 1000}` (all orders at this price)
+- **L3 (SZSE):** Order-by-order: `{order_id: 12345, px_int: 50000, qty_int: 100}` (individual orders tracked)
 
 **Storage Strategy:**
 Store raw events in Silver layer, reconstruct book in application layer (not in Gold). Rationale:
@@ -524,7 +524,7 @@ SZSE_L3_ORDERS_SCHEMA = {
     "appl_seq_num": pl.Int64,           # Order ID (unique per day)
     "side": pl.UInt8,                   # 0=buy, 1=sell (remap from 1/2)
     "ord_type": pl.UInt8,               # 0=market, 1=limit (remap from 1/2)
-    "price_int": pl.Int64,              # fixed-point encoded
+    "px_int": pl.Int64,              # fixed-point encoded
     "order_qty_int": pl.Int64,          # fixed-point encoded
     "channel_no": pl.Int32,             # exchange channel ID
     "file_id": pl.Int32,                # lineage tracking
@@ -574,7 +574,7 @@ SZSE_L3_TICKS_SCHEMA = {
     "appl_seq_num": pl.Int64,           # Event ID (unique per day)
     "bid_appl_seq_num": pl.Int64,       # Bid order ID (0 if N/A)
     "offer_appl_seq_num": pl.Int64,     # Ask order ID (0 if N/A)
-    "price_int": pl.Int64,              # 0 for cancellations
+    "px_int": pl.Int64,              # 0 for cancellations
     "qty_int": pl.Int64,                # filled or cancelled quantity
     "exec_type": pl.UInt8,              # 0=fill, 1=cancel (remap from 'F'/4)
     "channel_no": pl.Int32,
@@ -729,8 +729,8 @@ def validate_ticks(df: pl.DataFrame) -> pl.DataFrame:
     - appl_seq_num > 0
     - For fill: both bid_appl_seq_num and offer_appl_seq_num > 0
     - For cancel: exactly one of bid/offer_appl_seq_num > 0
-    - For fill: price_int > 0
-    - For cancel: price_int == 0 is okay
+    - For fill: px_int > 0
+    - For cancel: px_int == 0 is okay
     - qty_int > 0
     - **CRITICAL: For fills, qty must be multiple of 100 (lot size)**
       - Exception: Allow odd lots (<100) for partial fills/cancels (log warning)
@@ -903,7 +903,7 @@ def reconstruct_l3_book(
     Returns:
         {
             "bids": [
-                {"order_id": 123, "price_int": 50000, "qty_int": 100},
+                {"order_id": 123, "px_int": 50000, "qty_int": 100},
                 ...
             ],
             "asks": [...],
@@ -923,7 +923,7 @@ def l3_to_l2_aggregate(l3_book: dict) -> pl.DataFrame:
     Aggregate L3 book to L2 (price-level view).
 
     Returns DataFrame with columns:
-        side (0=bid, 1=ask), price_int, total_qty_int, order_count
+        side (0=bid, 1=ask), px_int, total_qty_int, order_count
     """
 
 def stream_l3_snapshots(
