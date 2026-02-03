@@ -33,6 +33,25 @@ from pointline.services.base_service import BaseService
 
 logger = logging.getLogger(__name__)
 
+# Registry of headerless CSV formats: (vendor, data_type) → column_names
+# Files without headers need explicit column names to prevent data loss
+HEADERLESS_FORMATS: dict[tuple[str, str], list[str]] = {
+    ("binance", "klines"): [
+        "open_time",
+        "open",
+        "high",
+        "low",
+        "close",
+        "volume",
+        "close_time",
+        "quote_volume",
+        "trade_count",
+        "taker_buy_base_volume",
+        "taker_buy_quote_volume",
+        "ignore",
+    ],
+}
+
 
 @dataclass
 class TableStrategy:
@@ -154,8 +173,8 @@ class GenericIngestionService(BaseService):
             )
 
         try:
-            # 1. Read bronze CSV file
-            raw_df = self._read_bronze_csv(bronze_path)
+            # 1. Read bronze CSV file (with headerless format detection)
+            raw_df = self._read_bronze_csv(bronze_path, meta)
 
             if raw_df.is_empty():
                 logger.warning(f"Empty CSV file: {bronze_path}")
@@ -261,21 +280,45 @@ class GenericIngestionService(BaseService):
                 error_message=error_msg,
             )
 
-    def _read_bronze_csv(self, path: Path) -> pl.DataFrame:
-        """Read a bronze CSV file, handling gzip compression."""
+    def _read_bronze_csv(self, path: Path, meta: BronzeFileMetadata) -> pl.DataFrame:
+        """Read a bronze CSV file, handling gzip compression and headerless formats.
+
+        Args:
+            path: Path to the CSV file
+            meta: Bronze file metadata (needed to detect headerless formats)
+
+        Returns:
+            DataFrame with raw CSV data
+
+        Note:
+            Some vendors (e.g., Binance klines) provide headerless CSVs. Without proper
+            handling, polars will consume the first data row as column names, causing
+            data loss. This method checks HEADERLESS_FORMATS registry and configures
+            has_header=False with explicit column names when needed.
+        """
         read_options = {
             "infer_schema_length": 10000,
             "try_parse_dates": False,
         }
+
+        # Check if this is a headerless format
+        key = (meta.vendor.lower(), meta.data_type.lower())
+        if key in HEADERLESS_FORMATS:
+            read_options["has_header"] = False
+            read_options["new_columns"] = HEADERLESS_FORMATS[key]
+
         # Preserve raw CSV line numbers (1-based data rows + header).
         import inspect
 
         if "row_index_name" in inspect.signature(pl.read_csv).parameters:
             read_options["row_index_name"] = "file_line_number"
-            read_options["row_index_offset"] = 2
+            # For headerless CSVs, offset is 1 (first row is data row 1)
+            # For CSVs with headers, offset is 2 (skip header row, first data row is line 2)
+            read_options["row_index_offset"] = 1 if key in HEADERLESS_FORMATS else 2
         else:
             read_options["row_count_name"] = "file_line_number"
-            read_options["row_count_offset"] = 2
+            read_options["row_count_offset"] = 1 if key in HEADERLESS_FORMATS else 2
+
         try:
             if path.suffix == ".gz" or str(path).endswith(".csv.gz"):
                 with gzip.open(path, "rt", encoding="utf-8") as f:
