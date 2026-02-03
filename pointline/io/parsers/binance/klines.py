@@ -59,7 +59,7 @@ def _filter_header_row(df: pl.DataFrame) -> pl.DataFrame:
     return df
 
 
-@register_parser(vendor="binance", data_type="klines")
+@register_parser(vendor="binance_vision", data_type="klines")
 def parse_binance_klines_csv(df: pl.DataFrame) -> pl.DataFrame:
     """Parse raw Binance kline CSV rows into typed columns.
 

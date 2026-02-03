@@ -18,7 +18,7 @@ Usage:
 Vendor packages:
     - tardis: Tardis market data (trades, quotes, book_snapshots, derivative_ticker)
     - quant360: Quant360 SZSE Level 3 data (l3_orders, l3_ticks)
-    - binance: Binance data (klines)
+    - binance_vision: Binance Vision data (klines)
 """
 
 import pointline.io.parsers.binance  # noqa: F401

@@ -1,6 +1,6 @@
-"""Binance vendor parsers.
+"""Binance Vision vendor parsers.
 
-This package contains parsers for Binance data files.
+This package contains parsers for Binance Vision data files (data.binance.vision).
 All parsers are automatically registered via the @register_parser decorator.
 """
 

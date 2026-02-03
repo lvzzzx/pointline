@@ -36,7 +36,7 @@ logger = logging.getLogger(__name__)
 # Registry of headerless CSV formats: (vendor, data_type) → column_names
 # Files without headers need explicit column names to prevent data loss
 HEADERLESS_FORMATS: dict[tuple[str, str], list[str]] = {
-    ("binance", "klines"): [
+    ("binance_vision", "klines"): [
         "open_time",
         "open",
         "high",

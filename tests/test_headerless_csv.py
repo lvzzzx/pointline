@@ -9,12 +9,12 @@ from pointline.services.generic_ingestion_service import HEADERLESS_FORMATS
 
 
 def test_headerless_csv_no_data_loss():
-    """Verify that headerless CSVs (Binance klines) don't lose first row.
+    """Verify that headerless CSVs (Binance Vision klines) don't lose first row.
 
     Critical bug: Without proper handling, polars consumes first data row as header,
     causing data loss and malformed column names.
     """
-    # Create a headerless CSV (like Binance klines)
+    # Create a headerless CSV (like Binance Vision klines)
     data = """1704067200000,42000.0,42500.0,41800.0,42300.0,100.5,1704070800000,4230000.0,1500,60.3,2538000.0,0
 1704070800000,42300.0,42800.0,42100.0,42600.0,120.3,1704074400000,5123000.0,1600,70.2,2990000.0,0
 1704074400000,42600.0,43000.0,42400.0,42900.0,95.7,1704078000000,4105000.0,1400,55.1,2364000.0,0"""
@@ -28,7 +28,7 @@ def test_headerless_csv_no_data_loss():
         # (metadata would be used by generic service, but we test the core logic directly)
         read_options = {
             "has_header": False,
-            "new_columns": HEADERLESS_FORMATS[("binance", "klines")],
+            "new_columns": HEADERLESS_FORMATS[("binance_vision", "klines")],
         }
         df = pl.read_csv(temp_path, **read_options)
 

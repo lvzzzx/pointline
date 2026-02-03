@@ -1,7 +1,7 @@
 # Critical Bug Fix: Headerless CSV Data Loss
 
 ## Issue
-The generic ingestion service was consuming the first data row of headerless CSVs (e.g., Binance klines) as column headers, causing:
+The generic ingestion service was consuming the first data row of headerless CSVs (e.g., Binance Vision klines) as column headers, causing:
 1. **Data loss**: First record completely lost
 2. **Malformed column names**: Data values used as column names
 3. **Silent failure**: No error, just wrong results
@@ -14,7 +14,7 @@ Added `HEADERLESS_FORMATS` registry in `generic_ingestion_service.py`:
 
 ```python
 HEADERLESS_FORMATS: dict[tuple[str, str], list[str]] = {
-    ("binance", "klines"): [
+    ("binance_vision", "klines"): [
         "open_time", "open", "high", "low", "close", "volume",
         "close_time", "quote_volume", "trade_count",
         "taker_buy_base_volume", "taker_buy_quote_volume", "ignore"

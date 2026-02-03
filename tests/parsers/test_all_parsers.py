@@ -15,7 +15,7 @@ def test_all_parsers_registered():
         ("tardis", "derivative_ticker"),
         ("quant360", "l3_orders"),
         ("quant360", "l3_ticks"),
-        ("binance", "klines"),
+        ("binance_vision", "klines"),
     ]
 
     # Check all expected parsers are registered
@@ -41,5 +41,5 @@ def test_quant360_parsers():
 
 
 def test_binance_parsers():
-    """Test Binance parsers can be retrieved."""
-    assert get_parser("binance", "klines") is not None
+    """Test Binance Vision parsers can be retrieved."""
+    assert get_parser("binance_vision", "klines") is not None
