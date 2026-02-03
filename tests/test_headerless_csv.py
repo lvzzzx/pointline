@@ -33,9 +33,9 @@ def test_headerless_csv_no_data_loss():
         df = pl.read_csv(temp_path, **read_options)
 
         # Verify no data loss: should have 3 rows
-        assert (
-            df.height == 3
-        ), f"Expected 3 rows, got {df.height} (first row was consumed as header!)"
+        assert df.height == 3, (
+            f"Expected 3 rows, got {df.height} (first row was consumed as header!)"
+        )
 
         # Verify column names are correct (not data values)
         assert "open_time" in df.columns, "Column names malformed"
