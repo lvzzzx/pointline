@@ -9,7 +9,7 @@ from datetime import date, datetime, timedelta, timezone
 import polars as pl
 
 from pointline.config import get_coingecko_coin_id, get_table_path
-from pointline.io.vendor.coingecko import CoinGeckoClient
+from pointline.io.vendors.coingecko import CoinGeckoClient
 
 logger = logging.getLogger(__name__)
 

@@ -11,6 +11,7 @@ from collections.abc import Sequence
 
 import polars as pl
 
+# Import parsers from new location for backward compatibility
 from pointline.tables._base import (
     exchange_id_validation_expr,
     generic_resolve_symbol_ids,
@@ -51,124 +52,6 @@ SIDE_SELL = 1
 # Order type codes
 ORD_TYPE_MARKET = 0
 ORD_TYPE_LIMIT = 1
-
-
-def parse_quant360_timestamp(timestamp_str: str | int) -> int:
-    """
-    Parse Quant360 timestamp format to microseconds UTC.
-
-    Quant360 format: YYYYMMDDHHMMSSmmm (17 digits, milliseconds precision)
-    Timezone: Asia/Shanghai (UTC+8, no DST)
-
-    Example: 20240930091500000 → 2024-09-30 09:15:00.000 CST → 2024-09-30 01:15:00.000 UTC
-
-    Args:
-        timestamp_str: Timestamp string or integer in Asia/Shanghai timezone
-
-    Returns:
-        Timestamp in microseconds since epoch (UTC, int64)
-    """
-    ts_str = str(timestamp_str).strip()
-
-    if len(ts_str) != 17:
-        raise ValueError(
-            f"Invalid Quant360 timestamp format: {ts_str}. Expected YYYYMMDDHHMMSSmmm (17 digits)"
-        )
-
-    # Parse components
-    year = int(ts_str[0:4])
-    month = int(ts_str[4:6])
-    day = int(ts_str[6:8])
-    hour = int(ts_str[8:10])
-    minute = int(ts_str[10:12])
-    second = int(ts_str[12:14])
-    millisecond = int(ts_str[14:17])
-
-    # Create datetime in Asia/Shanghai timezone, then convert to UTC
-    from datetime import datetime, timezone
-    from zoneinfo import ZoneInfo
-
-    dt_shanghai = datetime(
-        year, month, day, hour, minute, second, millisecond * 1000, tzinfo=ZoneInfo("Asia/Shanghai")
-    )
-    dt_utc = dt_shanghai.astimezone(timezone.utc)
-    return int(dt_utc.timestamp() * 1_000_000)
-
-
-def parse_quant360_orders_csv(df: pl.DataFrame) -> pl.DataFrame:
-    """Parse raw Quant360 order CSV format into normalized columns.
-
-    Expected Quant360 columns:
-    - OrderQty, OrdType, TransactTime, ExpirationDays, Side, ApplSeqNum
-    - Contactor, SendingTime, Price, ChannelNo, ExpirationType, ContactInfo, ConfirmID
-
-    Returns DataFrame with columns:
-    - ts_local_us (i64) - from TransactTime, converted to UTC microseconds
-    - appl_seq_num (i64) - Order ID
-    - side (u8) - 0=buy, 1=sell (remapped from Quant360's 1/2)
-    - ord_type (u8) - 0=market, 1=limit (remapped from Quant360's 1/2)
-    - price_px (f64) - Price in CNY (will be encoded to px_int later)
-    - order_qty (i64) - Quantity in shares (will be encoded to order_qty_int later)
-    - channel_no (i32) - Exchange channel ID
-    """
-    required_cols = [
-        "ApplSeqNum",
-        "Side",
-        "OrdType",
-        "Price",
-        "OrderQty",
-        "TransactTime",
-        "ChannelNo",
-    ]
-    missing = [c for c in required_cols if c not in df.columns]
-    if missing:
-        raise ValueError(f"parse_quant360_orders_csv: missing required columns: {missing}")
-
-    # Parse timestamps (vectorized using map_batches for efficiency)
-    def parse_ts_batch(s: pl.Series) -> pl.Series:
-        return s.map_elements(parse_quant360_timestamp, return_dtype=pl.Int64)
-
-    result = df.clone().with_columns(
-        [
-            # Timestamps
-            parse_ts_batch(pl.col("TransactTime")).alias("ts_local_us"),
-            # Order ID
-            pl.col("ApplSeqNum").cast(pl.Int64).alias("appl_seq_num"),
-            # Side: Quant360 uses 1=buy, 2=sell → remap to 0=buy, 1=sell
-            pl.when(pl.col("Side") == 1)
-            .then(pl.lit(SIDE_BUY, dtype=pl.UInt8))
-            .when(pl.col("Side") == 2)
-            .then(pl.lit(SIDE_SELL, dtype=pl.UInt8))
-            .otherwise(pl.lit(255, dtype=pl.UInt8))  # Invalid marker
-            .alias("side"),
-            # Order type: Quant360 uses 1=market, 2=limit → remap to 0=market, 1=limit
-            pl.when(pl.col("OrdType") == 1)
-            .then(pl.lit(ORD_TYPE_MARKET, dtype=pl.UInt8))
-            .when(pl.col("OrdType") == 2)
-            .then(pl.lit(ORD_TYPE_LIMIT, dtype=pl.UInt8))
-            .otherwise(pl.lit(255, dtype=pl.UInt8))  # Invalid marker
-            .alias("ord_type"),
-            # Price and quantity (keep as float/int for now, will encode later)
-            pl.col("Price").cast(pl.Float64).alias("price_px"),
-            pl.col("OrderQty").cast(pl.Int64).alias("order_qty"),
-            # Channel number
-            pl.col("ChannelNo").cast(pl.Int32).alias("channel_no"),
-        ]
-    )
-
-    select_cols = [
-        "ts_local_us",
-        "appl_seq_num",
-        "side",
-        "ord_type",
-        "price_px",
-        "order_qty",
-        "channel_no",
-    ]
-    if "file_line_number" in result.columns:
-        select_cols = ["file_line_number"] + select_cols
-
-    return result.select(select_cols)
 
 
 def normalize_szse_l3_orders_schema(df: pl.DataFrame) -> pl.DataFrame:

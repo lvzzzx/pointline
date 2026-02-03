@@ -9,7 +9,7 @@ Usage:
 import argparse
 from pathlib import Path
 
-from pointline.io.vendor.quant360 import reorganize_quant360_archives
+from pointline.io.vendors.quant360 import reorganize_quant360_archives
 
 
 def main():

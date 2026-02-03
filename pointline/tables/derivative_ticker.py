@@ -9,6 +9,7 @@ from collections.abc import Sequence
 
 import polars as pl
 
+# Import parser from new location for backward compatibility
 from pointline.tables._base import (
     exchange_id_validation_expr,
     generic_resolve_symbol_ids,
@@ -43,86 +44,6 @@ DERIVATIVE_TICKER_SCHEMA: dict[str, pl.DataType] = {
     "file_id": pl.Int32,
     "file_line_number": pl.Int32,
 }
-
-
-def parse_tardis_derivative_ticker_csv(df: pl.DataFrame) -> pl.DataFrame:
-    """Parse raw Tardis derivative_ticker CSV format into normalized columns.
-
-    Tardis schema is standardized with exact column names:
-    - exchange, symbol, timestamp, local_timestamp, funding_timestamp
-    - funding_rate, predicted_funding_rate, open_interest
-    - last_price, index_price, mark_price (or mark_px)
-
-    Returns DataFrame with columns:
-    - ts_local_us (i64)
-    - ts_exch_us (i64)
-    - funding_ts_us (i64, nullable)
-    - funding_rate (f64, nullable)
-    - predicted_funding_rate (f64, nullable)
-    - open_interest (f64, nullable)
-    - last_px (f64, nullable)
-    - index_px (f64, nullable)
-    - mark_px (f64, nullable)
-    """
-    required_cols = [
-        "exchange",
-        "symbol",
-        "timestamp",
-        "local_timestamp",
-        "funding_timestamp",
-        "funding_rate",
-        "predicted_funding_rate",
-        "open_interest",
-        "last_price",
-        "index_price",
-    ]
-    mark_cols = ["mark_price", "mark_px"]
-    required_mark = [col for col in mark_cols if col in df.columns]
-    if not required_mark:
-        required_cols.append("mark_price")
-    missing = [c for c in required_cols if c not in df.columns]
-    if missing:
-        raise ValueError(f"parse_tardis_derivative_ticker_csv: missing required columns: {missing}")
-
-    if "mark_px" in df.columns and "mark_price" in df.columns:
-        mark_expr = (
-            pl.coalesce([pl.col("mark_px"), pl.col("mark_price")])
-            .cast(pl.Float64, strict=False)
-            .alias("mark_px")
-        )
-    elif "mark_px" in df.columns:
-        mark_expr = pl.col("mark_px").cast(pl.Float64, strict=False).alias("mark_px")
-    else:
-        mark_expr = pl.col("mark_price").cast(pl.Float64, strict=False).alias("mark_px")
-
-    result = df.clone().with_columns(
-        [
-            pl.col("local_timestamp").cast(pl.Int64).alias("ts_local_us"),
-            pl.col("timestamp").cast(pl.Int64).alias("ts_exch_us"),
-            pl.col("funding_timestamp").cast(pl.Int64, strict=False).alias("funding_ts_us"),
-            pl.col("funding_rate").cast(pl.Float64, strict=False),
-            pl.col("predicted_funding_rate").cast(pl.Float64, strict=False),
-            pl.col("open_interest").cast(pl.Float64, strict=False),
-            pl.col("last_price").cast(pl.Float64, strict=False).alias("last_px"),
-            pl.col("index_price").cast(pl.Float64, strict=False).alias("index_px"),
-            mark_expr,
-        ]
-    )
-
-    select_cols = [
-        "ts_local_us",
-        "ts_exch_us",
-        "funding_ts_us",
-        "funding_rate",
-        "predicted_funding_rate",
-        "open_interest",
-        "last_px",
-        "index_px",
-        "mark_px",
-    ]
-    if "file_line_number" in result.columns:
-        select_cols = ["file_line_number"] + select_cols
-    return result.select(select_cols)
 
 
 def normalize_derivative_ticker_schema(df: pl.DataFrame) -> pl.DataFrame:
@@ -217,6 +138,18 @@ def validate_derivative_ticker(df: pl.DataFrame) -> pl.DataFrame:
 
     valid = generic_validate(df_with_expected, combined_filter, rules, "derivative_ticker")
     return valid.select(df.columns)
+
+
+def encode_fixed_point(
+    df: pl.DataFrame,
+    dim_symbol: pl.DataFrame,
+) -> pl.DataFrame:
+    """No-op for derivative_ticker (prices already in Float64 format).
+
+    Unlike trades/quotes which use fixed-point integers, derivative_ticker stores
+    prices directly as Float64 (mark_px, index_px, last_px).
+    """
+    return df
 
 
 def resolve_symbol_ids(

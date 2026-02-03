@@ -11,7 +11,7 @@ import polars as pl
 
 from pointline.cli.utils import parse_effective_ts, read_updates
 from pointline.io.base_repository import BaseDeltaRepository
-from pointline.io.vendor.tardis import TardisClient, build_updates_from_instruments
+from pointline.io.vendors.tardis import TardisClient, build_updates_from_instruments
 from pointline.services.dim_symbol_service import DimSymbolService
 
 
@@ -77,8 +77,8 @@ def cmd_dim_symbol_sync(args: argparse.Namespace) -> int:
 def cmd_dim_symbol_sync_tushare(args: argparse.Namespace) -> int:
     """Sync Chinese stock symbols from Tushare to dim_symbol."""
     from pointline.dim_symbol import read_dim_symbol_table, scd2_bootstrap, scd2_upsert
-    from pointline.io.vendor.tushare import TushareClient
-    from pointline.io.vendor.tushare.stock_basic_cn import (
+    from pointline.io.vendors.tushare import TushareClient
+    from pointline.io.vendors.tushare.stock_basic_cn import (
         build_dim_symbol_updates_from_stock_basic_cn,
     )
 
@@ -163,7 +163,7 @@ def cmd_dim_symbol_sync_tushare(args: argparse.Namespace) -> int:
 
 def cmd_dim_symbol_sync_from_stock_basic_cn(args: argparse.Namespace) -> int:
     """Sync dim_symbol from silver.stock_basic_cn snapshot."""
-    from pointline.io.vendor.tushare.stock_basic_cn import (
+    from pointline.io.vendors.tushare.stock_basic_cn import (
         build_dim_symbol_updates_from_stock_basic_cn,
     )
 

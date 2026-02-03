@@ -7,13 +7,13 @@ from datetime import date
 import polars as pl
 import pytest
 
+from pointline.io.vendors.binance_vision.parsers.klines import parse_binance_klines_csv
 from pointline.tables.klines import (
     KLINE_SCHEMA,
     check_kline_completeness,
     decode_fixed_point,
     encode_fixed_point,
     normalize_klines_schema,
-    parse_binance_klines_csv,
     validate_klines,
 )
 from pointline.validation_utils import DataQualityWarning

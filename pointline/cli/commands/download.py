@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import argparse
 
-from pointline.io.vendor.tardis import download_tardis_datasets
+from pointline.io.vendors.tardis import download_tardis_datasets
 
 
 def cmd_download(args: argparse.Namespace) -> int:

@@ -7,7 +7,7 @@ from datetime import datetime
 from pathlib import Path
 
 from pointline.io.base_repository import BaseDeltaRepository
-from pointline.io.vendor.coingecko import CoinGeckoClient
+from pointline.io.vendors.coingecko import CoinGeckoClient
 from pointline.services.asset_stats_providers import (
     CoinGeckoAssetStatsProvider,
     CoinMarketCapAssetStatsProvider,

@@ -303,6 +303,56 @@ git commit --no-verify
 - Purpose: Pre-computed fast paths for specific workflows
 - Status: Deferred until concrete needs identified
 
+### Vendor Plugin System
+
+**NEW (2026-02-03):** All vendors are now self-contained plugins with capability-based architecture.
+
+**Location:** `pointline/io/vendors/`
+
+**Key Concepts:**
+- **Plugin Protocol:** Each vendor implements `VendorPlugin` interface
+- **Capability Flags:** `supports_download`, `supports_parsers`, `supports_prehooks`
+- **Auto-Discovery:** Vendors register automatically on import
+- **Runtime Dispatch:** Services get parsers via `get_parser(vendor, data_type)`
+
+**Vendor Types:**
+1. **Self-Download:** We download from APIs (tardis, binance_vision)
+2. **External Bronze:** Vendor delivers archives, we reorganize (quant360)
+3. **API-Only:** Direct to dimension tables (coingecko, tushare)
+
+**Quick Reference:**
+```python
+from pointline.io.vendors import get_vendor, get_parser, list_vendors
+
+# List all vendors
+vendors = list_vendors()
+# → ['binance_vision', 'coingecko', 'quant360', 'tardis', 'tushare']
+
+# Get vendor capabilities
+tardis = get_vendor("tardis")
+print(tardis.supports_download)   # True
+print(tardis.supports_parsers)    # True
+print(tardis.supports_prehooks)   # False
+
+# Get parser (runtime dispatch)
+parse_trades = get_parser("tardis", "trades")
+parsed_df = parse_trades(raw_csv_df)
+```
+
+**Documentation:**
+- **Full Guide:** [Vendor Plugin System](docs/vendor-plugin-system.md)
+- **Quick Reference:** [Vendor Plugin Quick Reference](docs/vendor-plugin-quick-reference.md)
+
+**Adding New Vendors:**
+1. Create plugin directory: `io/vendors/my_vendor/`
+2. Implement `MyVendorPlugin` class with capability flags
+3. Implement parsers (if `supports_parsers=True`)
+4. Implement download client (if `supports_download=True`)
+5. Implement prehook (if `supports_prehooks=True`)
+6. Register via `register_vendor(MyVendorPlugin())`
+
+See documentation for complete implementation guide.
+
 ### Key Python Modules
 
 **`config.py`** - Global configuration registry
@@ -325,20 +375,32 @@ git commit --no-verify
 
 **`tables/*.py`** - Domain logic per table type
 - Schema definition (canonical Polars schema)
-- Vendor-specific parsing (e.g., `parse_tardis_trades_csv`)
 - Validation and normalization
 - Fixed-point encoding: `px_int = round(price / price_increment)`
 - Example: `tables/trades.py` defines `TRADES_SCHEMA`, side constants, encoding/decoding
+- **NOTE:** Vendor-specific parsing now moved to `io/vendors/<vendor>/parsers/`
 
 **`services/*.py`** - ETL orchestration
+- **`GenericIngestionService`** - Unified vendor-agnostic service (NEW)
+  - Runtime parser dispatch via `get_parser(vendor, data_type)`
+  - Table-specific strategies (encoding, validation, schema normalization)
+  - Handles all vendors through same 12-step pipeline
 - Base class: `BaseService` (validate → compute_state → write)
-- Per-table services: `TradesIngestionService`, `QuotesIngestionService`, etc.
-- Responsibilities: Parse bronze, quarantine checks, fixed-point encoding, Delta Lake append, manifest tracking
+- **Legacy services removed:** TradesIngestionService, QuotesIngestionService, etc. (consolidated into GenericIngestionService)
+
+**`io/vendors/`** - Vendor plugin system (NEW)
+- **`base.py`** - VendorPlugin protocol definition
+- **`registry.py`** - Vendor and parser registry with auto-discovery
+- **`<vendor>/`** - Self-contained vendor plugins:
+  - `plugin.py` - Plugin class implementing VendorPlugin protocol
+  - `client.py` - Download/API client (if supports_download)
+  - `parsers/` - Data format parsers (if supports_parsers)
+  - `reorganize.py` or similar - Prehook logic (if supports_prehooks)
+- See [Vendor Plugin System](docs/vendor-plugin-system.md) for details
 
 **`io/*.py`** - Data access layer
 - Protocols: `TableRepository`, `AppendableTableRepository`, `BronzeSource`
-- Implementations: `DeltaManifestRepo`, `LocalSource`
-- Vendor clients: `tardis/`, `binance/`, `coingecko.py`
+- Implementations: `BaseDeltaRepository`, `DeltaManifestRepo`, `LocalSource`
 
 **`cli/*.py`** - Command-line interface
 - Entry point: `pointline.cli:main()` (installed as `pointline` command)

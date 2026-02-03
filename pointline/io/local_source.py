@@ -1,7 +1,6 @@
 import contextlib
 import hashlib
 import logging
-import subprocess
 from collections.abc import Iterator
 from datetime import date, datetime
 from pathlib import Path
@@ -15,8 +14,6 @@ class LocalBronzeSource:
     """
     Implementation of BronzeSource for local filesystem.
     Expects Hive-style partitioning under a vendor root (e.g., bronze/tardis).
-
-    Supports automatic prehooks for vendor-specific archive reorganization.
     """
 
     # Required Hive partition keys that must be present in bronze file paths
@@ -27,7 +24,6 @@ class LocalBronzeSource:
         root_path: Path,
         vendor: str | None = None,
         strict_validation: bool = True,
-        enable_prehooks: bool = True,
         compute_checksums: bool = True,
     ):
         """
@@ -35,40 +31,42 @@ class LocalBronzeSource:
 
         Args:
             root_path: Root path to scan for bronze files
-            vendor: Vendor name (inferred from root_path if None)
+            vendor: Vendor name (auto-detected if None)
             strict_validation: If True, raise error on missing required partitions.
                               If False, use default values (for backward compatibility).
-            enable_prehooks: If True, run vendor-specific prehooks before file discovery
-                           (e.g., archive reorganization for quant360)
             compute_checksums: If True, compute SHA256 for each file (slower but needed
                              for manifest creation). If False, use empty string (faster
                              for discovery-only operations).
         """
         self.root_path = root_path
         self.strict_validation = strict_validation
-        self.enable_prehooks = enable_prehooks
         self.compute_checksums = compute_checksums
+
         if vendor:
+            # Explicit vendor parameter takes precedence
             self.vendor = vendor
-        elif root_path.name != "bronze":
-            self.vendor = root_path.name
         else:
-            self.vendor = None
+            # Auto-detect vendor via plugin system
+            self.vendor = self._detect_vendor()
+
+    def _detect_vendor(self) -> str | None:
+        """Auto-detect vendor using plugin system.
+
+        Returns:
+            Vendor name if detected, None otherwise
+        """
+        from pointline.io.vendors.registry import detect_vendor
+
+        return detect_vendor(self.root_path)
 
     def list_files(self, glob_pattern: str) -> Iterator[BronzeFileMetadata]:
         """
         Scans storage for files matching the pattern within root_path.
         Extracts metadata from Hive partitions (exchange=X/date=Y) if present.
 
-        Runs vendor-specific prehooks if enabled (e.g., archive reorganization).
-
         Raises:
             ValueError: If strict_validation=True and required partitions are missing
         """
-        # Prehook: Auto-reorganize archives if needed
-        if self.enable_prehooks:
-            self._run_prehooks()
-
         for p in self.root_path.glob(glob_pattern):
             if not p.is_file():
                 continue
@@ -125,206 +123,3 @@ class LocalBronzeSource:
             for chunk in iter(lambda: handle.read(chunk_size), b""):
                 hasher.update(chunk)
         return hasher.hexdigest()
-
-    def _run_prehooks(self) -> None:
-        """
-        Run vendor-specific prehooks before file discovery.
-
-        Currently supports:
-        - quant360: Auto-reorganize .7z archives into Hive partitions
-        """
-        detected_vendor = self._detect_vendor()
-        if not detected_vendor:
-            return  # No prehook needed
-
-        if detected_vendor == "quant360":
-            self._prehook_quant360_reorganize()
-        # Add other vendors here as needed
-
-    def _detect_vendor(self) -> str | None:
-        """
-        Auto-detect vendor from directory structure or archive patterns.
-
-        Returns:
-            Vendor name if detected, None otherwise
-        """
-        # Explicit vendor parameter takes precedence
-        if self.vendor and self.vendor != "bronze":
-            return self.vendor
-
-        # Detect from directory name
-        if self.root_path.name in ["quant360", "data.quant360.com"]:
-            return "quant360"
-
-        # Detect from archive patterns
-        if list(self.root_path.glob("*_new_STK_*.7z")):
-            logger.info("Detected quant360 archives (pattern: *_new_STK_*.7z)")
-            return "quant360"
-
-        return None
-
-    def _prehook_quant360_reorganize(self) -> None:
-        """
-        Prehook: Reorganize quant360 .7z archives if present.
-
-        Checks for .7z archives and reorganizes them into Hive partitions.
-        Skips archives that are already reorganized (idempotent).
-
-        Smart detection:
-        - Parses each archive filename to extract date/type
-        - Checks if corresponding partition exists with files
-        - Only reorganizes archives without matching partitions
-        """
-        # Check if archives exist
-        archives = list(self.root_path.glob("*.7z"))
-        if not archives:
-            # Check one level up (in case root_path is already bronze/quant360)
-            parent_archives = list(self.root_path.parent.glob("*.7z"))
-            if not parent_archives:
-                return  # No archives to reorganize
-
-            # Use parent directory as source
-            source_dir = self.root_path.parent
-            archives = parent_archives
-        else:
-            source_dir = self.root_path
-
-        # Check each archive to see if it needs reorganization
-        archives_needing_reorganization = []
-
-        for archive in archives:
-            # Parse archive metadata
-            metadata = self._parse_quant360_archive_metadata(archive.name)
-            if not metadata:
-                # Unknown format - skip (don't attempt reorganization)
-                logger.debug(f"Skipping {archive.name}: unknown archive format")
-                continue
-
-            # Check if partition exists for this archive's date/type
-            exchange = metadata["exchange"]
-            table_type = metadata["table_type"]  # "l3_orders" or "l3_ticks"
-            date_iso = metadata["date_iso"]
-
-            partition_pattern = (
-                f"exchange={exchange}/type={table_type}/date={date_iso}/symbol=*/*.csv.gz"
-            )
-            partition_files = list(self.root_path.glob(partition_pattern))
-
-            if not partition_files:
-                # No files for this archive's partition - needs reorganization
-                logger.debug(
-                    f"Archive {archive.name} needs reorganization: "
-                    f"no files found for {exchange}/{table_type}/{date_iso}"
-                )
-                archives_needing_reorganization.append(archive)
-            else:
-                # Partition exists - assume reorganized (script will skip existing files anyway)
-                logger.debug(
-                    f"Skipping {archive.name}: found {len(partition_files)} files "
-                    f"in {exchange}/{table_type}/{date_iso}"
-                )
-
-        if not archives_needing_reorganization:
-            # All archives already reorganized
-            logger.debug(
-                f"Skipping reorganization prehook: all {len(archives)} archive(s) "
-                f"already have corresponding partitions"
-            )
-            return
-
-        logger.info(
-            f"Detected {len(archives_needing_reorganization)}/{len(archives)} quant360 archive(s) "
-            f"needing reorganization"
-        )
-
-        # Find reorganization script
-        script_path = self._find_reorganization_script()
-        if not script_path:
-            logger.warning(
-                "Quant360 archives detected but reorganization script not found. "
-                "Skipping prehook. Run 'pointline bronze reorganize' manually."
-            )
-            return
-
-        # Determine bronze root (parent of vendor directory)
-        if self.root_path.name in ["quant360", "data.quant360.com"]:
-            bronze_root = self.root_path.parent
-        else:
-            bronze_root = self.root_path
-
-        # Run reorganization script
-        logger.info(f"Running: {script_path} {source_dir} {bronze_root}")
-        try:
-            result = subprocess.run(
-                [str(script_path), str(source_dir), str(bronze_root)],
-                check=False,
-                capture_output=True,
-                text=True,
-            )
-            if result.returncode == 0:
-                logger.info("Reorganization prehook completed successfully")
-            else:
-                logger.warning(
-                    f"Reorganization prehook failed (exit code {result.returncode}): "
-                    f"{result.stderr}"
-                )
-        except Exception as e:
-            logger.warning(f"Reorganization prehook error: {e}")
-
-    def _find_reorganization_script(self) -> Path | None:
-        """Find the quant360 reorganization script."""
-        candidates = [
-            # Relative to package root (installed)
-            Path(__file__).parent.parent.parent / "scripts" / "reorganize_quant360.sh",
-            # Current working directory (development)
-            Path.cwd() / "scripts" / "reorganize_quant360.sh",
-        ]
-
-        for path in candidates:
-            if path.exists():
-                return path
-        return None
-
-    def _parse_quant360_archive_metadata(self, filename: str) -> dict[str, str] | None:
-        """
-        Parse Quant360 archive filename to extract metadata.
-
-        Expected formats:
-        - order_new_STK_SZ_20240930.7z
-        - tick_new_STK_SZ_20240930.7z
-
-        Returns:
-            dict with keys: exchange, table_type, date_iso
-            None if filename doesn't match expected pattern
-        """
-        import re
-        from datetime import datetime
-
-        pattern = r"^(order|tick)_new_STK_(SZ|SH)_(\d{8})\.7z$"
-        match = re.match(pattern, filename)
-        if not match:
-            return None
-
-        data_type, exchange_code, date_str = match.groups()
-
-        # Map exchange code to our exchange names
-        exchange_map = {
-            "SZ": "szse",  # Shenzhen Stock Exchange
-            "SH": "sse",  # Shanghai Stock Exchange
-        }
-
-        # Map data_type to table type
-        type_map = {
-            "order": "l3_orders",
-            "tick": "l3_ticks",
-        }
-
-        # Format date as YYYY-MM-DD
-        date_obj = datetime.strptime(date_str, "%Y%m%d")
-        date_iso = date_obj.strftime("%Y-%m-%d")
-
-        return {
-            "exchange": exchange_map.get(exchange_code, "unknown"),
-            "table_type": type_map.get(data_type, "unknown"),
-            "date_iso": date_iso,
-        }

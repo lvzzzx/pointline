@@ -7,6 +7,7 @@ from collections.abc import Sequence
 
 import polars as pl
 
+# Import parser from new location for backward compatibility
 from pointline.tables._base import (
     exchange_id_validation_expr,
     generic_resolve_symbol_ids,
@@ -68,51 +69,6 @@ RAW_KLINE_COLUMNS = [
     "taker_buy_quote_volume",
     "ignore",
 ]
-
-
-def parse_binance_klines_csv(df: pl.DataFrame) -> pl.DataFrame:
-    """Parse raw Binance kline CSV rows into typed columns.
-
-    Binance kline CSV columns (may or may not have header):
-    open_time, open, high, low, close, volume, close_time, quote_volume,
-    trade_count, taker_buy_base_volume, taker_buy_quote_volume, ignore
-
-    Handles both cases:
-    - CSVs without headers (raw data rows only)
-    - CSVs with headers (filters out the header row automatically)
-    """
-    if df.is_empty():
-        return df
-
-    result = _ensure_raw_columns(df)
-    result = _filter_header_row(result)
-
-    def to_us_expr(col_name: str) -> pl.Expr:
-        col = pl.col(col_name).cast(pl.Int64, strict=False)
-        return pl.when(col >= 1_000_000_000_000_000).then(col).otherwise(col * 1_000)
-
-    parsed = result.select(
-        [
-            to_us_expr("open_time").alias("ts_bucket_start_us"),
-            to_us_expr("close_time").alias("ts_bucket_end_us"),
-            pl.col("open").cast(pl.Float64, strict=False).alias("open_px"),
-            pl.col("high").cast(pl.Float64, strict=False).alias("high_px"),
-            pl.col("low").cast(pl.Float64, strict=False).alias("low_px"),
-            pl.col("close").cast(pl.Float64, strict=False).alias("close_px"),
-            pl.col("volume").cast(pl.Float64, strict=False).alias("volume"),
-            pl.col("quote_volume").cast(pl.Float64, strict=False).alias("quote_volume"),
-            pl.col("trade_count").cast(pl.Int64, strict=False).alias("trade_count"),
-            pl.col("taker_buy_base_volume")
-            .cast(pl.Float64, strict=False)
-            .alias("taker_buy_base_volume"),
-            pl.col("taker_buy_quote_volume")
-            .cast(pl.Float64, strict=False)
-            .alias("taker_buy_quote_volume"),
-        ]
-    )
-    return parsed.filter(
-        pl.col("ts_bucket_start_us").is_not_null() & pl.col("ts_bucket_end_us").is_not_null()
-    )
 
 
 def encode_fixed_point(df: pl.DataFrame, dim_symbol: pl.DataFrame) -> pl.DataFrame:

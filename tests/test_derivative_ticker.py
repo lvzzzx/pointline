@@ -1,9 +1,11 @@
 import polars as pl
 
+from pointline.io.vendors.tardis.parsers.derivative_ticker import (
+    parse_tardis_derivative_ticker_csv,
+)
 from pointline.tables.derivative_ticker import (
     DERIVATIVE_TICKER_SCHEMA,
     normalize_derivative_ticker_schema,
-    parse_tardis_derivative_ticker_csv,
     validate_derivative_ticker,
 )
 

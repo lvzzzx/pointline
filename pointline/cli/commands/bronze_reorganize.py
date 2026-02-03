@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import subprocess
 from pathlib import Path
 
 
@@ -11,10 +10,7 @@ def cmd_bronze_reorganize(args: argparse.Namespace) -> int:
     """
     Reorganize vendor archives into Hive-partitioned bronze layout.
 
-    Currently supports:
-    - quant360: .7z archives → exchange=X/type=Y/date=Z/symbol=S/*.csv.gz
-
-    Future: Auto-detect vendor from archive patterns and route to appropriate handler.
+    Delegates to vendor plugin's run_prehook() method.
     """
     source_dir = Path(args.source_dir)
     bronze_root = Path(args.bronze_root)
@@ -29,60 +25,35 @@ def cmd_bronze_reorganize(args: argparse.Namespace) -> int:
         print(f"Error: Bronze directory does not exist: {bronze_root}")
         return 1
 
-    # Route to vendor-specific reorganizer
-    if vendor == "quant360":
-        return _reorganize_quant360(source_dir, bronze_root, dry_run=args.dry_run)
+    # Get vendor plugin
+    from pointline.io.vendors.registry import get_vendor, is_vendor_registered
 
-    print(f"Error: Unsupported vendor: {vendor}")
-    print("Supported vendors: quant360")
-    return 1
+    if not is_vendor_registered(vendor):
+        from pointline.io.vendors.registry import list_vendors
 
-
-def _reorganize_quant360(source_dir: Path, bronze_root: Path, dry_run: bool = False) -> int:
-    """
-    Reorganize quant360 .7z archives using the fast bash script.
-
-    Delegates to scripts/reorganize_quant360.sh for 50-100x performance vs Python.
-    """
-    # Find the bash script - try multiple locations for robustness
-    script_locations = [
-        # Relative to package root (installed)
-        Path(__file__).parent.parent.parent.parent / "scripts" / "reorganize_quant360.sh",
-        # Current working directory (development)
-        Path.cwd() / "scripts" / "reorganize_quant360.sh",
-    ]
-
-    script_path = None
-    for loc in script_locations:
-        if loc.exists():
-            script_path = loc
-            break
-
-    if not script_path:
-        print("Error: Reorganization script not found")
-        print("Searched locations:")
-        for loc in script_locations:
-            print(f"  - {loc}")
-        print()
-        print("Please ensure scripts/reorganize_quant360.sh exists in your repository.")
+        available = list_vendors()
+        print(f"Error: Unknown vendor: {vendor}")
+        print(f"Available vendors: {', '.join(available)}")
         return 1
 
-    # Build command
-    cmd = [str(script_path), str(source_dir), str(bronze_root)]
-    if dry_run:
-        cmd.append("--dry-run")
+    plugin = get_vendor(vendor)
 
-    print(f"Running: {' '.join(cmd)}")
+    # Check if vendor supports prehooks
+    if not plugin.supports_prehooks:
+        print(f"Error: Vendor '{vendor}' does not support reorganization")
+        print(f"Vendor '{vendor}' does not require preprocessing (supports_prehooks=False)")
+        return 1
+
+    # Execute vendor's prehook
+    print(f"Running {plugin.display_name} reorganization...")
+    print(f"  Source: {source_dir}")
+    print(f"  Bronze root: {bronze_root}")
     print()
 
-    # Execute bash script
     try:
-        result = subprocess.run(
-            cmd,
-            check=False,  # Let script handle exit codes
-            text=True,
-        )
-        return result.returncode
+        plugin.run_prehook(bronze_root, source_dir)
+        print("\n✓ Reorganization completed successfully")
+        return 0
     except Exception as e:
-        print(f"Error executing reorganization script: {e}")
+        print(f"\n✗ Reorganization failed: {e}")
         return 1

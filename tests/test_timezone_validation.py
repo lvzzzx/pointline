@@ -3,8 +3,8 @@
 import polars as pl
 import pytest
 
+from pointline.cli.ingestion_factory import create_ingestion_service
 from pointline.config import get_exchange_timezone
-from pointline.services.trades_service import TradesIngestionService
 
 
 def test_get_exchange_timezone_strict_mode_known_exchange():
@@ -39,7 +39,9 @@ def test_service_add_metadata_fails_for_unknown_exchange():
         dim_symbol_repo = BaseDeltaRepository(Path(tmpdir) / "dim_symbol")
         manifest_repo_mock = None  # Not needed for this test
 
-        service = TradesIngestionService(repo, dim_symbol_repo, manifest_repo_mock)
+        service = create_ingestion_service("trades", manifest_repo_mock)
+        service.repo = repo
+        service.dim_symbol_repo = dim_symbol_repo
 
         # Create a dummy dataframe
         df = pl.DataFrame(
@@ -65,7 +67,9 @@ def test_service_add_metadata_succeeds_for_known_exchange():
         dim_symbol_repo = BaseDeltaRepository(Path(tmpdir) / "dim_symbol")
         manifest_repo_mock = None
 
-        service = TradesIngestionService(repo, dim_symbol_repo, manifest_repo_mock)
+        service = create_ingestion_service("trades", manifest_repo_mock)
+        service.repo = repo
+        service.dim_symbol_repo = dim_symbol_repo
 
         df = pl.DataFrame(
             {
