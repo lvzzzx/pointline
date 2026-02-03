@@ -159,7 +159,7 @@ def parse_tardis_trades_csv(df: pl.DataFrame) -> pl.DataFrame:
     price_col = None
     for col in df.columns:
         col_lower = col.lower()
-        if col_lower in ("price", "tradeprice", "trade_price", "tradePrice"):
+        if col_lower in ("price", "price_px", "tradeprice", "trade_price", "tradeprice"):
             price_col = col
             break
 

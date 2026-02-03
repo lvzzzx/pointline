@@ -40,8 +40,8 @@ def test_get_schema_book_snapshot_25():
     # book_snapshot_25 uses Lists, not individual columns
     assert "bids_px_int" in schema
     assert "asks_px_int" in schema
-    assert "bids_sz" in schema
-    assert "asks_sz" in schema
+    assert "bids_sz_int" in schema
+    assert "asks_sz_int" in schema
 
 
 def test_get_schema_dim_symbol():
