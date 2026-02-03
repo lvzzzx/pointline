@@ -78,10 +78,10 @@ def parse_binance_klines_csv(df: pl.DataFrame) -> pl.DataFrame:
         DataFrame with normalized columns:
         - ts_bucket_start_us (i64)
         - ts_bucket_end_us (i64)
-        - open (f64)
-        - high (f64)
-        - low (f64)
-        - close (f64)
+        - open_px (f64)
+        - high_px (f64)
+        - low_px (f64)
+        - close_px (f64)
         - volume (f64)
         - quote_volume (f64)
         - trade_count (i64)
@@ -105,10 +105,10 @@ def parse_binance_klines_csv(df: pl.DataFrame) -> pl.DataFrame:
         [
             to_us_expr("open_time").alias("ts_bucket_start_us"),
             to_us_expr("close_time").alias("ts_bucket_end_us"),
-            pl.col("open").cast(pl.Float64, strict=False).alias("open"),
-            pl.col("high").cast(pl.Float64, strict=False).alias("high"),
-            pl.col("low").cast(pl.Float64, strict=False).alias("low"),
-            pl.col("close").cast(pl.Float64, strict=False).alias("close"),
+            pl.col("open").cast(pl.Float64, strict=False).alias("open_px"),
+            pl.col("high").cast(pl.Float64, strict=False).alias("high_px"),
+            pl.col("low").cast(pl.Float64, strict=False).alias("low_px"),
+            pl.col("close").cast(pl.Float64, strict=False).alias("close_px"),
             pl.col("volume").cast(pl.Float64, strict=False).alias("volume"),
             pl.col("quote_volume").cast(pl.Float64, strict=False).alias("quote_volume"),
             pl.col("trade_count").cast(pl.Int64, strict=False).alias("trade_count"),

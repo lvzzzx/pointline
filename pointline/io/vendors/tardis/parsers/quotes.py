@@ -27,10 +27,10 @@ def parse_tardis_quotes_csv(df: pl.DataFrame) -> pl.DataFrame:
         DataFrame with normalized columns:
         - ts_local_us (i64): local timestamp in microseconds since epoch
         - ts_exch_us (i64): exchange timestamp in microseconds since epoch
-        - bid_price (f64): best bid price (nullable)
-        - bid_amount (f64): best bid amount (nullable)
-        - ask_price (f64): best ask price (nullable)
-        - ask_amount (f64): best ask amount (nullable)
+        - bid_px (f64): best bid price (nullable)
+        - bid_sz (f64): best bid size (nullable)
+        - ask_px (f64): best ask price (nullable)
+        - ask_sz (f64): best ask size (nullable)
 
     Raises:
         ValueError: If required columns are missing
@@ -58,13 +58,13 @@ def parse_tardis_quotes_csv(df: pl.DataFrame) -> pl.DataFrame:
     if missing_bid_ask:
         raise ValueError(f"parse_tardis_quotes_csv: missing bid/ask columns: {missing_bid_ask}")
 
-    # Cast to float64, handling empty strings as null
+    # Cast to float64, handling empty strings as null, and rename to _px/_sz
     result = result.with_columns(
         [
-            pl.col("bid_price").cast(pl.Float64, strict=False),
-            pl.col("bid_amount").cast(pl.Float64, strict=False),
-            pl.col("ask_price").cast(pl.Float64, strict=False),
-            pl.col("ask_amount").cast(pl.Float64, strict=False),
+            pl.col("bid_price").cast(pl.Float64, strict=False).alias("bid_px"),
+            pl.col("bid_amount").cast(pl.Float64, strict=False).alias("bid_sz"),
+            pl.col("ask_price").cast(pl.Float64, strict=False).alias("ask_px"),
+            pl.col("ask_amount").cast(pl.Float64, strict=False).alias("ask_sz"),
         ]
     )
 
@@ -72,10 +72,10 @@ def parse_tardis_quotes_csv(df: pl.DataFrame) -> pl.DataFrame:
     select_cols = [
         "ts_local_us",
         "ts_exch_us",
-        "bid_price",
-        "bid_amount",
-        "ask_price",
-        "ask_amount",
+        "bid_px",
+        "bid_sz",
+        "ask_px",
+        "ask_sz",
     ]
     if "file_line_number" in result.columns:
         select_cols = ["file_line_number"] + select_cols
