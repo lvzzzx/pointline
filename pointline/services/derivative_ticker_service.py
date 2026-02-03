@@ -175,6 +175,7 @@ class DerivativeTickerIngestionService(BaseService):
                 "last_price": pl.Float64,
                 "index_price": pl.Float64,
                 "mark_price": pl.Float64,
+                "mark_px": pl.Float64,
             },
         }
         import inspect

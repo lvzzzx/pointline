@@ -151,13 +151,13 @@ JOIN silver.dim_symbol s
 
 ### 4.2 Fixed-point Logic
 Recommended approach:
-- `price_int = round(price / price_increment)`
+- `price_px_int = round(price_px / price_increment)`
 - `qty_int   = round(qty   / amount_increment)`
 
 **Alternative (Robustness):** Standardize on a fixed multiplier (e.g., `1e8` or `1e9`) if metadata is flaky. "Tick-based" is better for compression; "Fixed Multiplier" is safer for operations.
 
 Store both:
-- `price_int`, `qty_int` (required)
+- `price_px_int`, `qty_int` (required)
 - optionally `price_f64`, `qty_f64` for convenience (derived)
 
 **Detailed encoding explanation:** See [Schema Reference - Fixed-Point Encoding](../schemas.md#fixed-point-encoding).

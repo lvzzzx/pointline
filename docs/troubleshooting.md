@@ -302,7 +302,7 @@ large_trades = trades_lf.filter(pl.col("qty") > 1.0)
 hourly = large_trades.with_columns(
     pl.from_epoch("ts_local_us", time_unit="us").alias("ts_dt")
 ).group_by_dynamic("ts_dt", every="1h").agg([
-    pl.col("price").mean(),
+    pl.col("price_px").mean(),
     pl.col("qty").sum(),
 ])
 
@@ -331,7 +331,7 @@ for month in range(12):
 
     # Aggregate within the month
     monthly_vwap = trades.select([
-        (pl.col("price") * pl.col("qty")).sum() / pl.col("qty").sum()
+        (pl.col("price_px") * pl.col("qty")).sum() / pl.col("qty").sum()
     ]).collect().item()
 
     results.append({"month": month, "vwap": monthly_vwap})

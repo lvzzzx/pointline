@@ -26,6 +26,24 @@ def _sample_raw_df() -> pl.DataFrame:
     )
 
 
+def _sample_raw_df_mark_px() -> pl.DataFrame:
+    return pl.DataFrame(
+        {
+            "exchange": ["binance-futures"],
+            "symbol": ["BTCUSDT"],
+            "timestamp": [1714521600000000],
+            "local_timestamp": [1714521600037264],
+            "funding_timestamp": [1714550400000000],
+            "funding_rate": ["0.0001"],
+            "predicted_funding_rate": [""],
+            "open_interest": ["123.456"],
+            "last_price": ["60645"],
+            "index_price": ["60674.63680851"],
+            "mark_px": ["60651.1"],
+        }
+    )
+
+
 def test_parse_tardis_derivative_ticker_csv() -> None:
     parsed = parse_tardis_derivative_ticker_csv(_sample_raw_df())
     assert set(parsed.columns) == {
@@ -41,6 +59,11 @@ def test_parse_tardis_derivative_ticker_csv() -> None:
     }
     assert parsed["ts_local_us"][0] == 1714521600037264
     assert parsed["index_px"][0] == 60674.63680851
+
+
+def test_parse_tardis_derivative_ticker_csv_accepts_mark_px() -> None:
+    parsed = parse_tardis_derivative_ticker_csv(_sample_raw_df_mark_px())
+    assert parsed["mark_px"][0] == 60651.1
 
 
 def test_normalize_derivative_ticker_schema_fills_optional() -> None:

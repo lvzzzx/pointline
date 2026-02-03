@@ -64,10 +64,10 @@ def parse_tardis_quotes_csv(df: pl.DataFrame) -> pl.DataFrame:
     Returns DataFrame with columns:
     - ts_local_us (i64): local timestamp in microseconds since epoch
     - ts_exch_us (i64): exchange timestamp in microseconds since epoch
-    - bid_price (f64): best bid price (nullable)
-    - bid_amount (f64): best bid amount (nullable)
-    - ask_price (f64): best ask price (nullable)
-    - ask_amount (f64): best ask amount (nullable)
+    - bid_px (f64): best bid price (nullable)
+    - bid_sz (f64): best bid size (nullable)
+    - ask_px (f64): best ask price (nullable)
+    - ask_sz (f64): best ask size (nullable)
     """
     # Check for required columns
     required_cols = ["exchange", "symbol", "timestamp", "local_timestamp"]
@@ -95,10 +95,10 @@ def parse_tardis_quotes_csv(df: pl.DataFrame) -> pl.DataFrame:
     # Cast to float64, handling empty strings as null
     result = result.with_columns(
         [
-            pl.col("bid_price").cast(pl.Float64, strict=False),
-            pl.col("bid_amount").cast(pl.Float64, strict=False),
-            pl.col("ask_price").cast(pl.Float64, strict=False),
-            pl.col("ask_amount").cast(pl.Float64, strict=False),
+            pl.col("bid_price").cast(pl.Float64, strict=False).alias("bid_px"),
+            pl.col("bid_amount").cast(pl.Float64, strict=False).alias("bid_sz"),
+            pl.col("ask_price").cast(pl.Float64, strict=False).alias("ask_px"),
+            pl.col("ask_amount").cast(pl.Float64, strict=False).alias("ask_sz"),
         ]
     )
 
@@ -106,10 +106,10 @@ def parse_tardis_quotes_csv(df: pl.DataFrame) -> pl.DataFrame:
     select_cols = [
         "ts_local_us",
         "ts_exch_us",
-        "bid_price",
-        "bid_amount",
-        "ask_price",
-        "ask_amount",
+        "bid_px",
+        "bid_sz",
+        "ask_px",
+        "ask_sz",
     ]
     if "file_line_number" in result.columns:
         select_cols = ["file_line_number"] + select_cols
@@ -244,14 +244,14 @@ def encode_fixed_point(
 
     Requires:
     - df must have 'symbol_id' column (from resolve_symbol_ids)
-    - df must have 'bid_price', 'bid_amount', 'ask_price', 'ask_amount' columns
+    - df must have 'bid_px', 'bid_sz', 'ask_px', 'ask_sz' columns
     - dim_symbol must have 'symbol_id', 'price_increment', 'amount_increment' columns
 
     Computes:
-    - bid_px_int = floor(bid_price / price_increment)
-    - bid_sz_int = round(bid_amount / amount_increment)
-    - ask_px_int = ceil(ask_price / price_increment)
-    - ask_sz_int = round(ask_amount / amount_increment)
+    - bid_px_int = floor(bid_px / price_increment)
+    - bid_sz_int = round(bid_sz / amount_increment)
+    - ask_px_int = ceil(ask_px / price_increment)
+    - ask_sz_int = round(ask_sz / amount_increment)
 
     Rounding Semantics (Conservative to Avoid False Crossed Books):
     - Bids use floor (rounds DOWN): Ensures we never overstate bid prices
@@ -268,7 +268,7 @@ def encode_fixed_point(
     if "symbol_id" not in df.columns:
         raise ValueError("encode_fixed_point: df must have 'symbol_id' column")
 
-    required_cols = ["bid_price", "bid_amount", "ask_price", "ask_amount"]
+    required_cols = ["bid_px", "bid_sz", "ask_px", "ask_sz"]
     missing = [c for c in required_cols if c not in df.columns]
     if missing:
         raise ValueError(f"encode_fixed_point: df missing columns: {missing}")
@@ -296,20 +296,20 @@ def encode_fixed_point(
     # Encode to fixed-point (handle nulls - preserve null for empty bid/ask)
     result = joined.with_columns(
         [
-            pl.when(pl.col("bid_price").is_not_null())
-            .then((pl.col("bid_price") / pl.col("price_increment")).floor().cast(pl.Int64))
+            pl.when(pl.col("bid_px").is_not_null())
+            .then((pl.col("bid_px") / pl.col("price_increment")).floor().cast(pl.Int64))
             .otherwise(None)
             .alias("bid_px_int"),
-            pl.when(pl.col("bid_amount").is_not_null())
-            .then((pl.col("bid_amount") / pl.col("amount_increment")).round().cast(pl.Int64))
+            pl.when(pl.col("bid_sz").is_not_null())
+            .then((pl.col("bid_sz") / pl.col("amount_increment")).round().cast(pl.Int64))
             .otherwise(None)
             .alias("bid_sz_int"),
-            pl.when(pl.col("ask_price").is_not_null())
-            .then((pl.col("ask_price") / pl.col("price_increment")).ceil().cast(pl.Int64))
+            pl.when(pl.col("ask_px").is_not_null())
+            .then((pl.col("ask_px") / pl.col("price_increment")).ceil().cast(pl.Int64))
             .otherwise(None)
             .alias("ask_px_int"),
-            pl.when(pl.col("ask_amount").is_not_null())
-            .then((pl.col("ask_amount") / pl.col("amount_increment")).round().cast(pl.Int64))
+            pl.when(pl.col("ask_sz").is_not_null())
+            .then((pl.col("ask_sz") / pl.col("amount_increment")).round().cast(pl.Int64))
             .otherwise(None)
             .alias("ask_sz_int"),
         ]
@@ -332,7 +332,7 @@ def decode_fixed_point(
     - df must have 'bid_px_int', 'bid_sz_int', 'ask_px_int', 'ask_sz_int' columns
     - dim_symbol must have 'symbol_id', 'price_increment', 'amount_increment' columns
 
-    Returns DataFrame with bid_price, bid_amount, ask_price, ask_amount added (Float64).
+    Returns DataFrame with bid_px, bid_sz, ask_px, ask_sz added (Float64).
     By default, drops the *_int columns.
     """
     if "symbol_id" not in df.columns:
@@ -373,7 +373,7 @@ def decode_fixed_point(
                 .cast(pl.Float64)
             )
             .otherwise(None)
-            .alias("bid_price"),
+            .alias("bid_px"),
             pl.when(pl.col("bid_sz_int").is_not_null())
             .then(
                 (pl.col("bid_sz_int") * pl.col("amount_increment"))
@@ -381,7 +381,7 @@ def decode_fixed_point(
                 .cast(pl.Float64)
             )
             .otherwise(None)
-            .alias("bid_amount"),
+            .alias("bid_sz"),
             pl.when(pl.col("ask_px_int").is_not_null())
             .then(
                 (pl.col("ask_px_int") * pl.col("price_increment"))
@@ -389,7 +389,7 @@ def decode_fixed_point(
                 .cast(pl.Float64)
             )
             .otherwise(None)
-            .alias("ask_price"),
+            .alias("ask_px"),
             pl.when(pl.col("ask_sz_int").is_not_null())
             .then(
                 (pl.col("ask_sz_int") * pl.col("amount_increment"))
@@ -397,7 +397,7 @@ def decode_fixed_point(
                 .cast(pl.Float64)
             )
             .otherwise(None)
-            .alias("ask_amount"),
+            .alias("ask_sz"),
         ]
     )
 

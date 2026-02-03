@@ -71,7 +71,7 @@ import polars as pl
 
 # Calculate VWAP
 vwap = trades.select([
-    (pl.col("price") * pl.col("qty")).sum() / pl.col("qty").sum()
+    (pl.col("price_px") * pl.col("qty")).sum() / pl.col("qty").sum()
 ]).item()
 
 print(f"VWAP: ${vwap:.2f}")
@@ -99,9 +99,9 @@ Example:
 ### 3.2 Table catalog (Silver)
 | Table | Path | Partitions | Key columns |
 |---|---|---|---|
-| trades | `${LAKE_ROOT}/silver/trades` | `exchange`, `date` | `ts_local_us`, `symbol_id`, `price_int`, `qty_int` |
+| trades | `${LAKE_ROOT}/silver/trades` | `exchange`, `date` | `ts_local_us`, `symbol_id`, `price_px_int`, `qty_int` |
 | quotes | `${LAKE_ROOT}/silver/quotes` | `exchange`, `date` | `ts_local_us`, `symbol_id`, `bid_px_int`, `ask_px_int` |
-| book_snapshot_25 | `${LAKE_ROOT}/silver/book_snapshot_25` | `exchange`, `date` | `ts_local_us`, `symbol_id`, `bids_px`, `asks_px` |
+| book_snapshot_25 | `${LAKE_ROOT}/silver/book_snapshot_25` | `exchange`, `date` | `ts_local_us`, `symbol_id`, `bids_px_int`, `asks_px_int` |
 | dim_symbol | `${LAKE_ROOT}/silver/dim_symbol` | none | `symbol_id`, `exchange_id`, `exchange_symbol`, validity range |
 | ingest_manifest | `${LAKE_ROOT}/silver/ingest_manifest` | none | `vendor`, `exchange`, `data_type`, `date`, `status` |
 
@@ -208,7 +208,7 @@ large_trades = large_trades.with_columns(
     pl.from_epoch("ts_local_us", time_unit="us").alias("ts_dt")
 )
 hourly = large_trades.group_by_dynamic("ts_dt", every="1h").agg([
-    pl.col("price").mean(),
+    pl.col("price_px").mean(),
     pl.col("qty").sum(),
 ])
 
@@ -234,9 +234,9 @@ Symbols change (e.g., renames, tick size updates). We use a stable `symbol_id`.
 
 ### 5.3 Fixed-Point Math
 To save space and ensure precision, prices and quantities are stored as integers (`i64`).
-- **Storage:** `price_int`, `qty_int`
+- **Storage:** `price_px_int`, `qty_int`
 - **Metadata:** `price_increment`, `amount_increment` (from `dim_symbol`)
-- **Conversion:** `real_price = price_int * price_increment`
+- **Conversion:** `price_px = price_px_int * price_increment`
 
 **Query API:** Use `decoded=True` to get float columns automatically
 
@@ -287,7 +287,7 @@ import polars as pl
 trades = query.trades("binance-futures", "BTCUSDT", "2024-05-01", "2024-05-02", decoded=True)
 
 vwap = trades.select([
-    (pl.col("price") * pl.col("qty")).sum() / pl.col("qty").sum()
+    (pl.col("price_px") * pl.col("qty")).sum() / pl.col("qty").sum()
 ]).item()
 
 print(f"VWAP: ${vwap:.2f}")
@@ -301,10 +301,10 @@ trades_with_dt = trades.with_columns(
     pl.from_epoch("ts_local_us", time_unit="us").alias("ts_dt")
 )
 bars = trades_with_dt.group_by_dynamic("ts_dt", every="1m").agg([
-    pl.col("price").first().alias("open"),
-    pl.col("price").max().alias("high"),
-    pl.col("price").min().alias("low"),
-    pl.col("price").last().alias("close"),
+    pl.col("price_px").first().alias("open"),
+    pl.col("price_px").max().alias("high"),
+    pl.col("price_px").min().alias("low"),
+    pl.col("price_px").last().alias("close"),
     pl.col("qty").sum().alias("volume"),
 ])
 ```
@@ -317,10 +317,10 @@ book = query.book_snapshot_25("binance-futures", "BTCUSDT", "2024-05-01", "2024-
 # Extract best bid/ask
 features = book.select([
     "ts_local_us",
-    pl.col("bids_px").list.get(0).alias("best_bid"),
-    pl.col("asks_px").list.get(0).alias("best_ask"),
+    pl.col("bids_px").list.get(0).alias("best_bid_px"),
+    pl.col("asks_px").list.get(0).alias("best_ask_px"),
 ]).with_columns([
-    (pl.col("best_ask") - pl.col("best_bid")).alias("spread")
+    (pl.col("best_ask_px") - pl.col("best_bid_px")).alias("spread")
 ])
 ```
 
@@ -443,7 +443,7 @@ Once you have the `symbol_id` (e.g., `101`), query the tables directly.
 SELECT
     ts_local_us,
     side,
-    price_int,
+    price_px_int,
     qty_int
 FROM delta_scan('${LAKE_ROOT}/silver/trades')
 WHERE date >= '2024-05-01' AND date <= '2024-05-02'
@@ -489,7 +489,7 @@ LIMIT 100;
 ### 7.6 Common Mistakes
 - Using `ts_exch_us` for backtesting instead of `ts_local_us`.
 - Forgetting to filter by time (or date) and scanning full tables.
-- Treating `price_int` / `qty_int` as real values without decoding.
+- Treating `price_px_int` / `qty_int` as real values without decoding.
 
 ---
 
@@ -519,7 +519,7 @@ trades = query.trades("binance-futures", "BTCUSDT", "2024-05-01", "2024-05-02", 
 # 3. Analyze
 import polars as pl
 vwap = trades.select([
-    (pl.col("price") * pl.col("qty")).sum() / pl.col("qty").sum()
+    (pl.col("price_px") * pl.col("qty")).sum() / pl.col("qty").sum()
 ]).item()
 ```
 

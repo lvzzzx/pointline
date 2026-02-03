@@ -26,7 +26,7 @@ from pointline.validation_utils import with_expected_exchange_id
 # - Delta Lake (via Parquet) does not support unsigned integer types UInt16 and UInt32
 # - Use Int16 for exchange_id
 # - Use Int32 for file_id, file_line_number, channel_no
-# - Use Int64 for symbol_id, appl_seq_num, price_int, order_qty_int
+# - Use Int64 for symbol_id, appl_seq_num, price_px_int, order_qty_int
 # - UInt8 is supported (used for side, ord_type)
 SZSE_L3_ORDERS_SCHEMA: dict[str, pl.DataType] = {
     "date": pl.Date,
@@ -37,7 +37,7 @@ SZSE_L3_ORDERS_SCHEMA: dict[str, pl.DataType] = {
     "appl_seq_num": pl.Int64,  # Order ID (unique per day per symbol)
     "side": pl.UInt8,  # 0=buy, 1=sell
     "ord_type": pl.UInt8,  # 0=market, 1=limit
-    "price_int": pl.Int64,  # Fixed-point encoded (price / price_increment)
+    "price_px_int": pl.Int64,  # Fixed-point encoded (price / price_increment)
     "order_qty_int": pl.Int64,  # Lot-based encoding (qty / 100 shares)
     "channel_no": pl.Int32,  # Exchange channel ID
     "file_id": pl.Int32,
@@ -107,7 +107,7 @@ def parse_quant360_orders_csv(df: pl.DataFrame) -> pl.DataFrame:
     - appl_seq_num (i64) - Order ID
     - side (u8) - 0=buy, 1=sell (remapped from Quant360's 1/2)
     - ord_type (u8) - 0=market, 1=limit (remapped from Quant360's 1/2)
-    - price (f64) - Price in CNY (will be encoded to price_int later)
+    - price_px (f64) - Price in CNY (will be encoded to price_px_int later)
     - order_qty (i64) - Quantity in shares (will be encoded to order_qty_int later)
     - channel_no (i32) - Exchange channel ID
     """
@@ -149,7 +149,7 @@ def parse_quant360_orders_csv(df: pl.DataFrame) -> pl.DataFrame:
             .otherwise(pl.lit(255, dtype=pl.UInt8))  # Invalid marker
             .alias("ord_type"),
             # Price and quantity (keep as float/int for now, will encode later)
-            pl.col("Price").cast(pl.Float64).alias("price"),
+            pl.col("Price").cast(pl.Float64).alias("price_px"),
             pl.col("OrderQty").cast(pl.Int64).alias("order_qty"),
             # Channel number
             pl.col("ChannelNo").cast(pl.Int32).alias("channel_no"),
@@ -161,7 +161,7 @@ def parse_quant360_orders_csv(df: pl.DataFrame) -> pl.DataFrame:
         "appl_seq_num",
         "side",
         "ord_type",
-        "price",
+        "price_px",
         "order_qty",
         "channel_no",
     ]
@@ -185,7 +185,7 @@ def validate_szse_l3_orders(df: pl.DataFrame) -> pl.DataFrame:
     """Apply quality checks to SZSE L3 order data.
 
     Validates:
-    - Non-negative price_int and order_qty_int
+    - Non-negative price_px_int and order_qty_int
     - Valid timestamp ranges
     - Valid side codes (0-1)
     - Valid order type codes (0-1)
@@ -198,7 +198,7 @@ def validate_szse_l3_orders(df: pl.DataFrame) -> pl.DataFrame:
         return df
 
     required = [
-        "price_int",
+        "price_px_int",
         "order_qty_int",
         "ts_local_us",
         "appl_seq_num",
@@ -215,7 +215,7 @@ def validate_szse_l3_orders(df: pl.DataFrame) -> pl.DataFrame:
     df_with_expected = with_expected_exchange_id(df)
 
     combined_filter = (
-        (pl.col("price_int") >= 0)  # Market orders can have price=0
+        (pl.col("price_px_int") >= 0)  # Market orders can have price=0
         & (pl.col("order_qty_int") > 0)
         & timestamp_validation_expr("ts_local_us")
         & (pl.col("appl_seq_num") > 0)
@@ -226,7 +226,7 @@ def validate_szse_l3_orders(df: pl.DataFrame) -> pl.DataFrame:
     )
 
     rules = [
-        ("price_int", (pl.col("price_int").is_null()) | (pl.col("price_int") < 0)),
+        ("price_px_int", (pl.col("price_px_int").is_null()) | (pl.col("price_px_int") < 0)),
         ("order_qty_int", (pl.col("order_qty_int").is_null()) | (pl.col("order_qty_int") <= 0)),
         (
             "ts_local_us",
@@ -263,11 +263,11 @@ def encode_fixed_point(
 
     Requires:
     - df must have 'symbol_id' column (from resolve_symbol_ids)
-    - df must have 'price', 'order_qty' columns (floats/ints)
+    - df must have 'price_px', 'order_qty' columns (floats/ints)
     - dim_symbol must have 'symbol_id', 'price_increment', 'amount_increment' columns
 
     Computes:
-    - price_int = round(price / price_increment)
+    - price_px_int = round(price_px / price_increment)
     - order_qty_int = round(order_qty / amount_increment)
 
     Lot-based quantity encoding (amount_increment = 100 shares):
@@ -275,12 +275,12 @@ def encode_fixed_point(
     - 500 shares → order_qty_int = 5
     - 1000 shares → order_qty_int = 10
 
-    Returns DataFrame with price_int, order_qty_int columns added.
+    Returns DataFrame with price_px_int, order_qty_int columns added.
     """
     if "symbol_id" not in df.columns:
         raise ValueError("encode_fixed_point: df must have 'symbol_id' column")
 
-    required_cols = ["price", "order_qty"]
+    required_cols = ["price_px", "order_qty"]
     missing = [c for c in required_cols if c not in df.columns]
     if missing:
         raise ValueError(f"encode_fixed_point: df missing columns: {missing}")
@@ -305,7 +305,10 @@ def encode_fixed_point(
 
     result = joined.with_columns(
         [
-            (pl.col("price") / pl.col("price_increment")).round().cast(pl.Int64).alias("price_int"),
+            (pl.col("price_px") / pl.col("price_increment"))
+            .round()
+            .cast(pl.Int64)
+            .alias("price_px_int"),
             (pl.col("order_qty") / pl.col("amount_increment"))
             .round()
             .cast(pl.Int64)
@@ -313,7 +316,7 @@ def encode_fixed_point(
         ]
     )
 
-    drop_cols = ["price_increment", "amount_increment", "price", "order_qty"]
+    drop_cols = ["price_increment", "amount_increment", "price_px", "order_qty"]
     return result.drop(drop_cols)
 
 
@@ -327,16 +330,16 @@ def decode_fixed_point(
 
     Requires:
     - df must have 'symbol_id' column
-    - df must have 'price_int', 'order_qty_int' columns
+    - df must have 'price_px_int', 'order_qty_int' columns
     - dim_symbol must have 'symbol_id', 'price_increment', 'amount_increment' columns
 
-    Returns DataFrame with price (Float64) and order_qty (Int64) columns added.
+    Returns DataFrame with price_px (Float64) and order_qty (Int64) columns added.
     By default, drops the *_int columns.
     """
     if "symbol_id" not in df.columns:
         raise ValueError("decode_fixed_point: df must have 'symbol_id' column")
 
-    required_cols = ["price_int", "order_qty_int"]
+    required_cols = ["price_px_int", "order_qty_int"]
     missing = [c for c in required_cols if c not in df.columns]
     if missing:
         raise ValueError(f"decode_fixed_point: df missing columns: {missing}")
@@ -361,7 +364,7 @@ def decode_fixed_point(
 
     result = joined.with_columns(
         [
-            (pl.col("price_int") * pl.col("price_increment")).cast(pl.Float64).alias("price"),
+            (pl.col("price_px_int") * pl.col("price_increment")).cast(pl.Float64).alias("price_px"),
             (pl.col("order_qty_int") * pl.col("amount_increment"))
             .cast(pl.Int64)
             .alias("order_qty"),

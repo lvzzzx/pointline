@@ -253,10 +253,10 @@ class BookSnapshotsIngestionService(BaseService):
         raw_encoded = encoded_df.select(
             [
                 "file_line_number",
-                "bids_px",
-                "bids_sz",
-                "asks_px",
-                "asks_sz",
+                "bids_px_int",
+                "bids_sz_int",
+                "asks_px_int",
+                "asks_sz_int",
             ]
         ).with_columns(pl.col("file_line_number").cast(pl.Int32))
 
@@ -274,10 +274,10 @@ class BookSnapshotsIngestionService(BaseService):
             .select(
                 [
                     "file_line_number",
-                    "bids_px",
-                    "bids_sz",
-                    "asks_px",
-                    "asks_sz",
+                    "bids_px_int",
+                    "bids_sz_int",
+                    "asks_px_int",
+                    "asks_sz_int",
                 ]
             )
             .collect()
@@ -291,10 +291,10 @@ class BookSnapshotsIngestionService(BaseService):
         joined = raw_sample.join(ingested, on="file_line_number", how="inner", suffix="_ing")
         match_expr = pl.all_horizontal(
             [
-                pl.col("bids_px") == pl.col("bids_px_ing"),
-                pl.col("bids_sz") == pl.col("bids_sz_ing"),
-                pl.col("asks_px") == pl.col("asks_px_ing"),
-                pl.col("asks_sz") == pl.col("asks_sz_ing"),
+                pl.col("bids_px_int") == pl.col("bids_px_int_ing"),
+                pl.col("bids_sz_int") == pl.col("bids_sz_int_ing"),
+                pl.col("asks_px_int") == pl.col("asks_px_int_ing"),
+                pl.col("asks_sz_int") == pl.col("asks_sz_int_ing"),
             ]
         ).alias("_row_match")
         matched_by_line = (

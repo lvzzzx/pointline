@@ -47,7 +47,7 @@ This document outlines performance characteristics and optimization strategies f
    - Reference: [Polars list.eval documentation](https://docs.pola.rs/api/python/dev/reference/expressions/list/list.eval.html)
 
 **Remaining Performance Bottleneck:**
-1. **Validation Ordering Checks**: Still uses `map_elements` to check monotonicity across adjacent list elements (e.g., `bids_px[i] >= bids_px[i+1]` for all i).
+1. **Validation Ordering Checks**: Still uses `map_elements` to check monotonicity across adjacent list elements (e.g., `bids_px_int[i] >= bids_px_int[i+1]` for all i).
    - **Why it's slow:** Polars doesn't have a native vectorized operation to compare adjacent elements in a list. The `map_elements()` function processes each row individually in Python, which is inherently slower than vectorized operations.
    - **Why it's necessary:** Ensures data quality by validating proper order book structure (bids descending, asks ascending, no crossed books)
    - **Performance impact:** ~30 seconds for 790k rows (processing ~26k rows/second)

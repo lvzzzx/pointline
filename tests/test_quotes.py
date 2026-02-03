@@ -83,10 +83,10 @@ def test_parse_tardis_quotes_csv_basic():
     assert parsed.height == 3
     assert "ts_local_us" in parsed.columns
     assert "ts_exch_us" in parsed.columns
-    assert "bid_price" in parsed.columns
-    assert "bid_amount" in parsed.columns
-    assert "ask_price" in parsed.columns
-    assert "ask_amount" in parsed.columns
+    assert "bid_px" in parsed.columns
+    assert "bid_sz" in parsed.columns
+    assert "ask_px" in parsed.columns
+    assert "ask_sz" in parsed.columns
 
     # Check timestamps are parsed correctly
     assert parsed["ts_local_us"].dtype == pl.Int64
@@ -94,10 +94,10 @@ def test_parse_tardis_quotes_csv_basic():
     assert parsed["ts_local_us"].min() > 0
 
     # Check prices and amounts are floats
-    assert parsed["bid_price"].dtype == pl.Float64
-    assert parsed["bid_amount"].dtype == pl.Float64
-    assert parsed["ask_price"].dtype == pl.Float64
-    assert parsed["ask_amount"].dtype == pl.Float64
+    assert parsed["bid_px"].dtype == pl.Float64
+    assert parsed["bid_sz"].dtype == pl.Float64
+    assert parsed["ask_px"].dtype == pl.Float64
+    assert parsed["ask_sz"].dtype == pl.Float64
 
 
 def test_parse_tardis_quotes_csv_preserves_file_line_number():
@@ -149,11 +149,11 @@ def test_parse_tardis_quotes_csv_empty_values():
 
     assert parsed.height == 3
     # First row should have both bid and ask
-    assert parsed["bid_price"][0] == 50000.0
-    assert parsed["ask_price"][0] == 50000.5
+    assert parsed["bid_px"][0] == 50000.0
+    assert parsed["ask_px"][0] == 50000.5
     # Other rows should have nulls
-    assert parsed["bid_price"][1] is None or parsed["bid_price"][1] == ""
-    assert parsed["ask_price"][2] is None or parsed["ask_price"][2] == ""
+    assert parsed["bid_px"][1] is None or parsed["bid_px"][1] == ""
+    assert parsed["ask_px"][2] is None or parsed["ask_px"][2] == ""
 
 
 def test_normalize_quotes_schema():
@@ -328,10 +328,10 @@ def test_encode_fixed_point():
     df = pl.DataFrame(
         {
             "symbol_id": dim_symbol["symbol_id"].to_list() * 3,
-            "bid_price": [50000.0, 50001.0, 50002.0],
-            "bid_amount": [0.1, 0.2, 0.15],
-            "ask_price": [50000.5, 50001.5, 50002.5],
-            "ask_amount": [0.15, 0.25, 0.2],
+            "bid_px": [50000.0, 50001.0, 50002.0],
+            "bid_sz": [0.1, 0.2, 0.15],
+            "ask_px": [50000.5, 50001.5, 50002.5],
+            "ask_sz": [0.15, 0.25, 0.2],
         }
     )
 
@@ -357,10 +357,10 @@ def test_encode_fixed_point_with_nulls():
     df = pl.DataFrame(
         {
             "symbol_id": dim_symbol["symbol_id"].to_list() * 2,
-            "bid_price": [50000.0, None],
-            "bid_amount": [0.1, None],
-            "ask_price": [50000.5, 50001.5],
-            "ask_amount": [0.15, 0.25],
+            "bid_px": [50000.0, None],
+            "bid_sz": [0.1, None],
+            "ask_px": [50000.5, 50001.5],
+            "ask_sz": [0.15, 0.25],
         }
     )
 
@@ -396,10 +396,10 @@ def test_encode_fixed_point_rounding_direction():
     df = pl.DataFrame(
         {
             "symbol_id": dim_symbol["symbol_id"].to_list(),
-            "bid_price": [50000.123],
-            "bid_amount": [0.1],
-            "ask_price": [50000.123],
-            "ask_amount": [0.1],
+            "bid_px": [50000.123],
+            "bid_sz": [0.1],
+            "ask_px": [50000.123],
+            "ask_sz": [0.1],
         }
     )
 
@@ -417,10 +417,10 @@ def test_encode_fixed_point_missing_symbol():
     df = pl.DataFrame(
         {
             "symbol_id": [999999],  # Not in dim_symbol
-            "bid_price": [50000.0],
-            "bid_amount": [0.1],
-            "ask_price": [50000.5],
-            "ask_amount": [0.15],
+            "bid_px": [50000.0],
+            "bid_sz": [0.1],
+            "ask_px": [50000.5],
+            "ask_sz": [0.15],
         }
     )
 
@@ -447,12 +447,12 @@ def test_decode_fixed_point():
 
     assert "bid_px_int" not in decoded.columns
     assert "ask_px_int" not in decoded.columns
-    assert decoded["bid_price"].dtype == pl.Float64
-    assert decoded["ask_price"].dtype == pl.Float64
-    assert decoded["bid_price"][0] == 50000.0
-    assert decoded["ask_price"][0] == 50000.5
-    assert decoded["bid_amount"][0] == 0.1
-    assert decoded["ask_amount"][0] == 0.15
+    assert decoded["bid_px"].dtype == pl.Float64
+    assert decoded["ask_px"].dtype == pl.Float64
+    assert decoded["bid_px"][0] == 50000.0
+    assert decoded["ask_px"][0] == 50000.5
+    assert decoded["bid_sz"][0] == 0.1
+    assert decoded["ask_sz"][0] == 0.15
 
 
 def test_resolve_symbol_ids():

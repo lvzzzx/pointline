@@ -95,10 +95,10 @@ def parse_binance_klines_csv(df: pl.DataFrame) -> pl.DataFrame:
         [
             to_us_expr("open_time").alias("ts_bucket_start_us"),
             to_us_expr("close_time").alias("ts_bucket_end_us"),
-            pl.col("open").cast(pl.Float64, strict=False).alias("open"),
-            pl.col("high").cast(pl.Float64, strict=False).alias("high"),
-            pl.col("low").cast(pl.Float64, strict=False).alias("low"),
-            pl.col("close").cast(pl.Float64, strict=False).alias("close"),
+            pl.col("open").cast(pl.Float64, strict=False).alias("open_px"),
+            pl.col("high").cast(pl.Float64, strict=False).alias("high_px"),
+            pl.col("low").cast(pl.Float64, strict=False).alias("low_px"),
+            pl.col("close").cast(pl.Float64, strict=False).alias("close_px"),
             pl.col("volume").cast(pl.Float64, strict=False).alias("volume"),
             pl.col("quote_volume").cast(pl.Float64, strict=False).alias("quote_volume"),
             pl.col("trade_count").cast(pl.Int64, strict=False).alias("trade_count"),
@@ -156,16 +156,19 @@ def encode_fixed_point(df: pl.DataFrame, dim_symbol: pl.DataFrame) -> pl.DataFra
     # Encode all fields
     result = result.with_columns(
         [
-            (pl.col("open") / pl.col("price_increment"))
+            (pl.col("open_px") / pl.col("price_increment"))
             .round()
             .cast(pl.Int64)
             .alias("open_px_int"),
-            (pl.col("high") / pl.col("price_increment"))
+            (pl.col("high_px") / pl.col("price_increment"))
             .round()
             .cast(pl.Int64)
             .alias("high_px_int"),
-            (pl.col("low") / pl.col("price_increment")).round().cast(pl.Int64).alias("low_px_int"),
-            (pl.col("close") / pl.col("price_increment"))
+            (pl.col("low_px") / pl.col("price_increment"))
+            .round()
+            .cast(pl.Int64)
+            .alias("low_px_int"),
+            (pl.col("close_px") / pl.col("price_increment"))
             .round()
             .cast(pl.Int64)
             .alias("close_px_int"),
@@ -202,10 +205,10 @@ def encode_fixed_point(df: pl.DataFrame, dim_symbol: pl.DataFrame) -> pl.DataFra
         "price_increment",
         "amount_increment",
         "quote_increment",
-        "open",
-        "high",
-        "low",
-        "close",
+        "open_px",
+        "high_px",
+        "low_px",
+        "close_px",
         "volume",
         "quote_volume",
         "taker_buy_base_volume",
@@ -279,19 +282,19 @@ def decode_fixed_point(
             pl.when(pl.col("open_px_int").is_not_null())
             .then((pl.col("open_px_int") * pl.col("price_increment")).cast(pl.Float64))
             .otherwise(None)
-            .alias("open"),
+            .alias("open_px"),
             pl.when(pl.col("high_px_int").is_not_null())
             .then((pl.col("high_px_int") * pl.col("price_increment")).cast(pl.Float64))
             .otherwise(None)
-            .alias("high"),
+            .alias("high_px"),
             pl.when(pl.col("low_px_int").is_not_null())
             .then((pl.col("low_px_int") * pl.col("price_increment")).cast(pl.Float64))
             .otherwise(None)
-            .alias("low"),
+            .alias("low_px"),
             pl.when(pl.col("close_px_int").is_not_null())
             .then((pl.col("close_px_int") * pl.col("price_increment")).cast(pl.Float64))
             .otherwise(None)
-            .alias("close"),
+            .alias("close_px"),
             pl.when(pl.col("volume_qty_int").is_not_null())
             .then((pl.col("volume_qty_int") * pl.col("amount_increment")).cast(pl.Float64))
             .otherwise(None)

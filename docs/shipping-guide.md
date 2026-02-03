@@ -533,7 +533,7 @@ trades = query.trades("binance-futures", "BTCUSDT", "2024-05-01", "2024-05-02", 
 # Analyze
 import polars as pl
 trades = trades.sort("ts_local_us")  # PIT-correct ordering
-vwap = (trades["price"] * trades["qty"]).sum() / trades["qty"].sum()
+vwap = (trades["price_px"] * trades["qty"]).sum() / trades["qty"].sum()
 print(f"VWAP: ${vwap:,.2f}")
 \```
 

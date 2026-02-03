@@ -327,7 +327,7 @@ git commit --no-verify
 - Schema definition (canonical Polars schema)
 - Vendor-specific parsing (e.g., `parse_tardis_trades_csv`)
 - Validation and normalization
-- Fixed-point encoding: `price_int = round(price / price_increment)`
+- Fixed-point encoding: `price_px_int = round(price / price_increment)`
 - Example: `tables/trades.py` defines `TRADES_SCHEMA`, side constants, encoding/decoding
 
 **`services/*.py`** - ETL orchestration

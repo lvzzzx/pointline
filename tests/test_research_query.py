@@ -402,11 +402,11 @@ def test_query_with_custom_columns():
             "SOLUSDT",
             datetime(2024, 5, 1, tzinfo=timezone.utc),
             datetime(2024, 5, 2, tzinfo=timezone.utc),
-            columns=["ts_local_us", "price_int", "qty_int"],
+            columns=["ts_local_us", "price_px_int", "qty_int"],
         )
 
         call_kwargs = mock_load.call_args[1]
-        assert call_kwargs["columns"] == ["ts_local_us", "price_int", "qty_int"]
+        assert call_kwargs["columns"] == ["ts_local_us", "price_px_int", "qty_int"]
 
 
 def test_query_with_custom_ts_col():

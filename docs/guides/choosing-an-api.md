@@ -252,7 +252,7 @@ from pointline.research import query
 import polars as pl
 
 trades = query.trades("binance-futures", "BTCUSDT", "2024-05-01", "2024-06-01", decoded=True)
-volatility = trades.select(pl.col("price").std())
+volatility = trades.select(pl.col("price_px").std())
 ```
 
 ---
@@ -307,7 +307,7 @@ from pointline.research import query
 import polars as pl
 
 trades = query.trades("binance-futures", "BTCUSDT", "2024-05-01", "2024-06-01", decoded=True)
-avg_price = trades.select(pl.col("price").mean()).item()
+avg_price = trades.select(pl.col("price_px").mean()).item()
 print(f"Average BTC price in May: ${avg_price:,.2f}")
 ```
 

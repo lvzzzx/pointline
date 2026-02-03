@@ -196,7 +196,7 @@ trades_df = trades.collect()
 
 print(f"Loaded {trades_df.height:,} trades")
 print("\nFirst 5 trades:")
-print(trades_df.select(["ts_local_us", "price", "qty", "side"]).head())
+print(trades_df.select(["ts_local_us", "price_px", "qty", "side"]).head())
 ```
 
 **Expected output:**
@@ -205,7 +205,7 @@ Loaded 1,234,567 trades
 
 First 5 trades:
 ┌──────────────────┬──────────┬──────┬──────┐
-│ ts_local_us      │ price    │ qty  │ side │
+│ ts_local_us      │ price_px │ qty  │ side │
 ├──────────────────┼──────────┼──────┼──────┤
 │ 1714521600000000 │ 67123.4  │ 0.12 │ 0    │
 │ 1714521600123456 │ 67123.5  │ 0.45 │ 1    │
@@ -215,7 +215,7 @@ First 5 trades:
 
 **Understanding the columns:**
 - `ts_local_us`: Arrival time in microseconds (UTC)
-- `price`: Trade price (decoded from fixed-point)
+- `price_px`: Trade price (decoded from fixed-point)
 - `qty`: Trade quantity
 - `side`: 0 = buy, 1 = sell
 
@@ -228,9 +228,9 @@ Let's calculate some basic metrics using Polars.
 ### Calculate VWAP (Volume-Weighted Average Price)
 
 ```python
-# VWAP = sum(price × quantity) / sum(quantity)
+# VWAP = sum(price_px × quantity) / sum(quantity)
 vwap = trades_df.select([
-    (pl.col("price") * pl.col("qty")).sum() / pl.col("qty").sum()
+    (pl.col("price_px") * pl.col("qty")).sum() / pl.col("qty").sum()
 ]).item()
 
 print(f"VWAP: ${vwap:,.2f}")
@@ -240,10 +240,10 @@ print(f"VWAP: ${vwap:,.2f}")
 
 ```python
 stats = trades_df.select([
-    pl.col("price").min().alias("min_price"),
-    pl.col("price").max().alias("max_price"),
-    pl.col("price").mean().alias("avg_price"),
-    pl.col("price").std().alias("price_std"),
+    pl.col("price_px").min().alias("min_price"),
+    pl.col("price_px").max().alias("max_price"),
+    pl.col("price_px").mean().alias("avg_price"),
+    pl.col("price_px").std().alias("price_std"),
     pl.col("qty").sum().alias("total_volume"),
     pl.len().alias("trade_count"),
 ])
@@ -267,7 +267,7 @@ Trade Statistics:
 ```python
 by_side = trades_df.group_by("side").agg([
     pl.col("qty").sum().alias("volume"),
-    pl.col("price").mean().alias("avg_price"),
+    pl.col("price_px").mean().alias("avg_price"),
     pl.len().alias("count"),
 ])
 
@@ -293,10 +293,10 @@ bars = (
     .sort("ts_dt")
     .group_by_dynamic("ts_dt", every="1m")
     .agg([
-        pl.col("price").first().alias("open"),
-        pl.col("price").max().alias("high"),
-        pl.col("price").min().alias("low"),
-        pl.col("price").last().alias("close"),
+        pl.col("price_px").first().alias("open"),
+        pl.col("price_px").max().alias("high"),
+        pl.col("price_px").min().alias("low"),
+        pl.col("price_px").last().alias("close"),
         pl.col("qty").sum().alias("volume"),
         pl.len().alias("trade_count"),
     ])
@@ -339,7 +339,7 @@ quotes = query.quotes(
 ).collect()
 
 print(f"Loaded {quotes.height:,} quotes")
-print(quotes.select(["ts_local_us", "bid_price", "ask_price"]).head())
+print(quotes.select(["ts_local_us", "bid_px", "ask_px"]).head())
 ```
 
 ### Join Trades with Quotes (As-Of Join)
@@ -361,13 +361,13 @@ print(f"Joined {trades_with_quotes.height:,} trades with quotes")
 
 # Calculate effective spread
 trades_with_quotes = trades_with_quotes.with_columns([
-    (pl.col("ask_price") - pl.col("bid_price")).alias("spread"),
-    ((pl.col("bid_price") + pl.col("ask_price")) / 2).alias("mid_price"),
+    (pl.col("ask_px") - pl.col("bid_px")).alias("spread"),
+    ((pl.col("bid_px") + pl.col("ask_px")) / 2).alias("mid_price"),
 ])
 
 print("\nSample with spreads:")
 print(trades_with_quotes.select([
-    "ts_local_us", "price", "bid_price", "ask_price", "spread"
+    "ts_local_us", "price_px", "bid_px", "ask_px", "spread"
 ]).head())
 ```
 

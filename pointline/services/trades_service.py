@@ -281,7 +281,7 @@ class TradesIngestionService(BaseService):
         raw_encoded = encoded_df.select(
             [
                 "file_line_number",
-                "price_int",
+                "price_px_int",
                 "qty_int",
                 "side",
             ]
@@ -301,7 +301,7 @@ class TradesIngestionService(BaseService):
             .select(
                 [
                     "file_line_number",
-                    "price_int",
+                    "price_px_int",
                     "qty_int",
                     "side",
                 ]
@@ -317,7 +317,7 @@ class TradesIngestionService(BaseService):
         joined = raw_sample.join(ingested, on="file_line_number", how="inner", suffix="_ing")
         match_expr = pl.all_horizontal(
             [
-                pl.col("price_int") == pl.col("price_int_ing"),
+                pl.col("price_px_int") == pl.col("price_px_int_ing"),
                 pl.col("qty_int") == pl.col("qty_int_ing"),
                 pl.col("side") == pl.col("side_ing"),
             ]

@@ -412,7 +412,7 @@ def load_trades_decoded(
 
     If lazy=True, returns a LazyFrame with decode expressions applied.
     """
-    required_ints = ["price_int", "qty_int"]
+    required_ints = ["price_px_int", "qty_int"]
     requested_columns = list(columns) if columns is not None else None
     effective_keep_ints = keep_ints or (
         requested_columns is not None and any(col in required_ints for col in requested_columns)
@@ -507,7 +507,7 @@ def load_book_snapshot_25_decoded(
 
     If lazy=True, returns a LazyFrame with decode expressions applied.
     """
-    required_lists = ["bids_px", "bids_sz", "asks_px", "asks_sz"]
+    required_lists = ["bids_px_int", "bids_sz_int", "asks_px_int", "asks_sz_int"]
     requested_columns = list(columns) if columns is not None else None
 
     if lazy:
@@ -698,13 +698,13 @@ def _decode_trades_lazy(
     )
     result = joined.with_columns(
         [
-            (pl.col("price_int") * pl.col("price_increment")).cast(pl.Float64).alias("price"),
+            (pl.col("price_px_int") * pl.col("price_increment")).cast(pl.Float64).alias("price_px"),
             (pl.col("qty_int") * pl.col("amount_increment")).cast(pl.Float64).alias("qty"),
         ]
     )
     drop_cols = ["price_increment", "amount_increment"]
     if not keep_ints:
-        drop_cols += ["price_int", "qty_int"]
+        drop_cols += ["price_px_int", "qty_int"]
     return result.drop(drop_cols)
 
 
@@ -727,19 +727,19 @@ def _decode_quotes_lazy(
             (pl.col("bid_px_int") * pl.col("price_increment"))
             .round(price_decimals)
             .cast(pl.Float64)
-            .alias("bid_price"),
+            .alias("bid_px"),
             (pl.col("bid_sz_int") * pl.col("amount_increment"))
             .round(amount_decimals)
             .cast(pl.Float64)
-            .alias("bid_amount"),
+            .alias("bid_sz"),
             (pl.col("ask_px_int") * pl.col("price_increment"))
             .round(price_decimals)
             .cast(pl.Float64)
-            .alias("ask_price"),
+            .alias("ask_px"),
             (pl.col("ask_sz_int") * pl.col("amount_increment"))
             .round(amount_decimals)
             .cast(pl.Float64)
-            .alias("ask_amount"),
+            .alias("ask_sz"),
         ]
     )
     drop_cols = ["price_increment", "amount_increment"]
@@ -759,10 +759,10 @@ def _decode_book_snapshot_25_lazy(
     )
     result = joined.with_columns(
         [
-            (pl.col("bids_px") * pl.col("price_increment")).alias("bids_px"),
-            (pl.col("bids_sz") * pl.col("amount_increment")).alias("bids_sz"),
-            (pl.col("asks_px") * pl.col("price_increment")).alias("asks_px"),
-            (pl.col("asks_sz") * pl.col("amount_increment")).alias("asks_sz"),
+            (pl.col("bids_px_int") * pl.col("price_increment")).alias("bids_px"),
+            (pl.col("bids_sz_int") * pl.col("amount_increment")).alias("bids_sz"),
+            (pl.col("asks_px_int") * pl.col("price_increment")).alias("asks_px"),
+            (pl.col("asks_sz_int") * pl.col("amount_increment")).alias("asks_sz"),
         ]
     )
     return result.drop(["price_increment", "amount_increment"])
@@ -784,10 +784,10 @@ def _decode_klines_lazy(
     )
     result = result.with_columns(
         [
-            (pl.col("open_px_int") * pl.col("price_increment")).cast(pl.Float64).alias("open"),
-            (pl.col("high_px_int") * pl.col("price_increment")).cast(pl.Float64).alias("high"),
-            (pl.col("low_px_int") * pl.col("price_increment")).cast(pl.Float64).alias("low"),
-            (pl.col("close_px_int") * pl.col("price_increment")).cast(pl.Float64).alias("close"),
+            (pl.col("open_px_int") * pl.col("price_increment")).cast(pl.Float64).alias("open_px"),
+            (pl.col("high_px_int") * pl.col("price_increment")).cast(pl.Float64).alias("high_px"),
+            (pl.col("low_px_int") * pl.col("price_increment")).cast(pl.Float64).alias("low_px"),
+            (pl.col("close_px_int") * pl.col("price_increment")).cast(pl.Float64).alias("close_px"),
             (pl.col("volume_qty_int") * pl.col("amount_increment"))
             .cast(pl.Float64)
             .alias("volume"),
