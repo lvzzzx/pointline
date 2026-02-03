@@ -4,6 +4,7 @@ This module provides the vendor plugin implementation for CoinGecko (market data
 """
 
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
 import polars as pl
@@ -39,3 +40,19 @@ class CoingeckoVendor:
     def run_prehook(self, bronze_root) -> None:
         """Run prehook for this vendor (not supported)."""
         raise NotImplementedError(f"{self.name} does not support prehooks")
+
+    def can_handle(self, path: Path) -> bool:
+        """Detect CoinGecko data by directory name.
+
+        Args:
+            path: Bronze root path to check
+
+        Returns:
+            True if path contains "coingecko" in directory name
+
+        Note:
+            CoinGecko is primarily an API-based vendor, so bronze files are rare.
+            This detection is mainly for completeness.
+        """
+        # Check if directory name is "coingecko"
+        return "coingecko" in path.name.lower()

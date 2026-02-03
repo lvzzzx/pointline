@@ -31,7 +31,7 @@ class LocalBronzeSource:
 
         Args:
             root_path: Root path to scan for bronze files
-            vendor: Vendor name (inferred from root_path if None)
+            vendor: Vendor name (auto-detected if None)
             strict_validation: If True, raise error on missing required partitions.
                               If False, use default values (for backward compatibility).
             compute_checksums: If True, compute SHA256 for each file (slower but needed
@@ -41,12 +41,23 @@ class LocalBronzeSource:
         self.root_path = root_path
         self.strict_validation = strict_validation
         self.compute_checksums = compute_checksums
+
         if vendor:
+            # Explicit vendor parameter takes precedence
             self.vendor = vendor
-        elif root_path.name != "bronze":
-            self.vendor = root_path.name
         else:
-            self.vendor = None
+            # Auto-detect vendor via plugin system
+            self.vendor = self._detect_vendor()
+
+    def _detect_vendor(self) -> str | None:
+        """Auto-detect vendor using plugin system.
+
+        Returns:
+            Vendor name if detected, None otherwise
+        """
+        from pointline.io.vendors.registry import detect_vendor
+
+        return detect_vendor(self.root_path)
 
     def list_files(self, glob_pattern: str) -> Iterator[BronzeFileMetadata]:
         """

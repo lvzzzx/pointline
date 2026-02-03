@@ -6,14 +6,23 @@ backward compatibility with the old parser registry API.
 
 from __future__ import annotations
 
-from typing import Callable
+import logging
+from collections.abc import Callable
+from pathlib import Path
 
 import polars as pl
 
 from pointline.io.vendors.base import VendorPlugin
 
+logger = logging.getLogger(__name__)
+
 # Global vendor registry
 _VENDOR_REGISTRY: dict[str, VendorPlugin] = {}
+
+# Vendor detection priority order
+# Earlier vendors in list get first chance to claim a directory
+# This matters when multiple vendors could potentially match the same structure
+_VENDOR_PRIORITY = ["quant360", "tardis", "binance_vision", "coingecko", "tushare"]
 
 
 def register_vendor(plugin: VendorPlugin) -> None:
@@ -44,9 +53,7 @@ def get_vendor(name: str) -> VendorPlugin:
     """
     if name not in _VENDOR_REGISTRY:
         available = list_vendors()
-        raise KeyError(
-            f"Vendor '{name}' not registered. Available vendors: {available}"
-        )
+        raise KeyError(f"Vendor '{name}' not registered. Available vendors: {available}")
     return _VENDOR_REGISTRY[name]
 
 
@@ -69,6 +76,63 @@ def is_vendor_registered(name: str) -> bool:
         True if vendor is registered
     """
     return name in _VENDOR_REGISTRY
+
+
+def detect_vendor(path: Path) -> str | None:
+    """Auto-detect vendor by asking registered plugins to claim the directory.
+
+    Vendors are asked in priority order (see _VENDOR_PRIORITY). The first vendor
+    whose can_handle() returns True wins.
+
+    Args:
+        path: Bronze root path to check
+
+    Returns:
+        Vendor name if detected, None if no vendor claims the path
+
+    Examples:
+        >>> detect_vendor(Path("bronze/tardis"))
+        'tardis'
+
+        >>> detect_vendor(Path("/data/archives"))  # Contains *.7z files
+        'quant360'
+
+        >>> detect_vendor(Path("bronze/unknown"))
+        None
+    """
+    # Try vendors in priority order
+    for vendor_name in _VENDOR_PRIORITY:
+        if vendor_name not in _VENDOR_REGISTRY:
+            continue
+
+        plugin = _VENDOR_REGISTRY[vendor_name]
+        try:
+            if plugin.can_handle(path):
+                logger.info(f"Auto-detected vendor '{vendor_name}' for path: {path}")
+                return vendor_name
+        except Exception as e:
+            logger.warning(
+                f"Vendor '{vendor_name}' raised error during detection: {e}",
+                exc_info=True,
+            )
+
+    # Try remaining vendors not in priority list
+    for vendor_name, plugin in _VENDOR_REGISTRY.items():
+        if vendor_name in _VENDOR_PRIORITY:
+            continue  # Already tried above
+
+        try:
+            if plugin.can_handle(path):
+                logger.info(f"Auto-detected vendor '{vendor_name}' for path: {path}")
+                return vendor_name
+        except Exception as e:
+            logger.warning(
+                f"Vendor '{vendor_name}' raised error during detection: {e}",
+                exc_info=True,
+            )
+
+    logger.debug(f"No vendor plugin claimed path: {path}")
+    return None
 
 
 # ============================================================================
@@ -123,7 +187,7 @@ def list_supported_combinations() -> list[tuple[str, str]]:
         vendor = get_vendor(vendor_name)
         if vendor.supports_parsers:
             parsers = vendor.get_parsers()
-            for data_type in parsers.keys():
+            for data_type in parsers:
                 combinations.append((vendor_name, data_type))
     return sorted(combinations)
 

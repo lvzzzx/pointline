@@ -5,8 +5,9 @@ This plugin provides parsers and client for Tardis.dev historical crypto market 
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 import polars as pl
 
@@ -61,3 +62,19 @@ class TardisVendor:
     def run_prehook(self, bronze_root: Path) -> None:
         """Tardis doesn't need prehooks."""
         raise NotImplementedError("Tardis vendor doesn't support prehooks")
+
+    def can_handle(self, path: Path) -> bool:
+        """Detect Tardis data by directory name.
+
+        Args:
+            path: Bronze root path to check
+
+        Returns:
+            True if path contains "tardis" in directory name or path components
+        """
+        # Check if directory name is "tardis"
+        if path.name == "tardis":
+            return True
+
+        # Check if "tardis" appears anywhere in the path
+        return "tardis" in path.parts

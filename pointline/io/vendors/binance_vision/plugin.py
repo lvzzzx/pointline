@@ -4,6 +4,7 @@ This module provides the vendor plugin implementation for Binance Vision (histor
 """
 
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
 import polars as pl
@@ -43,3 +44,19 @@ class BinanceVisionVendor:
     def run_prehook(self, bronze_root) -> None:
         """Run prehook for this vendor (not supported)."""
         raise NotImplementedError(f"{self.name} does not support prehooks")
+
+    def can_handle(self, path: Path) -> bool:
+        """Detect Binance Vision data by directory name.
+
+        Args:
+            path: Bronze root path to check
+
+        Returns:
+            True if path contains "binance" in directory name
+        """
+        # Check if directory name contains "binance"
+        if "binance" in path.name.lower():
+            return True
+
+        # Check if "binance_vision" or "binance" appears in path
+        return bool("binance_vision" in path.parts or "binance" in path.parts)

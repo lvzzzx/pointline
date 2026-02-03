@@ -7,7 +7,8 @@ This package provides complete Tardis.dev integration including:
 """
 
 # Import plugin class
-from pointline.io.vendors.tardis.plugin import TardisVendor
+# Register plugin
+from pointline.io.vendors.registry import register_vendor
 
 # Import client and utilities
 from pointline.io.vendors.tardis.client import TardisClient
@@ -21,9 +22,7 @@ from pointline.io.vendors.tardis.parsers import (
     parse_tardis_quotes_csv,
     parse_tardis_trades_csv,
 )
-
-# Register plugin
-from pointline.io.vendors.registry import register_vendor
+from pointline.io.vendors.tardis.plugin import TardisVendor
 
 register_vendor(TardisVendor())
 

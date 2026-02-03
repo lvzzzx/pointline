@@ -7,8 +7,9 @@ plugin with its own parsers, client code, and utilities.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable, Protocol
+from typing import Any, Protocol
 
 import polars as pl
 
@@ -85,5 +86,35 @@ class VendorPlugin(Protocol):
 
         Raises:
             NotImplementedError: If vendor doesn't support prehooks
+        """
+        ...
+
+    def can_handle(self, path: Path) -> bool:
+        """Detect if this vendor can handle the given directory structure.
+
+        This method allows vendors to "claim" a directory by examining:
+        - Directory names
+        - File patterns (e.g., *.7z archives)
+        - Directory structure
+        - File contents (if needed)
+
+        Args:
+            path: Bronze root path to check
+
+        Returns:
+            True if this vendor recognizes the structure, False otherwise
+
+        Examples:
+            # Simple directory name detection
+            def can_handle(self, path: Path) -> bool:
+                return path.name == "tardis"
+
+            # Archive pattern detection
+            def can_handle(self, path: Path) -> bool:
+                return bool(list(path.glob("*_new_STK_*.7z")))
+
+            # Structure-based detection
+            def can_handle(self, path: Path) -> bool:
+                return (path / "data" / "spot").exists()
         """
         ...

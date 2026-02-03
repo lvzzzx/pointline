@@ -52,3 +52,27 @@ class Quant360Vendor:
         from pointline.io.vendors.quant360.reorganize import reorganize_quant360_archives
 
         reorganize_quant360_archives(bronze_root)
+
+    def can_handle(self, path: Path) -> bool:
+        """Detect Quant360 data by archive patterns or directory structure.
+
+        Args:
+            path: Bronze root path to check
+
+        Returns:
+            True if path contains Quant360 archives or reorganized data
+        """
+        # Check for directory name
+        if path.name in ["quant360", "data.quant360.com"]:
+            return True
+
+        # Check for Quant360 .7z archives (order_new_STK_SZ_*.7z, tick_new_STK_SH_*.7z)
+        if list(path.glob("*_new_STK_*.7z")):
+            return True
+
+        # Check for reorganized Quant360 structure (l3_orders or l3_ticks data types)
+        # These are unique to Quant360's SZSE/SSE Level 3 data
+        if list(path.glob("exchange=*/type=l3_orders/date=*/symbol=*/*.csv.gz")):
+            return True
+
+        return bool(list(path.glob("exchange=*/type=l3_ticks/date=*/symbol=*/*.csv.gz")))
