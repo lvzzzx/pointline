@@ -412,7 +412,7 @@ def load_trades_decoded(
 
     If lazy=True, returns a LazyFrame with decode expressions applied.
     """
-    required_ints = ["price_px_int", "qty_int"]
+    required_ints = ["px_int", "qty_int"]
     requested_columns = list(columns) if columns is not None else None
     effective_keep_ints = keep_ints or (
         requested_columns is not None and any(col in required_ints for col in requested_columns)
@@ -698,13 +698,13 @@ def _decode_trades_lazy(
     )
     result = joined.with_columns(
         [
-            (pl.col("price_px_int") * pl.col("price_increment")).cast(pl.Float64).alias("price_px"),
+            (pl.col("px_int") * pl.col("price_increment")).cast(pl.Float64).alias("price_px"),
             (pl.col("qty_int") * pl.col("amount_increment")).cast(pl.Float64).alias("qty"),
         ]
     )
     drop_cols = ["price_increment", "amount_increment"]
     if not keep_ints:
-        drop_cols += ["price_px_int", "qty_int"]
+        drop_cols += ["px_int", "qty_int"]
     return result.drop(drop_cols)
 
 

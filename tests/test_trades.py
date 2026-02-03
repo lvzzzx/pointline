@@ -181,7 +181,7 @@ def test_normalize_trades_schema():
             "ts_exch_us": [1714550400100000],
             "trade_id": ["t1"],
             "side": [0],
-            "price_px_int": [5000000],
+            "px_int": [5000000],
             "qty_int": [10000],
             "flags": [0],
             "file_id": [1],
@@ -214,7 +214,7 @@ def test_validate_trades_basic():
     """Test basic validation of trades data."""
     df = pl.DataFrame(
         {
-            "price_px_int": [5000000, 5000100, -100],  # Last one invalid
+            "px_int": [5000000, 5000100, -100],  # Last one invalid
             "qty_int": [10000, 20000, 5000],
             "ts_local_us": [1714550400000000, 1714550401000000, 1714550402000000],
             "ts_exch_us": [1714550400000000, 1714550401000000, 1714550402000000],
@@ -230,14 +230,14 @@ def test_validate_trades_basic():
 
     # Should filter out the negative price
     assert validated.height == 2
-    assert validated["price_px_int"].min() > 0
+    assert validated["px_int"].min() > 0
 
 
 def test_validate_trades_invalid_side():
     """Test validation filters invalid side codes."""
     df = pl.DataFrame(
         {
-            "price_px_int": [5000000] * 3,
+            "px_int": [5000000] * 3,
             "qty_int": [10000] * 3,
             "ts_local_us": [1714550400000000] * 3,
             "ts_exch_us": [1714550400000000] * 3,
@@ -269,11 +269,11 @@ def test_encode_fixed_point():
 
     encoded = encode_fixed_point(df, dim_symbol)
 
-    assert "price_px_int" in encoded.columns
+    assert "px_int" in encoded.columns
     assert "qty_int" in encoded.columns
 
     # With price_increment=0.01, price=50000.0 should become 5000000
-    assert encoded["price_px_int"][0] == 5000000
+    assert encoded["px_int"][0] == 5000000
     # With amount_increment=0.00001, qty=0.1 should become 10000
     assert encoded["qty_int"][0] == 10000
 
@@ -304,14 +304,14 @@ def test_decode_fixed_point():
     df = pl.DataFrame(
         {
             "symbol_id": [symbol_id],
-            "price_px_int": [5000000],
+            "px_int": [5000000],
             "qty_int": [10000],
         }
     )
 
     decoded = decode_fixed_point(df, dim_symbol)
 
-    assert "price_px_int" not in decoded.columns
+    assert "px_int" not in decoded.columns
     assert "qty_int" not in decoded.columns
     assert decoded["price_px"].dtype == pl.Float64
     assert decoded["qty"].dtype == pl.Float64
@@ -348,7 +348,7 @@ def test_trades_service_validate():
 
     df = pl.DataFrame(
         {
-            "price_px_int": [5000000, -100],
+            "px_int": [5000000, -100],
             "qty_int": [10000, 5000],
             "ts_local_us": [1714550400000000, 1714550401000000],
             "ts_exch_us": [1714550400000000, 1714550401000000],
@@ -383,7 +383,7 @@ def test_trades_service_compute_state():
             "ts_exch_us": [1714550400100000],
             "trade_id": ["t1"],
             "side": [0],
-            "price_px_int": [5000000],
+            "px_int": [5000000],
             "qty_int": [10000],
             "flags": [0],
             "file_id": [1],
@@ -416,7 +416,7 @@ def test_trades_service_write():
             "ts_exch_us": [1714550400100000],
             "trade_id": ["t1"],
             "side": [0],
-            "price_px_int": [5000000],
+            "px_int": [5000000],
             "qty_int": [10000],
             "flags": [0],
             "file_id": [1],

@@ -19,7 +19,7 @@ TABLE_DQ_CONFIGS: dict[str, TableDQConfig] = {
         table_name="trades",
         key_columns=("file_id", "file_line_number"),
         ts_column="ts_local_us",
-        numeric_columns=("price_px_int", "qty_int"),
+        numeric_columns=("px_int", "qty_int"),
         manifest_data_type="trades",
     ),
     "quotes": TableDQConfig(
@@ -71,14 +71,14 @@ TABLE_DQ_CONFIGS: dict[str, TableDQConfig] = {
         table_name="szse_l3_orders",
         key_columns=("file_id", "file_line_number"),
         ts_column="ts_local_us",
-        numeric_columns=("price_px_int", "order_qty_int"),
+        numeric_columns=("px_int", "order_qty_int"),
         manifest_data_type="l3_orders",
     ),
     "szse_l3_ticks": TableDQConfig(
         table_name="szse_l3_ticks",
         key_columns=("file_id", "file_line_number"),
         ts_column="ts_local_us",
-        numeric_columns=("price_px_int", "qty_int"),
+        numeric_columns=("px_int", "qty_int"),
         manifest_data_type="l3_ticks",
     ),
     "dim_symbol": TableDQConfig(

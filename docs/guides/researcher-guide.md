@@ -99,7 +99,7 @@ Example:
 ### 3.2 Table catalog (Silver)
 | Table | Path | Partitions | Key columns |
 |---|---|---|---|
-| trades | `${LAKE_ROOT}/silver/trades` | `exchange`, `date` | `ts_local_us`, `symbol_id`, `price_px_int`, `qty_int` |
+| trades | `${LAKE_ROOT}/silver/trades` | `exchange`, `date` | `ts_local_us`, `symbol_id`, `px_int`, `qty_int` |
 | quotes | `${LAKE_ROOT}/silver/quotes` | `exchange`, `date` | `ts_local_us`, `symbol_id`, `bid_px_int`, `ask_px_int` |
 | book_snapshot_25 | `${LAKE_ROOT}/silver/book_snapshot_25` | `exchange`, `date` | `ts_local_us`, `symbol_id`, `bids_px_int`, `asks_px_int` |
 | dim_symbol | `${LAKE_ROOT}/silver/dim_symbol` | none | `symbol_id`, `exchange_id`, `exchange_symbol`, validity range |
@@ -234,9 +234,9 @@ Symbols change (e.g., renames, tick size updates). We use a stable `symbol_id`.
 
 ### 5.3 Fixed-Point Math
 To save space and ensure precision, prices and quantities are stored as integers (`i64`).
-- **Storage:** `price_px_int`, `qty_int`
+- **Storage:** `px_int`, `qty_int`
 - **Metadata:** `price_increment`, `amount_increment` (from `dim_symbol`)
-- **Conversion:** `price_px = price_px_int * price_increment`
+- **Conversion:** `price_px = px_int * price_increment`
 
 **Query API:** Use `decoded=True` to get float columns automatically
 
@@ -443,7 +443,7 @@ Once you have the `symbol_id` (e.g., `101`), query the tables directly.
 SELECT
     ts_local_us,
     side,
-    price_px_int,
+    px_int,
     qty_int
 FROM delta_scan('${LAKE_ROOT}/silver/trades')
 WHERE date >= '2024-05-01' AND date <= '2024-05-02'
@@ -489,7 +489,7 @@ LIMIT 100;
 ### 7.6 Common Mistakes
 - Using `ts_exch_us` for backtesting instead of `ts_local_us`.
 - Forgetting to filter by time (or date) and scanning full tables.
-- Treating `price_px_int` / `qty_int` as real values without decoding.
+- Treating `px_int` / `qty_int` as real values without decoding.
 
 ---
 

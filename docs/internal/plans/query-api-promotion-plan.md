@@ -489,7 +489,7 @@ def load_trades(
         lazy: Return LazyFrame (True) or DataFrame (False)
 
     Returns:
-        Trades with fixed-point integer columns (price_px_int, qty_int).
+        Trades with fixed-point integer columns (px_int, qty_int).
         Use `decode_fixed_point()` or `load_trades_decoded()` for floats.
 
     Examples:
@@ -558,7 +558,7 @@ def trades(
     Returns:
         Trades data (LazyFrame or DataFrame depending on lazy parameter).
         With decoded=True: price_px/qty as floats.
-        With decoded=False: price_px_int/qty_int as integers.
+        With decoded=False: px_int/qty_int as integers.
 
     Examples:
         >>> from pointline.research import query

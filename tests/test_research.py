@@ -40,7 +40,7 @@ def test_scan_table_filters(mock_get_path, mock_scan_delta, mock_resolve_symbols
         symbol_id=[100, 200],
         start_ts_us=1_700_000_000_000_000,
         end_ts_us=1_700_000_100_000_000,
-        columns=["ts_local_us", "price_px_int"],
+        columns=["ts_local_us", "px_int"],
     )
 
     # Verify pl.scan_delta was called with the path from get_table_path
@@ -50,7 +50,7 @@ def test_scan_table_filters(mock_get_path, mock_scan_delta, mock_resolve_symbols
     # Verify filters were applied
     # Note: The order of filters depends on the implementation of _apply_filters
     assert mock_lf.filter.call_count == 4  # exchange, symbol_id, date range, time range
-    mock_lf.select.assert_called_once_with(["ts_local_us", "price_px_int"])
+    mock_lf.select.assert_called_once_with(["ts_local_us", "px_int"])
 
 
 @patch("pointline.research.core.resolve_symbols")
@@ -74,7 +74,7 @@ def test_scan_table_time_range_prunes_date(mock_get_path, mock_scan_delta, mock_
         symbol_id=[100],
         start_ts_us=1_700_000_000_000_000,
         end_ts_us=1_700_000_100_000_000,
-        columns=["ts_local_us", "price_px_int"],
+        columns=["ts_local_us", "px_int"],
     )
 
     mock_scan_delta.assert_called_once_with("/fake/path")
@@ -82,7 +82,7 @@ def test_scan_table_time_range_prunes_date(mock_get_path, mock_scan_delta, mock_
     filter_args = [str(call.args[0]) for call in mock_lf.filter.call_args_list]
     assert any("date" in expr for expr in filter_args)
     assert any("ts_local_us" in expr for expr in filter_args)
-    mock_lf.select.assert_called_once_with(["ts_local_us", "price_px_int"])
+    mock_lf.select.assert_called_once_with(["ts_local_us", "px_int"])
 
 
 def test_list_tables():
@@ -119,13 +119,11 @@ def test_load_trades_lazy(mock_scan_table):
 @patch("pointline.research.core.decode_trades")
 @patch("pointline.research.core.read_table")
 def test_load_trades_decoded_keeps_ints_for_requested_columns(mock_read_table, mock_decode_trades):
-    mock_read_table.return_value = pl.DataFrame(
-        {"symbol_id": [1], "price_px_int": [10], "qty_int": [5]}
-    )
+    mock_read_table.return_value = pl.DataFrame({"symbol_id": [1], "px_int": [10], "qty_int": [5]})
     mock_decode_trades.return_value = pl.DataFrame(
         {
             "symbol_id": [1],
-            "price_px_int": [10],
+            "px_int": [10],
             "qty_int": [5],
             "price_px": [1.0],
             "qty": [0.05],
@@ -140,17 +138,17 @@ def test_load_trades_decoded_keeps_ints_for_requested_columns(mock_read_table, m
         symbol_id=1,
         start_ts_us=1,
         end_ts_us=2,
-        columns=["symbol_id", "price_px_int"],
+        columns=["symbol_id", "px_int"],
         dim_symbol=dim_symbol,
     )
 
     assert result.shape[0] == 1
-    assert "price_px_int" in result.columns
+    assert "px_int" in result.columns
     assert mock_decode_trades.call_args.kwargs["keep_ints"] is True
 
 
 def test_load_trades_decoded_lazy_returns_lazyframe():
-    df = pl.DataFrame({"symbol_id": [1], "price_px_int": [10], "qty_int": [5]})
+    df = pl.DataFrame({"symbol_id": [1], "px_int": [10], "qty_int": [5]})
     dim_symbol = pl.DataFrame(
         {"symbol_id": [1], "price_increment": [0.1], "amount_increment": [0.01]}
     )

@@ -40,7 +40,7 @@ def get_schema(table_name: TableName) -> dict[str, pl.DataType]:
     Examples:
         >>> from pointline.introspection import get_schema
         >>> schema = get_schema("trades")
-        >>> schema["price_px_int"]
+        >>> schema["px_int"]
         Int64
         >>> list(schema.keys())
         ['date', 'exchange', 'exchange_id', 'symbol_id', 'ts_local_us', ...]
@@ -106,7 +106,7 @@ def get_schema_info(table_name: TableName) -> dict[str, dict[str, Any]]:
     Examples:
         >>> from pointline.introspection import get_schema_info
         >>> info = get_schema_info("trades")
-        >>> info["price_px_int"]
+        >>> info["px_int"]
         {'type': 'Int64', 'dtype': Int64}
     """
     schema = get_schema(table_name)

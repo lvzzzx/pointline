@@ -31,7 +31,7 @@ from pointline.validation_utils import with_expected_exchange_id
 # - Delta Lake (via Parquet) does not support unsigned integer types UInt16 and UInt32
 # - Use Int16 for exchange_id
 # - Use Int32 for file_id, file_line_number, channel_no
-# - Use Int64 for symbol_id, appl_seq_num, bid_appl_seq_num, offer_appl_seq_num, price_px_int, qty_int
+# - Use Int64 for symbol_id, appl_seq_num, bid_appl_seq_num, offer_appl_seq_num, px_int, qty_int
 # - UInt8 is supported (used for exec_type)
 SZSE_L3_TICKS_SCHEMA: dict[str, pl.DataType] = {
     "date": pl.Date,
@@ -43,7 +43,7 @@ SZSE_L3_TICKS_SCHEMA: dict[str, pl.DataType] = {
     "bid_appl_seq_num": pl.Int64,  # Buy order ID (0 if N/A)
     "offer_appl_seq_num": pl.Int64,  # Sell order ID (0 if N/A)
     "exec_type": pl.UInt8,  # 0=fill, 1=cancel
-    "price_px_int": pl.Int64,  # Fixed-point encoded (price / price_increment), 0 for cancellations
+    "px_int": pl.Int64,  # Fixed-point encoded (price / price_increment), 0 for cancellations
     "qty_int": pl.Int64,  # Lot-based encoding (qty / 100 shares)
     "channel_no": pl.Int32,  # Exchange channel ID
     "file_id": pl.Int32,
@@ -68,7 +68,7 @@ def parse_quant360_ticks_csv(df: pl.DataFrame) -> pl.DataFrame:
     - bid_appl_seq_num (i64) - Buy order ID (0 if N/A)
     - offer_appl_seq_num (i64) - Sell order ID (0 if N/A)
     - exec_type (u8) - 0=fill, 1=cancel (remapped from Quant360's 'F'/4)
-    - price_px (f64) - Price in CNY (will be encoded to price_px_int later)
+    - price_px (f64) - Price in CNY (will be encoded to px_int later)
     - qty (i64) - Quantity in shares (will be encoded to qty_int later)
     - channel_no (i32) - Exchange channel ID
     """
@@ -144,13 +144,13 @@ def validate_szse_l3_ticks(df: pl.DataFrame) -> pl.DataFrame:
     """Apply quality checks to SZSE L3 tick data.
 
     Validates:
-    - Non-negative price_px_int and qty_int
+    - Non-negative px_int and qty_int
     - Valid timestamp ranges
     - Valid exec_type codes (0-1)
     - Non-null required fields
     - exchange_id matches normalized exchange
-    - Cancellations: price_px_int = 0, exactly one of {bid_appl_seq_num, offer_appl_seq_num} > 0
-    - Executions: price_px_int > 0, both bid_appl_seq_num and offer_appl_seq_num > 0
+    - Cancellations: px_int = 0, exactly one of {bid_appl_seq_num, offer_appl_seq_num} > 0
+    - Executions: px_int > 0, both bid_appl_seq_num and offer_appl_seq_num > 0
 
     Returns filtered DataFrame (invalid rows removed) or raises on critical errors.
     """
@@ -158,7 +158,7 @@ def validate_szse_l3_ticks(df: pl.DataFrame) -> pl.DataFrame:
         return df
 
     required = [
-        "price_px_int",
+        "px_int",
         "qty_int",
         "ts_local_us",
         "appl_seq_num",
@@ -184,12 +184,12 @@ def validate_szse_l3_ticks(df: pl.DataFrame) -> pl.DataFrame:
     # Semantic validation:
     # - Fills: price_px > 0, both bid and offer set
     # - Cancels: price_px = 0, exactly one of bid/offer set
-    valid_fill = is_fill & (pl.col("price_px_int") > 0) & has_bid & has_offer
-    valid_cancel = is_cancel & (pl.col("price_px_int") == 0) & (has_bid ^ has_offer)  # XOR
+    valid_fill = is_fill & (pl.col("px_int") > 0) & has_bid & has_offer
+    valid_cancel = is_cancel & (pl.col("px_int") == 0) & (has_bid ^ has_offer)  # XOR
     valid_tick_semantics = valid_fill | valid_cancel
 
     combined_filter = (
-        (pl.col("price_px_int") >= 0)
+        (pl.col("px_int") >= 0)
         & (pl.col("qty_int") > 0)
         & timestamp_validation_expr("ts_local_us")
         & (pl.col("appl_seq_num") > 0)
@@ -200,7 +200,7 @@ def validate_szse_l3_ticks(df: pl.DataFrame) -> pl.DataFrame:
     )
 
     rules = [
-        ("price_px_int", (pl.col("price_px_int").is_null()) | (pl.col("price_px_int") < 0)),
+        ("px_int", (pl.col("px_int").is_null()) | (pl.col("px_int") < 0)),
         ("qty_int", (pl.col("qty_int").is_null()) | (pl.col("qty_int") <= 0)),
         (
             "ts_local_us",
@@ -244,7 +244,7 @@ def encode_fixed_point(
     - dim_symbol must have 'symbol_id', 'price_increment', 'amount_increment' columns
 
     Computes:
-    - price_px_int = round(price_px / price_increment)
+    - px_int = round(price_px / price_increment)
     - qty_int = round(qty / amount_increment)
 
     Lot-based quantity encoding (amount_increment = 100 shares):
@@ -252,7 +252,7 @@ def encode_fixed_point(
     - 500 shares → qty_int = 5
     - 1000 shares → qty_int = 10
 
-    Returns DataFrame with price_px_int, qty_int columns added.
+    Returns DataFrame with px_int, qty_int columns added.
     """
     if "symbol_id" not in df.columns:
         raise ValueError("encode_fixed_point: df must have 'symbol_id' column")
@@ -282,10 +282,7 @@ def encode_fixed_point(
 
     result = joined.with_columns(
         [
-            (pl.col("price_px") / pl.col("price_increment"))
-            .round()
-            .cast(pl.Int64)
-            .alias("price_px_int"),
+            (pl.col("price_px") / pl.col("price_increment")).round().cast(pl.Int64).alias("px_int"),
             (pl.col("qty") / pl.col("amount_increment")).round().cast(pl.Int64).alias("qty_int"),
         ]
     )
@@ -304,7 +301,7 @@ def decode_fixed_point(
 
     Requires:
     - df must have 'symbol_id' column
-    - df must have 'price_px_int', 'qty_int' columns
+    - df must have 'px_int', 'qty_int' columns
     - dim_symbol must have 'symbol_id', 'price_increment', 'amount_increment' columns
 
     Returns DataFrame with price_px (Float64) and qty (Int64) columns added.
@@ -313,7 +310,7 @@ def decode_fixed_point(
     if "symbol_id" not in df.columns:
         raise ValueError("decode_fixed_point: df must have 'symbol_id' column")
 
-    required_cols = ["price_px_int", "qty_int"]
+    required_cols = ["px_int", "qty_int"]
     missing = [c for c in required_cols if c not in df.columns]
     if missing:
         raise ValueError(f"decode_fixed_point: df missing columns: {missing}")
@@ -338,7 +335,7 @@ def decode_fixed_point(
 
     result = joined.with_columns(
         [
-            (pl.col("price_px_int") * pl.col("price_increment")).cast(pl.Float64).alias("price_px"),
+            (pl.col("px_int") * pl.col("price_increment")).cast(pl.Float64).alias("price_px"),
             (pl.col("qty_int") * pl.col("amount_increment")).cast(pl.Int64).alias("qty"),
         ]
     )

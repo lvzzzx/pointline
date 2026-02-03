@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 """One-time migration for 2026-02-02 schema renames.
 
-Renames fixed-point columns to the *_px_int/*_sz_int naming convention.
+Renames fixed-point columns to the latest naming convention:
+- single-price tables use `px_int`
+- multi-price tables use `*_px_int`/`*_sz_int`
+
 This rewrites Delta tables in-place (overwrite).
 
 Usage:
@@ -19,18 +22,24 @@ import polars as pl
 from pointline.config import get_table_path
 
 MIGRATIONS: dict[str, dict[str, str]] = {
-    "trades": {"price_int": "price_px_int"},
+    "trades": {"price_int": "px_int", "price_px_int": "px_int"},
+    "liquidations": {"price_int": "px_int", "price_px_int": "px_int"},
     "book_snapshot_25": {
         "bids_px": "bids_px_int",
         "bids_sz": "bids_sz_int",
         "asks_px": "asks_px_int",
         "asks_sz": "asks_sz_int",
     },
+    "szse_l3_orders": {"price_px_int": "px_int"},
+    "szse_l3_ticks": {"price_px_int": "px_int"},
 }
 
 TABLE_PARTITIONS: dict[str, list[str]] = {
     "trades": ["exchange", "date"],
     "book_snapshot_25": ["exchange", "date"],
+    "liquidations": ["exchange", "date"],
+    "szse_l3_orders": ["exchange", "date"],
+    "szse_l3_ticks": ["exchange", "date"],
 }
 
 
@@ -41,6 +50,8 @@ def _table_exists(table_path: Path) -> bool:
 def _validate_columns(cols: list[str], mapping: dict[str, str]) -> tuple[bool, str]:
     old_cols = [col for col in mapping if col in cols]
     new_cols = [mapping[col] for col in mapping if mapping[col] in cols]
+    if len(old_cols) > 1 and len({mapping[col] for col in old_cols}) == 1:
+        return False, "multiple_source_columns"
     if not old_cols and new_cols:
         return False, "already_migrated"
     if not old_cols:
@@ -91,7 +102,11 @@ def _partition_filters(partition: dict[str, str]) -> list[tuple[str, str, object
 
 
 def migrate_table(table_name: str, mapping: dict[str, str], *, dry_run: bool) -> None:
-    table_path = get_table_path(table_name)
+    try:
+        table_path = get_table_path(table_name)
+    except KeyError as exc:
+        print(f"[skip] {table_name}: not registered in TABLE_PATHS ({exc})")
+        return
     if not _table_exists(table_path):
         print(f"[skip] {table_name}: no Delta log at {table_path}")
         return
@@ -137,7 +152,8 @@ def migrate_table(table_name: str, mapping: dict[str, str], *, dry_run: bool) ->
         if not ok:
             print(f"[skip] {table_name} {partition}: {reason}")
             continue
-        new_df = df.rename(mapping)
+        active_mapping = {col: new for col, new in mapping.items() if col in df.columns}
+        new_df = df.rename(active_mapping)
         write_deltalake(
             str(table_path),
             new_df.to_arrow(),

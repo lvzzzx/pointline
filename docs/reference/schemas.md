@@ -34,7 +34,7 @@ Slowly Changing Dimension (SCD) Type 2 table tracking instrument metadata over t
 | **asset_type** | u8 | 0=spot, 1=perp, 2=future, 3=option |
 | **tick_size** | f64 | Minimum price step allowed by the exchange |
 | **lot_size** | f64 | Minimum tradable quantity allowed by the exchange |
-| **price_increment** | f64 | The value of "1" in `price_px_int` (Storage Encoding) |
+| **price_increment** | f64 | The value of "1" in `px_int` / `*_px_int` (storage encoding) |
 | **amount_increment** | f64 | The value of "1" in `qty_int` (Storage Encoding) |
 | **contract_size** | f64 | Value of 1 contract in base/quote units |
 | **valid_from_ts** | i64 | Inclusive µs timestamp |
@@ -284,7 +284,7 @@ Trade executions from Tardis `trades` dataset.
 | ts_exch_us | i64 | |
 | trade_id | string | optional depending on venue |
 | side | u8 | 0=buy,1=sell,2=unknown |
-| price_px_int | i64 | fixed-point |
+| px_int | i64 | fixed-point |
 | qty_int | i64 | fixed-point |
 | flags | i32 | optional packed conditions |
 | file_id | i32 | lineage tracking |
@@ -376,7 +376,7 @@ Liquidation events from Tardis `liquidations` dataset.
 | ts_exch_us | i64 | |
 | liq_id | string | |
 | side | u8 | |
-| price_px_int | i64 | fixed-point |
+| px_int | i64 | fixed-point |
 | qty_int | i64 | fixed-point |
 | file_id | i32 | lineage tracking |
 | file_line_number | i32 | lineage tracking |
@@ -448,7 +448,7 @@ Vendor-provided 1h OHLCV bars from Binance public data (Spot + USD-M futures).
 - **Quote volume fields** (`quote_volume_int`, `taker_buy_quote_qty_int`): Encoded with `quote_increment = price_increment × amount_increment`
   - Rationale: Each trade contributes `price × quantity` to quote volume. Since price is in multiples of `price_increment` and quantity is in multiples of `amount_increment`, the minimum quote volume increment is their product.
   - Example (BTCUSDT): `price_increment=0.01`, `amount_increment=0.00001` → `quote_increment=0.0000001`
-- **Decoding:** Join with `dim_symbol` to retrieve increments, then multiply: `price_px = price_px_int × price_increment`
+- **Decoding:** Join with `dim_symbol` to retrieve increments, then multiply: `price_px = <price>_px_int × price_increment`
 
 **Notes:**
 - Interval-specific tables are used (e.g., `silver.kline_1h`); additional intervals
@@ -529,13 +529,13 @@ This makes "entire surface at time t" queries cheap and deterministic.
 
 We use consistent suffixes to make storage vs decoded columns obvious:
 
-- `*_px_int`: fixed-point **price** stored as `i64`
+- `*_px_int`: fixed-point **price** stored as `i64` (use `px_int` for single-price tables)
 - `*_px`: decoded **price** as `f64` (not stored; produced by decode helpers)
 - `*_qty_int` / `*_qty`: fixed-point **quantity** (where applicable)
 - `*_sz_int` / `*_sz`: fixed-point **size** for quotes/book snapshots
 
 Examples:
-- Trades: `price_px_int` + `qty_int` → decoded to `price_px` + `qty`
+- Trades: `px_int` + `qty_int` → decoded to `price_px` + `qty`
 - Quotes: `bid_px_int`/`ask_px_int` + `bid_sz_int`/`ask_sz_int` → decoded to `bid_px`/`ask_px` + `bid_sz`/`ask_sz`
 - Book snapshots: `bids_px_int`/`asks_px_int` + `bids_sz_int`/`asks_sz_int` → decoded to `bids_px`/`asks_px` + `bids_sz`/`asks_sz`
 
@@ -544,11 +544,11 @@ Examples:
 Prices and quantities are stored as integers (`i64`) for compression and exact precision.
 
 **Encoding Formula:**
-- `price_px_int = round(price_px / price_increment)`
+- `px_int = round(price_px / price_increment)`
 - `qty_int = round(qty / amount_increment)`
 
 **Decoding Formula:**
-- `price_px = price_px_int * price_increment`
+- `price_px = px_int * price_increment`
 - `qty = qty_int * amount_increment`
 
 **Increment Values:**
@@ -557,7 +557,7 @@ Prices and quantities are stored as integers (`i64`) for compression and exact p
 - In **Fixed Multiplier encoding** (recommended for cross-symbol math consistency), `price_increment` is a constant like `1e-8`, regardless of the current `tick_size`
 
 **Storage:**
-- `price_px_int`, `qty_int` (required, stored as `i64`)
+- `px_int`, `qty_int` (required, stored as `i64`)
 - Decoded floats use `price_px`, `qty` (derived, not stored)
 
 **Alternative (Robustness):** Standardize on a fixed multiplier (e.g., `1e8` or `1e9`) if metadata is flaky. "Tick-based" is better for compression; "Fixed Multiplier" is safer for operations.
@@ -641,11 +641,11 @@ Delta Lake (via Parquet) does not support unsigned integer types `UInt16` and `U
 | `dim_symbol` | Silver (Reference) | none | `symbol_id`, `exchange_id`, `exchange_symbol`, validity range |
 | `ingest_manifest` | Silver (Reference) | none | `vendor`, `exchange`, `data_type`, `date`, `status` |
 | `book_snapshot_25` | Silver | `exchange`, `date` | `ts_local_us`, `symbol_id`, `bids_px_int`, `asks_px_int` |
-| `trades` | Silver | `exchange`, `date` | `ts_local_us`, `symbol_id`, `price_px_int`, `qty_int` |
+| `trades` | Silver | `exchange`, `date` | `ts_local_us`, `symbol_id`, `px_int`, `qty_int` |
 | `quotes` | Silver | `exchange`, `date` | `ts_local_us`, `symbol_id`, `bid_px_int`, `ask_px_int` |
 | `book_ticker` | Silver | `exchange`, `date` | `ts_local_us`, `symbol_id`, `bid_px_int`, `ask_px_int` |
 | `derivative_ticker` | Silver | `exchange`, `date` | `ts_local_us`, `symbol_id`, `mark_px`, `funding_rate` |
-| `liquidations` | Silver | `exchange`, `date` | `ts_local_us`, `symbol_id`, `price_px_int`, `qty_int` |
+| `liquidations` | Silver | `exchange`, `date` | `ts_local_us`, `symbol_id`, `px_int`, `qty_int` |
 | `options_chain` | Silver | `exchange`, `date` | `ts_local_us`, `underlying_symbol_id`, `option_symbol_id` |
 | `kline_1h` | Silver | `exchange`, `date` | `ts_bucket_start_us`, `symbol_id`, OHLCV |
 | `tob_quotes` | Gold | `exchange`, `date` | Fast path for top-of-book |
