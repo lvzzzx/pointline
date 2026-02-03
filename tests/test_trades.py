@@ -7,11 +7,11 @@ from unittest.mock import Mock
 import polars as pl
 import pytest
 
+from pointline.cli.ingestion_factory import create_ingestion_service
 from pointline.dim_symbol import SCHEMA as DIM_SYMBOL_SCHEMA
 from pointline.dim_symbol import scd2_bootstrap
 from pointline.io.base_repository import BaseDeltaRepository
 from pointline.io.protocols import BronzeFileMetadata
-from pointline.services.trades_service import TradesIngestionService
 from pointline.tables.trades import (
     SIDE_BUY,
     SIDE_SELL,
@@ -344,7 +344,9 @@ def test_trades_service_validate():
     dim_repo = Mock(spec=BaseDeltaRepository)
     manifest_repo = Mock()
 
-    service = TradesIngestionService(repo, dim_repo, manifest_repo)
+    service = create_ingestion_service("trades", manifest_repo)
+    service.repo = repo
+    service.dim_symbol_repo = dim_repo
 
     df = pl.DataFrame(
         {
@@ -371,7 +373,9 @@ def test_trades_service_compute_state():
     dim_repo = Mock(spec=BaseDeltaRepository)
     manifest_repo = Mock()
 
-    service = TradesIngestionService(repo, dim_repo, manifest_repo)
+    service = create_ingestion_service("trades", manifest_repo)
+    service.repo = repo
+    service.dim_symbol_repo = dim_repo
 
     df = pl.DataFrame(
         {
@@ -404,7 +408,9 @@ def test_trades_service_write():
     dim_repo = Mock(spec=BaseDeltaRepository)
     manifest_repo = Mock()
 
-    service = TradesIngestionService(repo, dim_repo, manifest_repo)
+    service = create_ingestion_service("trades", manifest_repo)
+    service.repo = repo
+    service.dim_symbol_repo = dim_repo
 
     df = pl.DataFrame(
         {
@@ -436,7 +442,9 @@ def test_trades_service_ingest_file_quarantine():
     dim_repo.read_all.return_value = pl.DataFrame(schema=DIM_SYMBOL_SCHEMA)  # Empty
     manifest_repo = Mock()
 
-    service = TradesIngestionService(repo, dim_repo, manifest_repo)
+    service = create_ingestion_service("trades", manifest_repo)
+    service.repo = repo
+    service.dim_symbol_repo = dim_repo
 
     meta = BronzeFileMetadata(
         vendor="tardis",
@@ -496,7 +504,9 @@ def test_trades_service_ingest_file_success():
 
     manifest_repo = Mock()
 
-    service = TradesIngestionService(repo, dim_repo, manifest_repo)
+    service = create_ingestion_service("trades", manifest_repo)
+    service.repo = repo
+    service.dim_symbol_repo = dim_repo
 
     meta = BronzeFileMetadata(
         vendor="tardis",

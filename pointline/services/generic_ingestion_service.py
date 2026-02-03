@@ -1,10 +1,16 @@
-"""Derivative ticker ingestion service orchestrating the Bronze → Silver pipeline."""
+"""Generic ingestion service supporting multiple vendors per table.
+
+This module provides a vendor-agnostic ingestion service that uses runtime parser
+dispatch to handle different vendor formats without hardcoded coupling.
+"""
 
 from __future__ import annotations
 
 import gzip
 import logging
-from datetime import datetime, timezone
+from collections.abc import Callable
+from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import polars as pl
@@ -16,6 +22,7 @@ from pointline.config import (
     normalize_exchange,
 )
 from pointline.dim_symbol import check_coverage
+from pointline.io.parsers import get_parser
 from pointline.io.protocols import (
     BronzeFileMetadata,
     IngestionManifestRepository,
@@ -23,43 +30,95 @@ from pointline.io.protocols import (
     TableRepository,
 )
 from pointline.services.base_service import BaseService
-from pointline.tables.derivative_ticker import (
-    normalize_derivative_ticker_schema,
-    parse_tardis_derivative_ticker_csv,
-    resolve_symbol_ids,
-    validate_derivative_ticker,
-)
 
 logger = logging.getLogger(__name__)
 
 
-class DerivativeTickerIngestionService(BaseService):
-    """Orchestrates derivative_ticker ingestion from Bronze CSV files to Silver Delta tables."""
+@dataclass
+class TableStrategy:
+    """Table-specific functions (encoding, validation, normalization, resolution).
+
+    This encapsulates all the table-specific domain logic while keeping the
+    ingestion pipeline vendor-agnostic.
+
+    Attributes:
+        encode_fixed_point: Convert float prices/quantities to fixed-point integers
+        validate: Apply quality checks and filter invalid rows
+        normalize_schema: Cast to canonical schema and select only schema columns
+        resolve_symbol_ids: Map exchange symbols to symbol_ids with SCD Type 2 handling
+    """
+
+    encode_fixed_point: Callable[[pl.DataFrame, pl.DataFrame], pl.DataFrame]
+    validate: Callable[[pl.DataFrame], pl.DataFrame]
+    normalize_schema: Callable[[pl.DataFrame], pl.DataFrame]
+    resolve_symbol_ids: Callable[
+        [pl.DataFrame, pl.DataFrame, int, str, str], pl.DataFrame
+    ]  # (df, dim_symbol, exchange_id, symbol, ts_col) -> df
+
+
+class GenericIngestionService(BaseService):
+    """Vendor-agnostic ingestion service with runtime parser selection.
+
+    This service implements the standard 12-step ingestion pipeline:
+    1. Read bronze CSV file (handling gzip)
+    2. Parse CSV (vendor-specific, runtime dispatch)
+    3. Load dim_symbol for quarantine check
+    4. Quarantine check (symbol coverage validation)
+    5. Resolve symbol IDs (SCD Type 2 as-of join)
+    6. Encode fixed-point (price/qty → integers)
+    7. Add lineage columns (file_id, file_line_number)
+    8. Add metadata (exchange, exchange_id, date)
+    9. Normalize schema (enforce canonical schema)
+    10. Validate (quality checks)
+    11. Append to Delta table
+    12. Return IngestionResult
+
+    Only step 2 (parsing) varies by vendor. All other steps are standardized.
+    """
 
     def __init__(
         self,
+        table_strategy: TableStrategy,
         repo: TableRepository,
         dim_symbol_repo: TableRepository,
         manifest_repo: IngestionManifestRepository,
     ):
+        """Initialize the generic ingestion service.
+
+        Args:
+            table_strategy: Table-specific functions for this data type
+            repo: Repository for the target Silver table
+            dim_symbol_repo: Repository for dim_symbol table
+            manifest_repo: Repository for ingestion manifest
+        """
+        self.strategy = table_strategy
         self.repo = repo
         self.dim_symbol_repo = dim_symbol_repo
         self.manifest_repo = manifest_repo
 
     def validate(self, data: pl.DataFrame) -> pl.DataFrame:
-        return validate_derivative_ticker(data)
+        """Validate data using table-specific validation logic."""
+        return self.strategy.validate(data)
 
     def compute_state(self, valid_data: pl.DataFrame) -> pl.DataFrame:
-        return normalize_derivative_ticker_schema(valid_data)
+        """Transform validated data to final Silver format.
+
+        Note: This is called by the BaseService.update() template method.
+        For ingestion from files, use ingest_file() instead.
+        """
+        return self.strategy.normalize_schema(valid_data)
 
     def write(self, result: pl.DataFrame) -> None:
+        """Append data to the Delta table."""
         if result.is_empty():
             logger.warning("write: skipping empty DataFrame")
             return
+
+        # Use append for immutable event data
         if hasattr(self.repo, "append"):
             self.repo.append(result)
         else:
-            raise NotImplementedError("Repository must support append() for derivative_ticker")
+            raise NotImplementedError("Repository must support append() for event data")
 
     def ingest_file(
         self,
@@ -68,8 +127,20 @@ class DerivativeTickerIngestionService(BaseService):
         *,
         bronze_root: Path | None = None,
     ) -> IngestionResult:
+        """Ingest a single CSV file from Bronze to Silver with runtime vendor dispatch.
+
+        Args:
+            meta: Metadata about the bronze file (includes vendor field)
+            file_id: File ID from manifest repository
+            bronze_root: Root path for bronze files (default: auto-detected from vendor)
+
+        Returns:
+            IngestionResult with row count and timestamp ranges
+        """
+        # Detect vendor from metadata and get bronze root
+        vendor = meta.vendor
         if bronze_root is None:
-            bronze_root = get_bronze_root("tardis")
+            bronze_root = get_bronze_root(vendor)
         bronze_path = bronze_root / meta.bronze_file_path
 
         if not bronze_path.exists():
@@ -83,7 +154,9 @@ class DerivativeTickerIngestionService(BaseService):
             )
 
         try:
+            # 1. Read bronze CSV file
             raw_df = self._read_bronze_csv(bronze_path)
+
             if raw_df.is_empty():
                 logger.warning(f"Empty CSV file: {bronze_path}")
                 return IngestionResult(
@@ -93,11 +166,28 @@ class DerivativeTickerIngestionService(BaseService):
                     error_message=None,
                 )
 
-            parsed_df = parse_tardis_derivative_ticker_csv(raw_df)
-            dim_symbol = self.dim_symbol_repo.read_all()
-            exchange_id = self._resolve_exchange_id(meta.exchange)
+            # 2. Parse CSV (VENDOR-SPECIFIC - Runtime dispatch)
+            try:
+                parser = get_parser(vendor, meta.data_type)
+            except KeyError:
+                error_msg = f"No parser registered for vendor={vendor}, data_type={meta.data_type}"
+                logger.error(error_msg)
+                return IngestionResult(
+                    row_count=0,
+                    ts_local_min_us=0,
+                    ts_local_max_us=0,
+                    error_message=error_msg,
+                )
 
+            parsed_df = parser(raw_df)
+
+            # 3. Load dim_symbol for quarantine check
+            dim_symbol = self.dim_symbol_repo.read_all()
+
+            # 4. Quarantine check
+            exchange_id = self._resolve_exchange_id(meta.exchange)
             is_valid, error_msg = self._check_quarantine(meta, dim_symbol, exchange_id, parsed_df)
+
             if not is_valid:
                 logger.warning(f"File quarantined: {meta.bronze_file_path} - {error_msg}")
                 return IngestionResult(
@@ -107,7 +197,8 @@ class DerivativeTickerIngestionService(BaseService):
                     error_message=error_msg,
                 )
 
-            resolved_df = resolve_symbol_ids(
+            # 5. Resolve symbol IDs (SCD Type 2 as-of join)
+            resolved_df = self.strategy.resolve_symbol_ids(
                 parsed_df,
                 dim_symbol,
                 exchange_id,
@@ -115,10 +206,20 @@ class DerivativeTickerIngestionService(BaseService):
                 ts_col="ts_local_us",
             )
 
-            lineage_df = self._add_lineage(resolved_df, file_id)
+            # 6. Encode fixed-point (price/qty → integers)
+            encoded_df = self.strategy.encode_fixed_point(resolved_df, dim_symbol)
+
+            # 7. Add lineage columns (file_id, file_line_number)
+            lineage_df = self._add_lineage(encoded_df, file_id)
+
+            # 8. Add metadata (exchange, exchange_id, date)
             normalized_exchange = normalize_exchange(meta.exchange)
             final_df = self._add_metadata(lineage_df, normalized_exchange, exchange_id)
-            normalized_df = normalize_derivative_ticker_schema(final_df)
+
+            # 9. Normalize schema (enforce canonical schema)
+            normalized_df = self.strategy.normalize_schema(final_df)
+
+            # 10. Validate (quality checks)
             validated_df = self.validate(normalized_df)
 
             if validated_df.is_empty():
@@ -130,17 +231,17 @@ class DerivativeTickerIngestionService(BaseService):
                     error_message="All rows filtered by validation",
                 )
 
+            # 11. Append to Delta table
             self.write(validated_df)
 
+            # 12. Compute result stats
             ts_min = validated_df["ts_local_us"].min()
             ts_max = validated_df["ts_local_us"].max()
 
             logger.info(
-                "Ingested %s derivative_ticker rows from %s (ts range: %s - %s)",
-                validated_df.height,
-                meta.bronze_file_path,
-                ts_min,
-                ts_max,
+                f"Ingested {validated_df.height} rows from {meta.bronze_file_path} "
+                f"[vendor={vendor}, data_type={meta.data_type}] "
+                f"(ts range: {ts_min} - {ts_max})"
             )
 
             return IngestionResult(
@@ -149,8 +250,9 @@ class DerivativeTickerIngestionService(BaseService):
                 ts_local_max_us=ts_max,
                 error_message=None,
             )
-        except Exception as exc:
-            error_msg = f"Error ingesting {bronze_path}: {exc}"
+
+        except Exception as e:
+            error_msg = f"Error ingesting {bronze_path}: {str(e)}"
             logger.error(error_msg, exc_info=True)
             return IngestionResult(
                 row_count=0,
@@ -160,24 +262,12 @@ class DerivativeTickerIngestionService(BaseService):
             )
 
     def _read_bronze_csv(self, path: Path) -> pl.DataFrame:
+        """Read a bronze CSV file, handling gzip compression."""
         read_options = {
             "infer_schema_length": 10000,
             "try_parse_dates": False,
-            "schema_overrides": {
-                "exchange": pl.Utf8,
-                "symbol": pl.Utf8,
-                "timestamp": pl.Int64,
-                "local_timestamp": pl.Int64,
-                "funding_timestamp": pl.Int64,
-                "funding_rate": pl.Float64,
-                "predicted_funding_rate": pl.Float64,
-                "open_interest": pl.Float64,
-                "last_price": pl.Float64,
-                "index_price": pl.Float64,
-                "mark_price": pl.Float64,
-                "mark_px": pl.Float64,
-            },
         }
+        # Preserve raw CSV line numbers (1-based data rows + header).
         import inspect
 
         if "row_index_name" in inspect.signature(pl.read_csv).parameters:
@@ -188,13 +278,15 @@ class DerivativeTickerIngestionService(BaseService):
             read_options["row_count_offset"] = 2
         try:
             if path.suffix == ".gz" or str(path).endswith(".csv.gz"):
-                with gzip.open(path, "rt", encoding="utf-8") as handle:
-                    return pl.read_csv(handle, **read_options)
-            return pl.read_csv(path, **read_options)
+                with gzip.open(path, "rt", encoding="utf-8") as f:
+                    return pl.read_csv(f, **read_options)
+            else:
+                return pl.read_csv(path, **read_options)
         except pl.exceptions.NoDataError:
             return pl.DataFrame()
 
     def _resolve_exchange_id(self, exchange: str) -> int:
+        """Resolve exchange name to exchange_id using canonical mapping."""
         return get_exchange_id(exchange)
 
     def _check_quarantine(
@@ -204,11 +296,17 @@ class DerivativeTickerIngestionService(BaseService):
         exchange_id: int,
         parsed_df: pl.DataFrame,
     ) -> tuple[bool, str]:
-        from datetime import timedelta
+        """Check if file should be quarantined based on symbol metadata coverage.
 
+        Returns:
+            (is_valid, error_message) tuple
+        """
+        # Calculate UTC day boundaries
         file_date = meta.date
         day_start = datetime.combine(file_date, datetime.min.time(), tzinfo=timezone.utc)
         day_start_us = int(day_start.timestamp() * 1_000_000)
+
+        # Next day start (exclusive end)
         day_end = datetime.combine(
             file_date + timedelta(days=1),
             datetime.min.time(),
@@ -216,6 +314,7 @@ class DerivativeTickerIngestionService(BaseService):
         )
         day_end_us = int(day_end.timestamp() * 1_000_000)
 
+        # Check coverage
         has_coverage = check_coverage(
             dim_symbol,
             exchange_id,
@@ -223,17 +322,23 @@ class DerivativeTickerIngestionService(BaseService):
             day_start_us,
             day_end_us,
         )
+
         if not has_coverage:
+            # Determine specific reason
             rows = dim_symbol.filter(
                 (pl.col("exchange_id") == exchange_id) & (pl.col("exchange_symbol") == meta.symbol)
             )
+
             if rows.is_empty():
                 return False, "missing_symbol"
-            return False, "invalid_validity_window"
+            else:
+                return False, "invalid_validity_window"
 
         return True, ""
 
     def _add_lineage(self, df: pl.DataFrame, file_id: int) -> pl.DataFrame:
+        """Add lineage tracking columns: file_id and file_line_number."""
+        # Use Int32 to match Delta Lake storage (Delta Lake doesn't support UInt32)
         if "file_line_number" in df.columns:
             file_line_number = pl.col("file_line_number").cast(pl.Int32)
         else:
@@ -246,8 +351,7 @@ class DerivativeTickerIngestionService(BaseService):
         )
 
     def _add_metadata(self, df: pl.DataFrame, exchange: str, exchange_id: int) -> pl.DataFrame:
-        """
-        Add exchange, exchange_id, and exchange-local date columns.
+        """Add exchange, exchange_id, and exchange-local date columns.
 
         The date column is derived from ts_local_us in the exchange's local timezone,
         ensuring that one trading day maps to exactly one partition.
@@ -255,6 +359,8 @@ class DerivativeTickerIngestionService(BaseService):
         Raises:
             ValueError: If exchange is not registered in EXCHANGE_TIMEZONES
         """
+        # Add exchange (string) for partitioning and human readability
+        # Add exchange_id (Int16) for joins and compression
         result = df.with_columns(
             [
                 pl.lit(exchange, dtype=pl.Utf8).alias("exchange"),
@@ -262,6 +368,7 @@ class DerivativeTickerIngestionService(BaseService):
             ]
         )
 
+        # Derive date from ts_local_us in exchange-local timezone
         # Validate exchange has explicit timezone mapping (fail fast to prevent mispartitioning)
         try:
             exchange_tz = get_exchange_timezone(exchange, strict=True)
@@ -269,13 +376,14 @@ class DerivativeTickerIngestionService(BaseService):
             raise ValueError(
                 f"Cannot add metadata for exchange '{exchange}' (exchange_id={exchange_id}): {e}"
             ) from e
-
-        return result.with_columns(
+        result = result.with_columns(
             [
                 pl.from_epoch(pl.col("ts_local_us"), time_unit="us")
                 .dt.replace_time_zone("UTC")
                 .dt.convert_time_zone(exchange_tz)
                 .dt.date()
-                .alias("date")
+                .alias("date"),
             ]
         )
+
+        return result

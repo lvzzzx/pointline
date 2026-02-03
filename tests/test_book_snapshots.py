@@ -5,12 +5,12 @@ from datetime import date
 import polars as pl
 import pytest
 
+from pointline.cli.ingestion_factory import create_ingestion_service
 from pointline.dim_symbol import SCHEMA as DIM_SYMBOL_SCHEMA
 from pointline.dim_symbol import scd2_bootstrap
 from pointline.io.base_repository import BaseDeltaRepository
 from pointline.io.delta_manifest_repo import DeltaManifestRepository
 from pointline.io.protocols import BronzeFileMetadata
-from pointline.services.book_snapshots_service import BookSnapshotsIngestionService
 from pointline.tables.book_snapshots import (
     BOOK_SNAPSHOTS_SCHEMA,
     decode_fixed_point,
@@ -494,7 +494,9 @@ def test_book_snapshots_ingestion_service_ingest_file(
     dim_symbol_repo.write_full(dim_symbol)
 
     # Create service
-    service = BookSnapshotsIngestionService(repo, dim_symbol_repo, sample_manifest_repo)
+    service = create_ingestion_service("book_snapshot_25", sample_manifest_repo)
+    service.repo = repo
+    service.dim_symbol_repo = dim_symbol_repo
 
     # Create a sample CSV file
     bronze_path = tmp_path / "bronze" / "tardis" / "book_snapshots.csv"
@@ -545,7 +547,9 @@ def test_book_snapshots_ingestion_service_empty_file(
     dim_symbol = _sample_dim_symbol()
     dim_symbol_repo.write_full(dim_symbol)
 
-    service = BookSnapshotsIngestionService(repo, dim_symbol_repo, sample_manifest_repo)
+    service = create_ingestion_service("book_snapshot_25", sample_manifest_repo)
+    service.repo = repo
+    service.dim_symbol_repo = dim_symbol_repo
 
     # Create empty CSV
     bronze_path = tmp_path / "bronze" / "tardis" / "empty.csv"
@@ -580,7 +584,9 @@ def test_book_snapshots_ingestion_service_quarantine(
     # Empty dim_symbol (no coverage)
     dim_symbol_repo.write_full(pl.DataFrame(schema=DIM_SYMBOL_SCHEMA))
 
-    service = BookSnapshotsIngestionService(repo, dim_symbol_repo, sample_manifest_repo)
+    service = create_ingestion_service("book_snapshot_25", sample_manifest_repo)
+    service.repo = repo
+    service.dim_symbol_repo = dim_symbol_repo
 
     bronze_path = tmp_path / "bronze" / "tardis" / "book_snapshots.csv"
     bronze_path.parent.mkdir(parents=True, exist_ok=True)
