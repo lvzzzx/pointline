@@ -5,8 +5,8 @@ from __future__ import annotations
 import argparse
 
 from pointline.io.base_repository import BaseDeltaRepository
-from pointline.io.vendor.tushare import TushareClient
-from pointline.io.vendor.tushare.stock_basic_cn import build_stock_basic_cn_snapshot
+from pointline.io.vendors.tushare import TushareClient
+from pointline.io.vendors.tushare.stock_basic_cn import build_stock_basic_cn_snapshot
 
 
 def cmd_stock_basic_cn_sync(args: argparse.Namespace) -> int:

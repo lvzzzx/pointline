@@ -9,6 +9,7 @@ from collections.abc import Sequence
 
 import polars as pl
 
+# Import parser from new location for backward compatibility
 from pointline.tables._base import (
     exchange_id_validation_expr,
     generic_resolve_symbol_ids,
@@ -17,11 +18,6 @@ from pointline.tables._base import (
     timestamp_validation_expr,
 )
 from pointline.validation_utils import with_expected_exchange_id
-
-# Import parser from new location for backward compatibility
-from pointline.io.parsers.tardis.derivative_ticker import (  # noqa: E402
-    parse_tardis_derivative_ticker_csv,
-)
 
 # Schema definition matching docs/schemas.md Section 2.6
 #

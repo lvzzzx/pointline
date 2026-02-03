@@ -34,7 +34,7 @@ def parse_quant360_orders_csv(df: pl.DataFrame) -> pl.DataFrame:
         - appl_seq_num (i64) - Order ID
         - side (u8) - 0=buy, 1=sell (remapped from Quant360's 1/2)
         - ord_type (u8) - 0=market, 1=limit (remapped from Quant360's 1/2)
-        - price (f64) - Price in CNY (will be encoded to price_int later)
+        - price_px (f64) - Price in CNY (will be encoded to px_int later)
         - order_qty (i64) - Quantity in shares (will be encoded to order_qty_int later)
         - channel_no (i32) - Exchange channel ID
 
@@ -79,7 +79,7 @@ def parse_quant360_orders_csv(df: pl.DataFrame) -> pl.DataFrame:
             .otherwise(pl.lit(255, dtype=pl.UInt8))  # Invalid marker
             .alias("ord_type"),
             # Price and quantity (keep as float/int for now, will encode later)
-            pl.col("Price").cast(pl.Float64).alias("price"),
+            pl.col("Price").cast(pl.Float64).alias("price_px"),
             pl.col("OrderQty").cast(pl.Int64).alias("order_qty"),
             # Channel number
             pl.col("ChannelNo").cast(pl.Int32).alias("channel_no"),
@@ -91,7 +91,7 @@ def parse_quant360_orders_csv(df: pl.DataFrame) -> pl.DataFrame:
         "appl_seq_num",
         "side",
         "ord_type",
-        "price",
+        "price_px",
         "order_qty",
         "channel_no",
     ]

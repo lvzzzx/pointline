@@ -7,6 +7,7 @@ from collections.abc import Sequence
 
 import polars as pl
 
+# Import parser from new location for backward compatibility
 from pointline.tables._base import (
     exchange_id_validation_expr,
     generic_resolve_symbol_ids,
@@ -15,9 +16,6 @@ from pointline.tables._base import (
     timestamp_validation_expr,
 )
 from pointline.validation_utils import with_expected_exchange_id
-
-# Import parser from new location for backward compatibility
-from pointline.io.parsers.binance.klines import parse_binance_klines_csv  # noqa: E402
 
 logger = logging.getLogger(__name__)
 

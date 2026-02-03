@@ -29,11 +29,9 @@ from collections.abc import Sequence
 
 import polars as pl
 
+# Import parser from new location for backward compatibility
 from pointline.tables._base import generic_resolve_symbol_ids
 from pointline.validation_utils import DataQualityWarning, with_expected_exchange_id
-
-# Import parser from new location for backward compatibility
-from pointline.io.parsers.tardis.book_snapshots import parse_tardis_book_snapshots_csv  # noqa: E402
 
 # Schema definition matching design.md Section 5.2
 #
@@ -59,8 +57,6 @@ BOOK_SNAPSHOTS_SCHEMA: dict[str, pl.DataType] = {
     "file_id": pl.Int32,  # Delta Lake stores as Int32 (not UInt32)
     "file_line_number": pl.Int32,  # Delta Lake stores as Int32 (not UInt32)
 }
-
-
 
 
 def normalize_book_snapshots_schema(df: pl.DataFrame) -> pl.DataFrame:

@@ -5,7 +5,7 @@ from datetime import date, datetime, timezone
 import polars as pl
 
 from pointline.config import get_exchange_id
-from pointline.io.vendor.tushare.stock_basic_cn import (
+from pointline.io.vendors.tushare.stock_basic_cn import (
     build_dim_symbol_updates_from_stock_basic_cn,
     build_stock_basic_cn_snapshot,
 )

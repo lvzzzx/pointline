@@ -31,7 +31,7 @@ def parse_quant360_ticks_csv(df: pl.DataFrame) -> pl.DataFrame:
         - bid_appl_seq_num (i64) - Buy order ID (0 if N/A)
         - offer_appl_seq_num (i64) - Sell order ID (0 if N/A)
         - exec_type (u8) - 0=fill, 1=cancel (remapped from Quant360's 'F'/4)
-        - price (f64) - Price in CNY (will be encoded to price_int later)
+        - price_px (f64) - Price in CNY (will be encoded to px_int later)
         - qty (i64) - Quantity in shares (will be encoded to qty_int later)
         - channel_no (i32) - Exchange channel ID
 
@@ -73,7 +73,7 @@ def parse_quant360_ticks_csv(df: pl.DataFrame) -> pl.DataFrame:
             .otherwise(pl.lit(255, dtype=pl.UInt8))  # Invalid marker
             .alias("exec_type"),
             # Price and quantity (keep as float/int for now, will encode later)
-            pl.col("Price").cast(pl.Float64).alias("price"),
+            pl.col("Price").cast(pl.Float64).alias("price_px"),
             pl.col("Qty").cast(pl.Int64).alias("qty"),
             # Channel number
             pl.col("ChannelNo").cast(pl.Int32).alias("channel_no"),
@@ -86,7 +86,7 @@ def parse_quant360_ticks_csv(df: pl.DataFrame) -> pl.DataFrame:
         "bid_appl_seq_num",
         "offer_appl_seq_num",
         "exec_type",
-        "price",
+        "price_px",
         "qty",
         "channel_no",
     ]

@@ -7,12 +7,12 @@ with table-specific strategies.
 from __future__ import annotations
 
 # Ensure parsers are registered by importing the package
-import pointline.io.parsers  # noqa: F401
+import pointline.io.vendors  # noqa: F401  # Trigger vendor auto-registration
 from pointline import tables
 from pointline.config import get_table_path
 from pointline.io.base_repository import BaseDeltaRepository
 from pointline.services.generic_ingestion_service import GenericIngestionService, TableStrategy
-from pointline.symbol_normalization import normalize_binance_symbol, no_normalization
+from pointline.symbol_normalization import no_normalization, normalize_binance_symbol
 
 TABLE_PARTITIONS = {
     "trades": ["exchange", "date"],

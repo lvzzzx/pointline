@@ -35,7 +35,7 @@ def parse_tardis_trades_csv(df: pl.DataFrame) -> pl.DataFrame:
         - ts_exch_us (i64): exchange timestamp in microseconds since epoch (nullable)
         - trade_id (str): trade identifier (nullable)
         - side (u8): 0=buy, 1=sell, 2=unknown
-        - price (f64): trade price
+        - price_px (f64): trade price
         - qty (f64): trade quantity
 
     Raises:
@@ -122,12 +122,12 @@ def parse_tardis_trades_csv(df: pl.DataFrame) -> pl.DataFrame:
     price_col = None
     for col in df.columns:
         col_lower = col.lower()
-        if col_lower in ("price", "tradeprice", "trade_price", "tradePrice"):
+        if col_lower in ("price", "price_px", "tradeprice", "trade_price", "tradePrice"):
             price_col = col
             break
 
     if price_col:
-        result = result.with_columns(pl.col(price_col).cast(pl.Float64).alias("price"))
+        result = result.with_columns(pl.col(price_col).cast(pl.Float64).alias("price_px"))
     else:
         raise ValueError("Could not find price column in CSV")
 
@@ -150,7 +150,7 @@ def parse_tardis_trades_csv(df: pl.DataFrame) -> pl.DataFrame:
         "ts_exch_us",
         "trade_id",
         "side",
-        "price",
+        "price_px",
         "qty",
     ]
     if "file_line_number" in result.columns:

@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 
-from pointline.io.vendor.tardis.mapper import build_updates_from_instruments
+from pointline.io.vendors.tardis.mapper import build_updates_from_instruments
 
 
 def _to_us(value: str) -> int:

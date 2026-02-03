@@ -1,6 +1,6 @@
 """Test that all vendor parsers are properly registered."""
 
-from pointline.io.parsers import get_parser, list_supported_combinations
+from pointline.io.vendors import get_parser, list_supported_combinations
 
 
 def test_all_parsers_registered():

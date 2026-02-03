@@ -23,13 +23,13 @@ from pointline.config import (
     normalize_exchange,
 )
 from pointline.dim_symbol import check_coverage
-from pointline.io.parsers import get_parser
 from pointline.io.protocols import (
     BronzeFileMetadata,
     IngestionManifestRepository,
     IngestionResult,
     TableRepository,
 )
+from pointline.io.vendors import get_parser
 from pointline.services.base_service import BaseService
 
 logger = logging.getLogger(__name__)

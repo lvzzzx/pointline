@@ -18,14 +18,12 @@ from decimal import Decimal
 
 import polars as pl
 
+# Import parser from new location for backward compatibility
 from pointline.tables._base import (
     generic_resolve_symbol_ids,
     generic_validate,
 )
 from pointline.validation_utils import with_expected_exchange_id
-
-# Import parser from new location for backward compatibility
-from pointline.io.parsers.tardis.quotes import parse_tardis_quotes_csv  # noqa: E402
 
 # Schema definition matching design.md Section 5.4
 #
