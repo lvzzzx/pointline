@@ -22,11 +22,17 @@ def cmd_manifest_show(args: argparse.Namespace) -> int:
     if args.status:
         df = df.filter(pl.col("status") == args.status)
     if args.exchange:
-        df = df.filter(pl.col("exchange") == args.exchange)
+        if "exchange" in df.columns:
+            df = df.filter(pl.col("exchange") == args.exchange)
+        else:
+            print("manifest: exchange filter ignored (exchange column not present)")
     if args.data_type:
         df = df.filter(pl.col("data_type") == args.data_type)
     if args.symbol:
-        df = df.filter(pl.col("symbol") == args.symbol)
+        if "symbol" in df.columns:
+            df = df.filter(pl.col("symbol") == args.symbol)
+        else:
+            print("manifest: symbol filter ignored (symbol column not present)")
 
     if df.is_empty():
         print("manifest: no matching records")
@@ -39,9 +45,7 @@ def cmd_manifest_show(args: argparse.Namespace) -> int:
         display_cols = [
             "file_id",
             "vendor",
-            "exchange",
             "data_type",
-            "symbol",
             "date",
             "status",
             "row_count",

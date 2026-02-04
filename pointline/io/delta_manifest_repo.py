@@ -25,7 +25,7 @@ class DeltaManifestRepository(BaseDeltaRepository):
             # Schema definition is single source of truth
             #
             # Primary identity: (vendor, data_type, bronze_file_name, sha256)
-            # Optional fields: exchange, symbol, date (nullable for non-symbol data)
+            # Optional fields: date (nullable for non-symbol data)
             schema = {
                 "file_id": pl.Int32,
                 "vendor": pl.Utf8,
@@ -34,8 +34,6 @@ class DeltaManifestRepository(BaseDeltaRepository):
                 "sha256": pl.Utf8,
                 "file_size_bytes": pl.Int64,
                 "last_modified_ts": pl.Int64,
-                "exchange": pl.Utf8,  # NOW NULLABLE
-                "symbol": pl.Utf8,  # NOW NULLABLE
                 "date": pl.Date,  # NOW NULLABLE
                 "status": pl.Utf8,
                 "created_at_us": pl.Int64,  # When discovered
@@ -130,8 +128,6 @@ class DeltaManifestRepository(BaseDeltaRepository):
                         "sha256": [meta.sha256],
                         "file_size_bytes": [meta.file_size_bytes],
                         "last_modified_ts": [meta.last_modified_ts],
-                        "exchange": [meta.exchange],  # Can be NULL
-                        "symbol": [meta.symbol],  # Can be NULL
                         "date": [meta.date],  # Can be NULL
                         "status": ["pending"],
                         "created_at_us": [current_ts_us],
@@ -149,8 +145,6 @@ class DeltaManifestRepository(BaseDeltaRepository):
                         "sha256": pl.Utf8,
                         "file_size_bytes": pl.Int64,
                         "last_modified_ts": pl.Int64,
-                        "exchange": pl.Utf8,  # Nullable
-                        "symbol": pl.Utf8,  # Nullable
                         "date": pl.Date,  # Nullable
                         "status": pl.Utf8,
                         "created_at_us": pl.Int64,
@@ -245,8 +239,6 @@ class DeltaManifestRepository(BaseDeltaRepository):
                 "sha256": [meta.sha256],
                 "file_size_bytes": [meta.file_size_bytes],
                 "last_modified_ts": [meta.last_modified_ts],
-                "exchange": [meta.exchange],  # Can be NULL
-                "symbol": [meta.symbol],  # Can be NULL
                 "date": [meta.date],  # Can be NULL
                 "status": [status],
                 "created_at_us": [None],  # Preserve existing created_at_us (will be merged)
@@ -264,8 +256,6 @@ class DeltaManifestRepository(BaseDeltaRepository):
                 "sha256": pl.Utf8,
                 "file_size_bytes": pl.Int64,
                 "last_modified_ts": pl.Int64,
-                "exchange": pl.Utf8,  # Nullable
-                "symbol": pl.Utf8,  # Nullable
                 "date": pl.Date,  # Nullable
                 "status": pl.Utf8,
                 "created_at_us": pl.Int64,  # Nullable (preserve existing)

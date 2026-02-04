@@ -23,10 +23,8 @@ def sorted_files(files: Iterable[BronzeFileMetadata]) -> list[BronzeFileMetadata
         files,
         key=lambda f: (
             f.vendor,
-            f.exchange,
             f.data_type,
-            f.symbol,
-            f.date.isoformat(),
+            f.date.isoformat() if f.date else "",
             f.bronze_file_path,
         ),
     )
@@ -49,10 +47,8 @@ def print_files(files: Sequence[BronzeFileMetadata], *, limit: int | None = 100)
             " | ".join(
                 [
                     f"vendor={f.vendor}",
-                    f"exchange={f.exchange}",
                     f"type={f.data_type}",
-                    f"symbol={f.symbol}",
-                    f"date={f.date.isoformat()}",
+                    f"date={f.date.isoformat()}" if f.date else "date=<none>",
                     f"path={f.bronze_file_path}",
                 ]
             )
@@ -87,10 +83,7 @@ def resolve_manifest_file_id(
     manifest_path: Path,
     bronze_root: Path,
     file_path: Path,
-    exchange: str,
     data_type: str,
-    symbol: str,
-    file_date: date,
 ) -> int:
     manifest_repo = DeltaManifestRepository(manifest_path)
     if not file_path.exists():
@@ -114,10 +107,7 @@ def resolve_manifest_file_id(
 
     matches = manifest_df.filter(
         (pl.col("vendor") == vendor)
-        & (pl.col("exchange") == exchange)
         & (pl.col("data_type") == data_type)
-        & (pl.col("symbol") == symbol)
-        & (pl.col("date") == file_date)
         & (pl.col("bronze_file_name") == str(bronze_rel))
         & (pl.col("sha256") == sha256)
     )

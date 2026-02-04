@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 import polars as pl
 
 if TYPE_CHECKING:
-    from pointline.io.protocols import BronzeLayoutSpec
+    from pointline.io.protocols import BronzeFileMetadata, BronzeLayoutSpec
 
 
 class VendorPlugin(Protocol):
@@ -69,7 +69,7 @@ class VendorPlugin(Protocol):
             def get_bronze_layout_spec(self) -> BronzeLayoutSpec:
                 return BronzeLayoutSpec(
                     glob_patterns=["exchange=*/type=*/date=*/symbol=*/*.csv.gz"],
-                    required_fields={"vendor", "data_type", "exchange", "symbol", "date"},
+                    required_fields={"vendor", "data_type", "date"},
                     extract_metadata=self._extract_hive_metadata,
                     normalize_metadata=self._normalize_hive_metadata,
                 )
@@ -83,6 +83,18 @@ class VendorPlugin(Protocol):
             Dictionary mapping data_type to parser function.
             Example: {"trades": parse_tardis_trades_csv, "quotes": parse_tardis_quotes_csv}
         """
+        ...
+
+    def read_and_parse(self, path: Path, meta: BronzeFileMetadata) -> pl.DataFrame:
+        """Read bronze file and return parsed DataFrame with metadata columns."""
+        ...
+
+    def normalize_exchange(self, exchange: str) -> str:
+        """Normalize vendor-specific exchange name to canonical format."""
+        ...
+
+    def normalize_symbol(self, symbol: str, exchange: str) -> str:
+        """Normalize vendor-specific symbol format for dim_symbol matching."""
         ...
 
     def get_download_client(self) -> Any:

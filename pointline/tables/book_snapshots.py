@@ -34,7 +34,7 @@ from pointline.tables._base import generic_resolve_symbol_ids
 from pointline.validation_utils import DataQualityWarning, with_expected_exchange_id
 
 # Required metadata fields for ingestion
-REQUIRED_METADATA_FIELDS = {"exchange", "symbol", "date"}
+REQUIRED_METADATA_FIELDS: set[str] = set()
 
 # Schema definition matching design.md Section 5.2
 #
@@ -476,8 +476,8 @@ def decode_fixed_point(
 def resolve_symbol_ids(
     data: pl.DataFrame,
     dim_symbol: pl.DataFrame,
-    exchange_id: int,
-    exchange_symbol: str,
+    exchange_id: int | None,
+    exchange_symbol: str | None,
     *,
     ts_col: str = "ts_local_us",
 ) -> pl.DataFrame:

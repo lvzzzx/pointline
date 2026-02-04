@@ -49,8 +49,6 @@ class BronzeFileMetadata:
         - sha256: Content hash for idempotency
 
     Optional fields (vendor-specific):
-        - exchange: Exchange name (if applicable)
-        - symbol: Symbol (if applicable)
         - date: Trading date (if applicable)
         - interval: For klines (1h, 4h, 1d)
         - extra: Vendor-specific metadata
@@ -62,8 +60,6 @@ class BronzeFileMetadata:
     file_size_bytes: int
     last_modified_ts: int
     sha256: str
-    exchange: str | None = None
-    symbol: str | None = None
     date: date | None = None
     interval: str | None = None  # For klines: "1h", "4h", "1d", etc.
     extra: dict[str, Any] | None = None
@@ -112,6 +108,9 @@ class IngestionResult:
     ts_local_min_us: int
     ts_local_max_us: int
     error_message: str | None = None
+    partial_ingestion: bool = False
+    filtered_symbol_count: int = 0
+    filtered_row_count: int = 0
 
 
 @runtime_checkable

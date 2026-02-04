@@ -20,7 +20,7 @@ from pointline.validation_utils import with_expected_exchange_id
 logger = logging.getLogger(__name__)
 
 # Required metadata fields for ingestion (klines require interval)
-REQUIRED_METADATA_FIELDS = {"exchange", "symbol", "date", "interval"}
+REQUIRED_METADATA_FIELDS: set[str] = set()
 
 # Expected row counts per day for each kline interval
 KLINE_INTERVAL_ROWS_PER_DAY = {
@@ -389,8 +389,8 @@ def validate_klines(df: pl.DataFrame) -> pl.DataFrame:
 def resolve_symbol_ids(
     data: pl.DataFrame,
     dim_symbol: pl.DataFrame,
-    exchange_id: int,
-    exchange_symbol: str,
+    exchange_id: int | None,
+    exchange_symbol: str | None,
     *,
     ts_col: str = "ts_bucket_start_us",
 ) -> pl.DataFrame:

@@ -105,25 +105,28 @@ def parse_binance_klines_csv(df: pl.DataFrame) -> pl.DataFrame:
         col = pl.col(col_name).cast(pl.Int64, strict=False)
         return pl.when(col >= 1_000_000_000_000_000).then(col).otherwise(col * 1_000)
 
-    parsed = result.select(
-        [
-            to_us_expr("open_time").alias("ts_bucket_start_us"),
-            to_us_expr("close_time").alias("ts_bucket_end_us"),
-            pl.col("open").cast(pl.Float64, strict=False).alias("open_px"),
-            pl.col("high").cast(pl.Float64, strict=False).alias("high_px"),
-            pl.col("low").cast(pl.Float64, strict=False).alias("low_px"),
-            pl.col("close").cast(pl.Float64, strict=False).alias("close_px"),
-            pl.col("volume").cast(pl.Float64, strict=False).alias("volume"),
-            pl.col("quote_volume").cast(pl.Float64, strict=False).alias("quote_volume"),
-            pl.col("trade_count").cast(pl.Int64, strict=False).alias("trade_count"),
-            pl.col("taker_buy_base_volume")
-            .cast(pl.Float64, strict=False)
-            .alias("taker_buy_base_volume"),
-            pl.col("taker_buy_quote_volume")
-            .cast(pl.Float64, strict=False)
-            .alias("taker_buy_quote_volume"),
-        ]
-    )
+    select_cols = [
+        to_us_expr("open_time").alias("ts_bucket_start_us"),
+        to_us_expr("close_time").alias("ts_bucket_end_us"),
+        pl.col("open").cast(pl.Float64, strict=False).alias("open_px"),
+        pl.col("high").cast(pl.Float64, strict=False).alias("high_px"),
+        pl.col("low").cast(pl.Float64, strict=False).alias("low_px"),
+        pl.col("close").cast(pl.Float64, strict=False).alias("close_px"),
+        pl.col("volume").cast(pl.Float64, strict=False).alias("volume"),
+        pl.col("quote_volume").cast(pl.Float64, strict=False).alias("quote_volume"),
+        pl.col("trade_count").cast(pl.Int64, strict=False).alias("trade_count"),
+        pl.col("taker_buy_base_volume")
+        .cast(pl.Float64, strict=False)
+        .alias("taker_buy_base_volume"),
+        pl.col("taker_buy_quote_volume")
+        .cast(pl.Float64, strict=False)
+        .alias("taker_buy_quote_volume"),
+    ]
+
+    if "file_line_number" in result.columns:
+        select_cols = [pl.col("file_line_number")] + select_cols
+
+    parsed = result.select(select_cols)
     return parsed.filter(
         pl.col("ts_bucket_start_us").is_not_null() & pl.col("ts_bucket_end_us").is_not_null()
     )

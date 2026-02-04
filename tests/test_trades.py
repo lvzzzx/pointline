@@ -446,16 +446,15 @@ def test_trades_service_ingest_file_quarantine():
     service.repo = repo
     service.dim_symbol_repo = dim_repo
 
+    bronze_rel_path = "exchange=binance/type=trades/date=2024-05-01/symbol=BTCUSDT/test.csv"
     meta = BronzeFileMetadata(
         vendor="tardis",
-        exchange="binance",
         data_type="trades",
-        symbol="BTCUSDT",
-        date=date(2024, 5, 1),
-        bronze_file_path="test.csv.gz",
+        bronze_file_path=bronze_rel_path,
         file_size_bytes=1000,
         last_modified_ts=1000000,
         sha256="a" * 64,
+        date=date(2024, 5, 1),
     )
 
     # Create a temporary CSV file
@@ -508,16 +507,15 @@ def test_trades_service_ingest_file_success():
     service.repo = repo
     service.dim_symbol_repo = dim_repo
 
+    bronze_rel_path = "exchange=binance/type=trades/date=2024-05-01/symbol=BTCUSDT/test.csv"
     meta = BronzeFileMetadata(
         vendor="tardis",
-        exchange="binance",
         data_type="trades",
-        symbol="BTCUSDT",
-        date=date(2024, 5, 1),
-        bronze_file_path="test.csv.gz",
+        bronze_file_path=bronze_rel_path,
         file_size_bytes=1000,
         last_modified_ts=1000000,
         sha256="b" * 64,
+        date=date(2024, 5, 1),
     )
 
     # Create a temporary CSV file

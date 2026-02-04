@@ -16,8 +16,8 @@ from pointline.validation_utils import DataQualityWarning
 def generic_resolve_symbol_ids(
     data: pl.DataFrame,
     dim_symbol: pl.DataFrame,
-    exchange_id: int,
-    exchange_symbol: str,
+    exchange_id: int | None,
+    exchange_symbol: str | None,
     *,
     ts_col: str = "ts_local_us",
 ) -> pl.DataFrame:
@@ -40,12 +40,18 @@ def generic_resolve_symbol_ids(
 
     result = data.clone()
     if "exchange_id" not in result.columns:
+        if exchange_id is None:
+            raise ValueError("exchange_id is required when DataFrame lacks exchange_id column.")
         # Cast to match dim_symbol's exchange_id type (Int16, not UInt16)
         result = result.with_columns(pl.lit(exchange_id, dtype=pl.Int16).alias("exchange_id"))
     else:
         # Ensure existing exchange_id matches dim_symbol type
         result = result.with_columns(pl.col("exchange_id").cast(pl.Int16))
     if "exchange_symbol" not in result.columns:
+        if exchange_symbol is None:
+            raise ValueError(
+                "exchange_symbol is required when DataFrame lacks exchange_symbol column."
+            )
         result = result.with_columns(pl.lit(exchange_symbol).alias("exchange_symbol"))
 
     return _resolve_symbol_ids(result, dim_symbol, ts_col=ts_col)
