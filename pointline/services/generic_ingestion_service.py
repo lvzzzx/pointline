@@ -7,6 +7,7 @@ dispatch to handle different vendor formats without hardcoded coupling.
 from __future__ import annotations
 
 import gzip
+import importlib
 import logging
 import zipfile
 from collections.abc import Callable
@@ -102,6 +103,7 @@ class GenericIngestionService(BaseService):
 
     def __init__(
         self,
+        table_name: str,
         table_strategy: TableStrategy,
         repo: TableRepository,
         dim_symbol_repo: TableRepository,
@@ -110,11 +112,13 @@ class GenericIngestionService(BaseService):
         """Initialize the generic ingestion service.
 
         Args:
+            table_name: Name of the table (e.g., "trades", "quotes", "l3_orders")
             table_strategy: Table-specific functions for this data type
             repo: Repository for the target Silver table
             dim_symbol_repo: Repository for dim_symbol table
             manifest_repo: Repository for ingestion manifest
         """
+        self.table_name = table_name
         self.strategy = table_strategy
         self.repo = repo
         self.dim_symbol_repo = dim_symbol_repo
@@ -161,6 +165,29 @@ class GenericIngestionService(BaseService):
         Returns:
             IngestionResult with row count and timestamp ranges
         """
+        # Validate required metadata for this table
+        table_module = importlib.import_module(f"pointline.tables.{self.table_name}")
+        required_fields = getattr(table_module, "REQUIRED_METADATA_FIELDS", set())
+
+        missing_fields = []
+        for field in required_fields:
+            if getattr(meta, field, None) is None:
+                missing_fields.append(field)
+
+        if missing_fields:
+            error_msg = (
+                f"Bronze file missing required metadata for table '{self.table_name}': "
+                f"{missing_fields}. File: {meta.bronze_file_path}, "
+                f"Vendor: {meta.vendor}, Data Type: {meta.data_type}"
+            )
+            logger.error(error_msg)
+            return IngestionResult(
+                row_count=0,
+                ts_local_min_us=0,
+                ts_local_max_us=0,
+                error_message=error_msg,
+            )
+
         # Detect vendor from metadata and get bronze root
         vendor = meta.vendor
         if bronze_root is None:

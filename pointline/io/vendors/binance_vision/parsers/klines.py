@@ -33,10 +33,14 @@ def _ensure_raw_columns(df: pl.DataFrame) -> pl.DataFrame:
         )
 
     if df.columns[: len(RAW_KLINE_COLUMNS)] == RAW_KLINE_COLUMNS:
-        return df
+        return df.select(RAW_KLINE_COLUMNS)
 
-    rename_map = {df.columns[i]: RAW_KLINE_COLUMNS[i] for i in range(len(RAW_KLINE_COLUMNS))}
-    return df.rename(rename_map)
+    # Select only the first 12 columns to avoid conflicts with extra columns
+    df_subset = df.select(df.columns[: len(RAW_KLINE_COLUMNS)])
+
+    # Rename to standard column names
+    rename_map = {df_subset.columns[i]: RAW_KLINE_COLUMNS[i] for i in range(len(RAW_KLINE_COLUMNS))}
+    return df_subset.rename(rename_map)
 
 
 def _filter_header_row(df: pl.DataFrame) -> pl.DataFrame:

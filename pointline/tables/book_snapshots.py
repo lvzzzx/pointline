@@ -33,6 +33,9 @@ import polars as pl
 from pointline.tables._base import generic_resolve_symbol_ids
 from pointline.validation_utils import DataQualityWarning, with_expected_exchange_id
 
+# Required metadata fields for ingestion
+REQUIRED_METADATA_FIELDS = {"exchange", "symbol", "date"}
+
 # Schema definition matching design.md Section 5.2
 #
 # Delta Lake Integer Type Limitations:

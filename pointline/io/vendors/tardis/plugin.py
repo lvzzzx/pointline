@@ -6,10 +6,13 @@ This plugin provides parsers and client for Tardis.dev historical crypto market 
 from __future__ import annotations
 
 from collections.abc import Callable
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 import polars as pl
+
+from pointline.io.protocols import BronzeFileMetadata, BronzeLayoutSpec
 
 
 class TardisVendor:
@@ -27,6 +30,71 @@ class TardisVendor:
     supports_parsers = True
     supports_download = True
     supports_prehooks = False
+
+    def get_bronze_layout_spec(self) -> BronzeLayoutSpec:
+        """Get bronze layout specification for Tardis.
+
+        Tardis uses Hive-style partitioning:
+        exchange={exchange}/type={data_type}/date={date}/symbol={symbol}/*.csv.gz
+
+        Returns:
+            BronzeLayoutSpec for Tardis vendor
+        """
+        return BronzeLayoutSpec(
+            glob_patterns=["exchange=*/type=*/date=*/symbol=*/*.csv.gz"],
+            required_fields={"vendor", "data_type", "exchange", "symbol", "date"},
+            extract_metadata=self._extract_hive_metadata,
+            normalize_metadata=self._normalize_hive_metadata,
+        )
+
+    def _extract_hive_metadata(self, path: Path) -> dict[str, Any]:
+        """Parse Hive-style partitions from path.
+
+        Args:
+            path: File path to parse (e.g., exchange=binance/type=trades/date=2024-05-01/symbol=BTCUSDT/file.csv.gz)
+
+        Returns:
+            Dictionary with extracted metadata fields
+        """
+        meta: dict[str, Any] = {"vendor": "tardis"}
+
+        for part in path.parts:
+            if "=" in part:
+                key, val = part.split("=", 1)
+                if key == "type":
+                    meta["data_type"] = val
+                elif key == "date":
+                    meta["date"] = datetime.strptime(val, "%Y-%m-%d").date()
+                else:
+                    meta[key] = val
+
+        return meta
+
+    def _normalize_hive_metadata(
+        self, partial: dict[str, Any], file_stats: dict[str, Any]
+    ) -> BronzeFileMetadata:
+        """Combine partial metadata + file stats into BronzeFileMetadata.
+
+        Args:
+            partial: Partial metadata extracted from path
+            file_stats: File statistics (rel_path, size, mtime_us, sha256)
+
+        Returns:
+            Complete BronzeFileMetadata instance
+        """
+        return BronzeFileMetadata(
+            vendor=partial["vendor"],
+            data_type=partial["data_type"],
+            bronze_file_path=str(file_stats["rel_path"]),
+            file_size_bytes=file_stats["size"],
+            last_modified_ts=file_stats["mtime_us"],
+            sha256=file_stats["sha256"],
+            exchange=partial.get("exchange"),
+            symbol=partial.get("symbol"),
+            date=partial.get("date"),
+            interval=partial.get("interval"),
+            extra=None,
+        )
 
     def get_parsers(self) -> dict[str, Callable[[pl.DataFrame], pl.DataFrame]]:
         """Get all Tardis parsers.

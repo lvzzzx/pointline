@@ -19,6 +19,9 @@ from pointline.tables._base import (
 )
 from pointline.validation_utils import with_expected_exchange_id
 
+# Required metadata fields for ingestion
+REQUIRED_METADATA_FIELDS = {"exchange", "symbol", "date"}
+
 # Schema definition matching docs/schemas.md Section 2.6
 #
 # Delta Lake Integer Type Limitations:

@@ -19,6 +19,9 @@ from pointline.validation_utils import with_expected_exchange_id
 
 logger = logging.getLogger(__name__)
 
+# Required metadata fields for ingestion (klines require interval)
+REQUIRED_METADATA_FIELDS = {"exchange", "symbol", "date", "interval"}
+
 # Expected row counts per day for each kline interval
 KLINE_INTERVAL_ROWS_PER_DAY = {
     "1m": 1440,  # 60 minutes × 24 hours
