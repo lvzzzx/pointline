@@ -180,7 +180,7 @@ GenericIngestionService.ingest_file():
      # Returns: DataFrame WITH metadata columns:
      #   - exchange (str): normalized exchange name
      #   - exchange_symbol (str): normalized symbol
-     #   - date (date): trading date
+     #   - date (date): trading date in the exchange timezone (UTC for crypto)
      #   - file_line_number (i32): lineage
      #   + table-specific data columns
 
