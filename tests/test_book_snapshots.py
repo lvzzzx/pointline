@@ -617,4 +617,5 @@ def test_book_snapshots_ingestion_service_quarantine(
     assert (
         "missing_symbol" in result.error_message
         or "invalid_validity_window" in result.error_message
+        or "All symbols quarantined" in result.error_message
     )

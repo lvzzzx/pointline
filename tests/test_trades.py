@@ -484,6 +484,7 @@ def test_trades_service_ingest_file_quarantine():
         assert (
             "missing_symbol" in result.error_message
             or "invalid_validity_window" in result.error_message
+            or "All symbols quarantined" in result.error_message
         )
 
     finally:

@@ -244,7 +244,7 @@ class GenericIngestionService(BaseService):
                 )
 
             df = df.with_columns(
-                pl.col("exchange").map_dict(exchange_map).cast(pl.Int16).alias("exchange_id")
+                pl.col("exchange").replace_strict(exchange_map).cast(pl.Int16).alias("exchange_id")
             )
 
             # 4. Load dim_symbol for quarantine check
