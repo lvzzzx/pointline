@@ -41,9 +41,9 @@ def test_headerless_csv_no_data_loss():
         df = read_csv_with_lineage(temp_path, has_header=False, columns=columns)
 
         # Verify no data loss: should have 3 rows
-        assert (
-            df.height == 3
-        ), f"Expected 3 rows, got {df.height} (first row was consumed as header!)"
+        assert df.height == 3, (
+            f"Expected 3 rows, got {df.height} (first row was consumed as header!)"
+        )
 
         # Verify column names are correct (not data values)
         assert "open_time" in df.columns, "Column names malformed"
