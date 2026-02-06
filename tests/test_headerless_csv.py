@@ -3,9 +3,7 @@
 import tempfile
 from pathlib import Path
 
-import polars as pl
-
-from pointline.services.generic_ingestion_service import HEADERLESS_FORMATS
+from pointline.io.vendors.utils import read_csv_with_lineage
 
 
 def test_headerless_csv_no_data_loss():
@@ -26,11 +24,21 @@ def test_headerless_csv_no_data_loss():
     try:
         # Read with has_header=False and proper column names
         # (metadata would be used by generic service, but we test the core logic directly)
-        read_options = {
-            "has_header": False,
-            "new_columns": HEADERLESS_FORMATS[("binance_vision", "klines")],
-        }
-        df = pl.read_csv(temp_path, **read_options)
+        columns = [
+            "open_time",
+            "open",
+            "high",
+            "low",
+            "close",
+            "volume",
+            "close_time",
+            "quote_volume",
+            "trade_count",
+            "taker_buy_base_volume",
+            "taker_buy_quote_volume",
+            "ignore",
+        ]
+        df = read_csv_with_lineage(temp_path, has_header=False, columns=columns)
 
         # Verify no data loss: should have 3 rows
         assert df.height == 3, (
@@ -67,7 +75,7 @@ def test_header_csv_still_works():
 
     try:
         # Read with default has_header=True (implicit)
-        df = pl.read_csv(temp_path)
+        df = read_csv_with_lineage(temp_path, has_header=True)
 
         # Verify header row was properly consumed
         assert df.height == 2, "Header row should not be counted as data"

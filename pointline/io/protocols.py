@@ -1,7 +1,10 @@
-from collections.abc import Iterator
+from __future__ import annotations
+
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from datetime import date
-from typing import Protocol, runtime_checkable
+from pathlib import Path
+from typing import Any, Protocol, runtime_checkable
 
 import polars as pl
 
@@ -37,26 +40,65 @@ class AppendableTableRepository(TableRepository, Protocol):
 
 @dataclass
 class BronzeFileMetadata:
-    """Metadata extracted from the source file system before reading contents."""
+    """Metadata extracted from the source file system before reading contents.
+
+    Required fields:
+        - vendor: Vendor identifier
+        - data_type: Table type (trades, quotes, l3_orders, klines, etc.)
+        - bronze_file_path: Relative path from bronze root
+        - file_size_bytes: File size
+        - last_modified_ts: Modification timestamp (microseconds)
+        - sha256: Content hash for idempotency
+
+    Optional fields (vendor-specific):
+        - date: Trading date (if applicable)
+        - interval: For klines (1h, 4h, 1d)
+        - extra: Vendor-specific metadata
+    """
 
     vendor: str
-    exchange: str
     data_type: str
-    symbol: str
-    date: date
     bronze_file_path: str  # The full relative path or key
     file_size_bytes: int
     last_modified_ts: int
     sha256: str
+    date: date | None = None
     interval: str | None = None  # For klines: "1h", "4h", "1d", etc.
+    extra: dict[str, Any] | None = None
+
+
+@dataclass
+class BronzeLayoutSpec:
+    """Vendor-specific bronze layout specification.
+
+    Defines how to discover and extract metadata from bronze files for a given vendor.
+
+    Attributes:
+        glob_patterns: List of glob patterns for file discovery (e.g., "exchange=*/type=*/date=*/*.csv.gz")
+        required_fields: Set of metadata fields that must be extracted (must include "data_type")
+        extract_metadata: Function to parse path/filename and extract metadata fields
+        normalize_metadata: Function to combine partial metadata + file stats into BronzeFileMetadata
+    """
+
+    glob_patterns: list[str]
+    required_fields: set[str]
+    extract_metadata: Callable[[Path], dict[str, Any]]
+    normalize_metadata: Callable[[dict[str, Any], dict[str, Any]], BronzeFileMetadata]
 
 
 @runtime_checkable
 class BronzeSource(Protocol):
     """Abstraction for a file system scanner."""
 
-    def list_files(self, glob_pattern: str) -> Iterator[BronzeFileMetadata]:
-        """Scans storage for files matching the pattern."""
+    def list_files(self, glob_pattern: str | None = None) -> Iterator[BronzeFileMetadata]:
+        """Scans storage using vendor layout spec.
+
+        Args:
+            glob_pattern: Optional override pattern. If None, uses vendor's default patterns.
+
+        Returns:
+            Iterator of BronzeFileMetadata for discovered files.
+        """
         ...
 
 
@@ -68,6 +110,9 @@ class IngestionResult:
     ts_local_min_us: int
     ts_local_max_us: int
     error_message: str | None = None
+    partial_ingestion: bool = False
+    filtered_symbol_count: int = 0
+    filtered_row_count: int = 0
 
 
 @runtime_checkable

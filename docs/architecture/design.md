@@ -184,7 +184,8 @@ Snapshots are full top-N book states (e.g., 25 levels).
 - `exchange_id` is derived via `EXCHANGE_MAP` and stored for joins.
 - `symbol` is mapped to `symbol_id` via `dim_symbol`.
 - `ts_exch_us` maps from `timestamp`; `ts_local_us` maps from `local_timestamp`.
-- `date` is derived from `ts_local_us` in UTC.
+- `date` is the **exchange-local trading date** (derived from `ts_local_us` in the
+  exchange timezone; for crypto venues this is UTC).
 - `file_line_number` provides deterministic ordering within the source file.
 
 **List encoding**
@@ -255,7 +256,8 @@ Options chain is typically cross-sectional and heavy. Store updates per contract
 
 **Default Partitioning (most Silver tables):**
 - `exchange`
-- `date` (daily partitions, derived from `ts_local_us` in UTC)
+- `date` (daily partitions, derived from `ts_local_us` in the **exchange timezone**;
+  for crypto venues this is UTC)
 
 **Handling Massive Universes (e.g., Options):
 For datasets like `options_chain` where a single day is massive:

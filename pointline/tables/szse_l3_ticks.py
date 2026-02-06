@@ -25,6 +25,9 @@ from pointline.tables._base import (
 )
 from pointline.validation_utils import with_expected_exchange_id
 
+# Required metadata fields for ingestion
+REQUIRED_METADATA_FIELDS: set[str] = set()
+
 # Schema definition for szse_l3_ticks Silver table
 #
 # Delta Lake Integer Type Limitations:
@@ -274,8 +277,8 @@ def decode_fixed_point(
 def resolve_symbol_ids(
     data: pl.DataFrame,
     dim_symbol: pl.DataFrame,
-    exchange_id: int,
-    exchange_symbol: str,
+    exchange_id: int | None,
+    exchange_symbol: str | None,
     *,
     ts_col: str = "ts_local_us",
 ) -> pl.DataFrame:

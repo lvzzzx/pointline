@@ -9,6 +9,8 @@ from typing import Any
 
 import polars as pl
 
+from pointline.io.protocols import BronzeFileMetadata
+
 
 class TushareVendor:
     """Tushare vendor plugin for Chinese stock market data."""
@@ -26,6 +28,18 @@ class TushareVendor:
             NotImplementedError: Tushare doesn't provide parsers
         """
         raise NotImplementedError(f"{self.name} does not provide parsers")
+
+    def read_and_parse(self, path: Path, meta: BronzeFileMetadata) -> pl.DataFrame:
+        """Tushare does not support file parsing."""
+        raise NotImplementedError(f"{self.name} does not support read_and_parse")
+
+    def normalize_exchange(self, exchange: str) -> str:
+        """Normalize exchange names (unused for Tushare)."""
+        return exchange.lower().strip()
+
+    def normalize_symbol(self, symbol: str, exchange: str) -> str:
+        """Normalize symbols (unused for Tushare)."""
+        return symbol
 
     def get_download_client(self) -> Any:
         """Get download client for this vendor.

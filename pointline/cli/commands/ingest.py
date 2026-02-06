@@ -62,12 +62,9 @@ def cmd_ingest_run(args: argparse.Namespace) -> int:
     else:
         bronze_root = Path(args.bronze_root)
 
-    enable_prehooks = not getattr(args, "no_prehook", False)
-
     # Ingestion needs checksums for manifest tracking
     source = LocalBronzeSource(
         bronze_root,
-        enable_prehooks=enable_prehooks,
         compute_checksums=True,  # Need SHA256 for manifest
     )
     manifest_repo = DeltaManifestRepository(get_table_path("ingest_manifest"))

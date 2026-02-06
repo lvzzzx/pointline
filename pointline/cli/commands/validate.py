@@ -11,15 +11,13 @@ import polars as pl
 
 from pointline.cli.utils import (
     add_lineage,
-    add_metadata,
     compare_expected_vs_ingested,
-    infer_bronze_metadata,
-    parse_date_arg,
-    read_bronze_csv,
+    compute_sha256,
     resolve_manifest_file_id,
 )
-from pointline.config import get_exchange_id, get_table_path, normalize_exchange
-from pointline.io.vendors import get_parser
+from pointline.config import get_exchange_id, get_table_path
+from pointline.io.protocols import BronzeFileMetadata
+from pointline.io.vendors import get_vendor
 from pointline.tables.quotes import (
     QUOTES_SCHEMA,
     normalize_quotes_schema,
@@ -52,11 +50,6 @@ def cmd_validate_quotes(args: argparse.Namespace) -> int:
     if not path.exists():
         raise ValueError(f"File not found: {path}")
 
-    inferred = infer_bronze_metadata(path)
-    exchange = args.exchange or inferred.get("exchange")
-    symbol = args.symbol or inferred.get("symbol")
-    date_str = args.date or inferred.get("date")
-
     # Infer vendor from bronze path (e.g., bronze/tardis/exchange=...)
     vendor = args.vendor if hasattr(args, "vendor") and args.vendor else None
     if not vendor:
@@ -69,42 +62,58 @@ def cmd_validate_quotes(args: argparse.Namespace) -> int:
         if not vendor:
             vendor = "tardis"  # Default fallback
 
-    if not exchange or not symbol or not date_str:
-        raise ValueError(
-            "validate quotes: --exchange, --symbol, and --date required (or inferable from path)"
-        )
-
-    exchange = normalize_exchange(exchange)
-    exchange_id = get_exchange_id(exchange)
-    file_date = parse_date_arg(date_str)
-    if file_date is None:
-        raise ValueError("validate quotes: --date required")
-
     if args.file_id is None:
         file_id = resolve_manifest_file_id(
             manifest_path=Path(args.manifest_path),
             bronze_root=Path(args.bronze_root),
             file_path=path,
-            exchange=exchange,
             data_type="quotes",
-            symbol=symbol,
-            file_date=file_date,
         )
     else:
         file_id = args.file_id
 
-    raw_df = read_bronze_csv(path)
-    if raw_df.is_empty():
+    bronze_root = Path(args.bronze_root)
+    try:
+        bronze_rel = path.relative_to(bronze_root)
+    except ValueError:
+        bronze_rel = path.name
+
+    stat = path.stat()
+    meta = BronzeFileMetadata(
+        vendor=vendor,
+        data_type="quotes",
+        bronze_file_path=str(bronze_rel),
+        file_size_bytes=stat.st_size,
+        last_modified_ts=int(stat.st_mtime * 1_000_000),
+        sha256=compute_sha256(path),
+        date=None,
+        interval=None,
+        extra=None,
+    )
+
+    parsed_df = get_vendor(vendor).read_and_parse(path, meta)
+    if parsed_df.is_empty():
         print(f"Empty CSV file: {path}")
         return 0
 
-    # Get vendor-specific parser
-    parse_quotes = get_parser(vendor, "quotes")
-    parsed_df = parse_quotes(raw_df)
+    unique_exchanges = parsed_df["exchange"].unique().to_list()
+    exchange_map: dict[str, int] = {}
+    invalid_exchanges: list[str] = []
+    for exchange in unique_exchanges:
+        try:
+            exchange_map[exchange] = get_exchange_id(exchange)
+        except ValueError:
+            invalid_exchanges.append(str(exchange))
+    if invalid_exchanges:
+        raise ValueError(f"Unknown exchanges: {sorted(set(invalid_exchanges))}")
+
+    parsed_df = parsed_df.with_columns(
+        pl.col("exchange").map_dict(exchange_map).cast(pl.Int16).alias("exchange_id")
+    )
     dim_symbol = pl.read_delta(str(get_table_path("dim_symbol")))
-    resolved_df = resolve_quotes_symbol_ids(parsed_df, dim_symbol, exchange_id, symbol)
+    resolved_df = resolve_quotes_symbol_ids(parsed_df, dim_symbol, None, None)
     encoded_df = encode_quotes_fixed_point(resolved_df, dim_symbol)
-    expected_df = add_metadata(add_lineage(encoded_df, file_id), exchange, exchange_id)
+    expected_df = add_lineage(encoded_df, file_id)
     expected_df = normalize_quotes_schema(expected_df)
 
     ingested_lf = (
@@ -199,11 +208,6 @@ def cmd_validate_trades(args: argparse.Namespace) -> int:
     if not path.exists():
         raise ValueError(f"File not found: {path}")
 
-    inferred = infer_bronze_metadata(path)
-    exchange = args.exchange or inferred.get("exchange")
-    symbol = args.symbol or inferred.get("symbol")
-    date_str = args.date or inferred.get("date")
-
     # Infer vendor from bronze path (e.g., bronze/tardis/exchange=...)
     vendor = args.vendor if hasattr(args, "vendor") and args.vendor else None
     if not vendor:
@@ -216,42 +220,58 @@ def cmd_validate_trades(args: argparse.Namespace) -> int:
         if not vendor:
             vendor = "tardis"  # Default fallback
 
-    if not exchange or not symbol or not date_str:
-        raise ValueError(
-            "validate trades: --exchange, --symbol, and --date required (or inferable from path)"
-        )
-
-    exchange = normalize_exchange(exchange)
-    exchange_id = get_exchange_id(exchange)
-    file_date = parse_date_arg(date_str)
-    if file_date is None:
-        raise ValueError("validate trades: --date required")
-
     if args.file_id is None:
         file_id = resolve_manifest_file_id(
             manifest_path=Path(args.manifest_path),
             bronze_root=Path(args.bronze_root),
             file_path=path,
-            exchange=exchange,
             data_type="trades",
-            symbol=symbol,
-            file_date=file_date,
         )
     else:
         file_id = args.file_id
 
-    raw_df = read_bronze_csv(path)
-    if raw_df.is_empty():
+    bronze_root = Path(args.bronze_root)
+    try:
+        bronze_rel = path.relative_to(bronze_root)
+    except ValueError:
+        bronze_rel = path.name
+
+    stat = path.stat()
+    meta = BronzeFileMetadata(
+        vendor=vendor,
+        data_type="trades",
+        bronze_file_path=str(bronze_rel),
+        file_size_bytes=stat.st_size,
+        last_modified_ts=int(stat.st_mtime * 1_000_000),
+        sha256=compute_sha256(path),
+        date=None,
+        interval=None,
+        extra=None,
+    )
+
+    parsed_df = get_vendor(vendor).read_and_parse(path, meta)
+    if parsed_df.is_empty():
         print(f"Empty CSV file: {path}")
         return 0
 
-    # Get vendor-specific parser
-    parse_trades = get_parser(vendor, "trades")
-    parsed_df = parse_trades(raw_df)
+    unique_exchanges = parsed_df["exchange"].unique().to_list()
+    exchange_map: dict[str, int] = {}
+    invalid_exchanges: list[str] = []
+    for exchange in unique_exchanges:
+        try:
+            exchange_map[exchange] = get_exchange_id(exchange)
+        except ValueError:
+            invalid_exchanges.append(str(exchange))
+    if invalid_exchanges:
+        raise ValueError(f"Unknown exchanges: {sorted(set(invalid_exchanges))}")
+
+    parsed_df = parsed_df.with_columns(
+        pl.col("exchange").map_dict(exchange_map).cast(pl.Int16).alias("exchange_id")
+    )
     dim_symbol = pl.read_delta(str(get_table_path("dim_symbol")))
-    resolved_df = resolve_trades_symbol_ids(parsed_df, dim_symbol, exchange_id, symbol)
+    resolved_df = resolve_trades_symbol_ids(parsed_df, dim_symbol, None, None)
     encoded_df = encode_trades_fixed_point(resolved_df, dim_symbol)
-    expected_df = add_metadata(add_lineage(encoded_df, file_id), exchange, exchange_id)
+    expected_df = add_lineage(encoded_df, file_id)
     expected_df = normalize_trades_schema(expected_df)
 
     ingested_lf = (

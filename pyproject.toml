@@ -8,6 +8,7 @@ dependencies = [
   "polars>=0.20",
   "deltalake>=0.15",
   "pyarrow>=14.0",
+  "py7zr>=0.21",
   "requests>=2.31",
   "tardis-dev>=2.0",
   "tushare==1.4.24",

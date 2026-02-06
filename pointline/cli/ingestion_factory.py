@@ -12,7 +12,6 @@ from pointline import tables
 from pointline.config import get_table_path
 from pointline.io.base_repository import BaseDeltaRepository
 from pointline.services.generic_ingestion_service import GenericIngestionService, TableStrategy
-from pointline.symbol_normalization import no_normalization, normalize_binance_symbol
 
 TABLE_PARTITIONS = {
     "trades": ["exchange", "date"],
@@ -54,9 +53,8 @@ def create_ingestion_service(data_type: str, manifest_repo, *, interval: str | N
             validate=tables.trades.validate_trades,
             normalize_schema=tables.trades.normalize_trades_schema,
             resolve_symbol_ids=tables.trades.resolve_symbol_ids,
-            normalize_symbol=no_normalization,  # Tardis symbols already normalized
         )
-        return GenericIngestionService(strategy, repo, dim_symbol_repo, manifest_repo)
+        return GenericIngestionService("trades", strategy, repo, dim_symbol_repo, manifest_repo)
 
     # Quotes
     if data_type == "quotes":
@@ -69,9 +67,8 @@ def create_ingestion_service(data_type: str, manifest_repo, *, interval: str | N
             validate=tables.quotes.validate_quotes,
             normalize_schema=tables.quotes.normalize_quotes_schema,
             resolve_symbol_ids=tables.quotes.resolve_symbol_ids,
-            normalize_symbol=no_normalization,  # Tardis symbols already normalized
         )
-        return GenericIngestionService(strategy, repo, dim_symbol_repo, manifest_repo)
+        return GenericIngestionService("quotes", strategy, repo, dim_symbol_repo, manifest_repo)
 
     # Book snapshots
     if data_type == "book_snapshot_25":
@@ -84,9 +81,10 @@ def create_ingestion_service(data_type: str, manifest_repo, *, interval: str | N
             validate=tables.book_snapshots.validate_book_snapshots,
             normalize_schema=tables.book_snapshots.normalize_book_snapshots_schema,
             resolve_symbol_ids=tables.book_snapshots.resolve_symbol_ids,
-            normalize_symbol=no_normalization,  # Tardis symbols already normalized
         )
-        return GenericIngestionService(strategy, repo, dim_symbol_repo, manifest_repo)
+        return GenericIngestionService(
+            "book_snapshots", strategy, repo, dim_symbol_repo, manifest_repo
+        )
 
     # Derivative ticker
     if data_type == "derivative_ticker":
@@ -99,9 +97,10 @@ def create_ingestion_service(data_type: str, manifest_repo, *, interval: str | N
             validate=tables.derivative_ticker.validate_derivative_ticker,
             normalize_schema=tables.derivative_ticker.normalize_derivative_ticker_schema,
             resolve_symbol_ids=tables.derivative_ticker.resolve_symbol_ids,
-            normalize_symbol=no_normalization,  # Tardis symbols already normalized
         )
-        return GenericIngestionService(strategy, repo, dim_symbol_repo, manifest_repo)
+        return GenericIngestionService(
+            "derivative_ticker", strategy, repo, dim_symbol_repo, manifest_repo
+        )
 
     # Klines
     if data_type == "klines":
@@ -117,9 +116,9 @@ def create_ingestion_service(data_type: str, manifest_repo, *, interval: str | N
             validate=tables.klines.validate_klines,
             normalize_schema=tables.klines.normalize_klines_schema,
             resolve_symbol_ids=tables.klines.resolve_symbol_ids,
-            normalize_symbol=normalize_binance_symbol,  # Binance Vision normalization
+            ts_col="ts_bucket_start_us",  # Klines use bucket timestamps, not event timestamps
         )
-        return GenericIngestionService(strategy, repo, dim_symbol_repo, manifest_repo)
+        return GenericIngestionService("klines", strategy, repo, dim_symbol_repo, manifest_repo)
 
     # SZSE L3 Orders
     if data_type == "l3_orders":
@@ -132,9 +131,10 @@ def create_ingestion_service(data_type: str, manifest_repo, *, interval: str | N
             validate=tables.szse_l3_orders.validate_szse_l3_orders,
             normalize_schema=tables.szse_l3_orders.normalize_szse_l3_orders_schema,
             resolve_symbol_ids=tables.szse_l3_orders.resolve_symbol_ids,
-            normalize_symbol=no_normalization,  # Quant360 symbols already normalized
         )
-        return GenericIngestionService(strategy, repo, dim_symbol_repo, manifest_repo)
+        return GenericIngestionService(
+            "szse_l3_orders", strategy, repo, dim_symbol_repo, manifest_repo
+        )
 
     # SZSE L3 Ticks
     if data_type == "l3_ticks":
@@ -147,8 +147,9 @@ def create_ingestion_service(data_type: str, manifest_repo, *, interval: str | N
             validate=tables.szse_l3_ticks.validate_szse_l3_ticks,
             normalize_schema=tables.szse_l3_ticks.normalize_szse_l3_ticks_schema,
             resolve_symbol_ids=tables.szse_l3_ticks.resolve_symbol_ids,
-            normalize_symbol=no_normalization,  # Quant360 symbols already normalized
         )
-        return GenericIngestionService(strategy, repo, dim_symbol_repo, manifest_repo)
+        return GenericIngestionService(
+            "szse_l3_ticks", strategy, repo, dim_symbol_repo, manifest_repo
+        )
 
     raise ValueError(f"Unsupported data type: {data_type}")

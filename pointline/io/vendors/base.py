@@ -9,9 +9,12 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 import polars as pl
+
+if TYPE_CHECKING:
+    from pointline.io.protocols import BronzeFileMetadata, BronzeLayoutSpec
 
 
 class VendorPlugin(Protocol):
@@ -55,6 +58,24 @@ class VendorPlugin(Protocol):
     supports_prehooks: bool
     """Whether this vendor requires preprocessing before ingestion"""
 
+    def get_bronze_layout_spec(self) -> BronzeLayoutSpec:
+        """Get the bronze layout specification for this vendor.
+
+        Returns:
+            BronzeLayoutSpec defining glob patterns, required fields,
+            and metadata extraction functions for this vendor's bronze layer.
+
+        Example:
+            def get_bronze_layout_spec(self) -> BronzeLayoutSpec:
+                return BronzeLayoutSpec(
+                    glob_patterns=["exchange=*/type=*/date=*/symbol=*/*.csv.gz"],
+                    required_fields={"vendor", "data_type", "date"},
+                    extract_metadata=self._extract_hive_metadata,
+                    normalize_metadata=self._normalize_hive_metadata,
+                )
+        """
+        ...
+
     def get_parsers(self) -> dict[str, Callable[[pl.DataFrame], pl.DataFrame]]:
         """Get all parsers provided by this vendor.
 
@@ -62,6 +83,18 @@ class VendorPlugin(Protocol):
             Dictionary mapping data_type to parser function.
             Example: {"trades": parse_tardis_trades_csv, "quotes": parse_tardis_quotes_csv}
         """
+        ...
+
+    def read_and_parse(self, path: Path, meta: BronzeFileMetadata) -> pl.DataFrame:
+        """Read bronze file and return parsed DataFrame with metadata columns."""
+        ...
+
+    def normalize_exchange(self, exchange: str) -> str:
+        """Normalize vendor-specific exchange name to canonical format."""
+        ...
+
+    def normalize_symbol(self, symbol: str, exchange: str) -> str:
+        """Normalize vendor-specific symbol format for dim_symbol matching."""
         ...
 
     def get_download_client(self) -> Any:

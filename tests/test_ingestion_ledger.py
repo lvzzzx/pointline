@@ -38,8 +38,6 @@ def test_local_source_scanning(temp_bronze_dir):
 
     f1 = next(f for f in files if f.date == date(2024, 5, 1))
     assert f1.vendor == "tardis"
-    assert f1.exchange == "binance"
-    assert f1.symbol == "BTCUSDT"
     assert "file1.csv.gz" in f1.bronze_file_path
     assert len(f1.sha256) == 64
 
@@ -48,9 +46,7 @@ def test_manifest_workflow(manifest_repo):
     # Setup Dummy Metadata
     meta1 = BronzeFileMetadata(
         vendor="tardis",
-        exchange="binance",
         data_type="quotes",
-        symbol="BTC",
         date=date(2024, 1, 1),
         bronze_file_path="path/to/1",
         file_size_bytes=100,
@@ -60,9 +56,7 @@ def test_manifest_workflow(manifest_repo):
 
     meta2 = BronzeFileMetadata(
         vendor="tardis",
-        exchange="binance",
         data_type="quotes",
-        symbol="BTC",
         date=date(2024, 1, 2),
         bronze_file_path="path/to/2",
         file_size_bytes=200,
@@ -104,9 +98,7 @@ def test_skip_logic_modified_file(manifest_repo):
     """If content hash changes, it should NOT be skipped."""
     meta = BronzeFileMetadata(
         vendor="tardis",
-        exchange="binance",
         data_type="quotes",
-        symbol="BTC",
         date=date(2024, 1, 1),
         bronze_file_path="path/to/1",
         file_size_bytes=100,
@@ -124,9 +116,7 @@ def test_skip_logic_modified_file(manifest_repo):
     # Modified file (content hash change)
     meta_mod = BronzeFileMetadata(
         vendor="tardis",
-        exchange="binance",
         data_type="quotes",
-        symbol="BTC",
         date=date(2024, 1, 1),
         bronze_file_path="path/to/1",
         file_size_bytes=150,
