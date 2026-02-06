@@ -500,8 +500,7 @@ def test_book_snapshots_ingestion_service_ingest_file(
 
     # Create a sample CSV file
     bronze_rel_path = (
-        "exchange=binance/type=book_snapshot_25/date=2024-05-01/symbol=BTCUSDT/"
-        "book_snapshots.csv"
+        "exchange=binance/type=book_snapshot_25/date=2024-05-01/symbol=BTCUSDT/book_snapshots.csv"
     )
     bronze_path = tmp_path / "bronze" / "tardis" / bronze_rel_path
     bronze_path.parent.mkdir(parents=True, exist_ok=True)
@@ -592,8 +591,7 @@ def test_book_snapshots_ingestion_service_quarantine(
     service.dim_symbol_repo = dim_symbol_repo
 
     bronze_rel_path = (
-        "exchange=binance/type=book_snapshot_25/date=2024-05-01/symbol=BTCUSDT/"
-        "book_snapshots.csv"
+        "exchange=binance/type=book_snapshot_25/date=2024-05-01/symbol=BTCUSDT/book_snapshots.csv"
     )
     bronze_path = tmp_path / "bronze" / "tardis" / bronze_rel_path
     bronze_path.parent.mkdir(parents=True, exist_ok=True)
