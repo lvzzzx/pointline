@@ -3,21 +3,27 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import polars as pl
 
 from pointline.research import core as research_core
 from pointline.research.features import core as feature_core
 from pointline.research.features import families
+from pointline.research.features.spines import ClockSpineConfig
 from pointline.types import TimestampInput
+
+
+def _default_spine_config() -> feature_core.EventSpineConfig:
+    """Default spine config: 1-second clock intervals."""
+    return feature_core.EventSpineConfig(builder_config=ClockSpineConfig(step_ms=1000))
 
 
 @dataclass(frozen=True)
 class FeatureRunConfig:
     """Configuration for feature generation."""
 
-    spine: feature_core.EventSpineConfig = feature_core.EventSpineConfig()
+    spine: feature_core.EventSpineConfig = field(default_factory=_default_spine_config)
     include_microstructure: bool = True
     include_trade_flow: bool = True
     include_flow_rolling: bool = True
