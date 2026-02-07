@@ -31,6 +31,25 @@ trades = query.trades(
 
 ---
 
+## ✅ uv Dev Workflow (Recommended)
+
+Pointline uses `uv` for fast, deterministic dependency management. For a full dev setup:
+
+```bash
+cd /path/to/pointline
+uv sync --all-extras
+source .venv/bin/activate
+pre-commit install
+```
+
+Run tests with:
+
+```bash
+pytest
+```
+
+---
+
 ## 📖 User Guides
 
 **Want to accomplish something specific?** See [guides/](guides/):
@@ -40,6 +59,8 @@ trades = query.trades(
 | [Researcher's Guide](guides/researcher-guide.md) | Comprehensive guide for quant researchers |
 | [Choosing an API](guides/choosing-an-api.md) | Query API vs Core API decision guide |
 | [Dim Asset Stats Usage](guides/dim-asset-stats-usage.md) | Working with asset statistics |
+| [Feature Engineering (MFT)](guides/feature-engineering.md) | PIT-correct feature framework for MFT workflows |
+| [Roles & Responsibilities](roles-and-responsibilities.md) | Ownership boundaries, review routing, and handoff contracts |
 
 **Common tasks:**
 - Load market data → [Quickstart](quickstart.md)
