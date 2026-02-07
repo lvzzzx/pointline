@@ -40,6 +40,7 @@ trades = query.trades(
 | [Researcher's Guide](guides/researcher-guide.md) | Comprehensive guide for quant researchers |
 | [Choosing an API](guides/choosing-an-api.md) | Query API vs Core API decision guide |
 | [Dim Asset Stats Usage](guides/dim-asset-stats-usage.md) | Working with asset statistics |
+| [Feature Engineering (MFT)](guides/feature-engineering.md) | PIT-correct feature framework for MFT workflows |
 
 **Common tasks:**
 - Load market data → [Quickstart](quickstart.md)

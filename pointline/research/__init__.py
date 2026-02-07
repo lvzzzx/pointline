@@ -57,7 +57,7 @@ Example - Query API (decoded):
 
 # Import everything from core module to maintain backward compatibility
 # Import query module (not individual functions, so users access via query.*)
-from pointline.research import query
+from pointline.research import features, query
 from pointline.research.core import (
     _apply_filters,
     _derive_date_bounds_from_ts,
@@ -106,6 +106,8 @@ __all__ = [
     "summarize_symbol",
     # Query module (convenience layer)
     "query",
+    # Feature engineering utilities
+    "features",
     # Internal functions (exposed for testing/advanced use)
     "_normalize_timestamp",
     "_apply_filters",
