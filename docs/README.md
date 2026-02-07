@@ -108,6 +108,7 @@ pointline dim-symbol upsert --file ./symbols.csv
 | [Performance](architecture/performance-considerations.md) | Query optimization and best practices |
 | [Storage & I/O](architecture/storage-io-design.md) | Bronze/Silver/Gold layer design |
 | [Bronze Prehooks](architecture/bronze-prehooks-design.md) | ETL preprocessing pipeline |
+| [Quant Researcher Agent Spec](agents/quant-researcher-agent-spec.md) | Contract-first plan and I/O schemas for automated quant research runs |
 
 ---
 
