@@ -61,6 +61,7 @@ pytest
 | [Dim Asset Stats Usage](guides/dim-asset-stats-usage.md) | Working with asset statistics |
 | [Feature Engineering (MFT)](guides/feature-engineering.md) | PIT-correct feature framework for MFT workflows |
 | [Roles & Responsibilities](roles-and-responsibilities.md) | Ownership boundaries, review routing, and handoff contracts |
+| [Persona Prompt Templates](persona-prompts.md) | Copy-paste prompts for role-based LLM execution, including HFT/MFT variants |
 
 **Common tasks:**
 - Load market data → [Quickstart](quickstart.md)
