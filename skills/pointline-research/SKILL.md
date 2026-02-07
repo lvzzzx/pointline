@@ -7,6 +7,26 @@ description: "Guide for using Pointline, a high-performance point-in-time (PIT) 
 
 Guide LLM agents through efficient, correct usage of the Pointline data lake for quantitative research.
 
+## 0. Project Bootstrap (Before Analysis)
+
+When operating in this repository, start with these defaults:
+
+1. Assume working directory is repo root.
+2. Use editable install and dev dependencies when Python imports fail.
+3. Prefer Query API for exploration and Core API for explicit reproducibility.
+
+```bash
+# Environment bootstrap
+uv sync --all-extras
+source .venv/bin/activate
+```
+
+First response contract for user requests:
+- confirm exchange, symbol, date range, and objective
+- run discovery (`list_exchanges`, `list_symbols`, `summarize_symbol`)
+- run a small probe query before full analysis
+- then run requested analysis with PIT-safe defaults
+
 ## 1. Profile Selection (Context Switching)
 
 **Step 1: CLASSIFY** the user's request into one of these profiles.
@@ -14,8 +34,8 @@ Guide LLM agents through efficient, correct usage of the Pointline data lake for
 
 | Profile | Triggers | Key Data | Reference |
 | :--- | :--- | :--- | :--- |
-| **HFT (Microstructure)** | "latency", "L3", "queue", "ticks", "imbalance" | `szse_l3_orders`, `book_snapshot` | [profile_hft_microstructure.md](references/profile_hft_microstructure.md) |
-| **MFT (Alpha/StatArb)** | "rebalance", "funding", "RSI", "portfolio", "4h" | `klines`, `derivative_ticker` | [profile_mft_alpha.md](references/profile_mft_alpha.md) |
+| **HFT (Microstructure)** | "latency", "L3", "queue", "ticks", "imbalance" | `szse_l3_orders`, `book_snapshot_25` | [profile_hft_microstructure.md](references/profile_hft_microstructure.md) |
+| **MFT (Alpha/StatArb)** | "rebalance", "funding", "RSI", "portfolio", "4h" | `kline_1h`, `derivative_ticker` | [profile_mft_alpha.md](references/profile_mft_alpha.md) |
 | **Execution (TCA)** | "slippage", "impact", "fill rate", "vwap" | `trades`, `quotes` | [profile_execution.md](references/profile_execution.md) |
 
 ---
@@ -25,7 +45,7 @@ Guide LLM agents through efficient, correct usage of the Pointline data lake for
 **ALWAYS follow this sequence:**
 
 1. **Discover** → Check what data exists (Exchanges, Symbols)
-2. **Validate** → **CRITICAL:** Check `research.data_coverage` before querying
+2. **Validate** → Check `research.data_coverage` and then run a small probe query
 3. **Query** → Load data with Query API (default)
 4. **Analyze** → Apply analysis patterns with PIT correctness
 
@@ -37,16 +57,23 @@ exchanges = research.list_exchanges(asset_class="crypto-derivatives")
 symbols = research.list_symbols(exchange="binance-futures", base_asset="BTC")
 
 # Step 2: Validate (The "Sanity Check")
-# NEVER skip this. Loading empty data is the root cause of 90% of failures.
+# NEVER skip this. Loading empty data is the root cause of many failures.
 coverage = research.data_coverage("binance-futures", "BTCUSDT")
 if not coverage["trades"]["available"]:
-    raise ValueError("No trade data available for BTCUSDT on this day")
+    raise ValueError("Trades table not available for BTCUSDT on binance-futures")
 
-# Step 3: Query (decoded=True returns floats)
+# Step 3: Probe query (fast sanity check on the requested window)
 from pointline.research import query
+probe = query.trades(
+    "binance-futures", "BTCUSDT", "2024-05-01", "2024-05-01T00:05:00Z", decoded=True, lazy=False
+)
+if probe.is_empty():
+    raise ValueError("No rows found in probe window; check date range, market hours, or data availability.")
+
+# Step 4: Full query
 trades = query.trades("binance-futures", "BTCUSDT", "2024-05-01", "2024-05-02", decoded=True)
 
-# Step 4: Analyze (use ts_local_us for PIT correctness)
+# Step 5: Analyze (use ts_local_us for PIT correctness)
 import polars as pl
 trades = trades.sort("ts_local_us")  # Arrival order (PIT correct)
 vwap = (trades["price"] * trades["qty"]).sum() / trades["qty"].sum()
@@ -60,7 +87,8 @@ vwap = (trades["price"] * trades["qty"]).sum() / trades["qty"].sum()
 
 1.  **Pre-Flight Check:** Before running any heavy computation (VWAP, Backtest), write code to verify:
     *   Does the symbol exist? (`list_symbols`)
-    *   Is there data for this date? (`data_coverage`)
+    *   Is the table/symbol supported? (`data_coverage`)
+    *   Are there rows in a short target-window probe query?
     *   Is the date range valid? (Start < End)
 
 2.  **Empty Data Handling:**
@@ -120,6 +148,9 @@ print(f"Trades: {coverage['trades']['available']}")
 print(f"Quotes: {coverage['quotes']['available']}")
 print(f"Book snapshots: {coverage['book_snapshot_25']['available']}")
 ```
+
+`data_coverage()` is a table/symbol availability check, not a guaranteed per-date row-count check.
+Always add a short probe query on the target date window before expensive analysis.
 
 ### Summarize Symbol
 

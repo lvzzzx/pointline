@@ -14,6 +14,13 @@ Guide for using Pointline for quantitative trading research. Helps LLM agents:
 
 **Supports:** Crypto (26+ exchanges), Chinese stocks (SZSE/SSE Level 3)
 
+### persona-router
+
+Role router for Pointline work. Helps LLM agents:
+- map tasks to the correct persona (`Data Infra`, `Data Quality`, `Research Engineer`, `Quant`, `Platform/DevEx`)
+- produce copy-paste task prompts with `Persona`, `Task`, `Focus`, and `Deliver`
+- choose `Quant Researcher (HFT)` vs `Quant Researcher (MFT)` variants
+
 ## Development Workflow
 
 ### 1. Edit Skill Source
@@ -52,6 +59,12 @@ OUTPUT_DIR=../dist ./build.sh
 ln -s "$(pwd)/pointline-research" ~/.claude/skills/pointline-research
 
 # Changes to source files are immediately available
+```
+
+For Codex persona-router skill:
+```bash
+cd ..
+./scripts/sync_persona_router_skill.sh
 ```
 
 **Option B: Install packaged skill**
