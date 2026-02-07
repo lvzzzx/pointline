@@ -219,16 +219,15 @@ def add_liquidity_shock_features(lf: pl.LazyFrame, *, window_rows: int = 50) -> 
         raise ValueError("window_rows must be > 1")
 
     _, _, bid_sz, ask_sz = _top_of_book_exprs()
-    depth = (bid_sz + ask_sz).alias("ls_top_depth")
+    depth_expr = bid_sz + ask_sz
+    depth = depth_expr.alias("ls_top_depth")
     depth_mean = (
-        pl.col("ls_top_depth")
-        .rolling_mean(window_size=window_rows)
+        depth_expr.rolling_mean(window_size=window_rows)
         .over(["exchange_id", "symbol_id"])
         .alias(f"ls_depth_mean_{window_rows}")
     )
     depth_std = (
-        pl.col("ls_top_depth")
-        .rolling_std(window_size=window_rows)
+        depth_expr.rolling_std(window_size=window_rows)
         .over(["exchange_id", "symbol_id"])
         .alias(f"ls_depth_std_{window_rows}")
     )
@@ -250,16 +249,15 @@ def add_basis_momentum_features(lf: pl.LazyFrame, *, window_rows: int = 100) -> 
     if window_rows <= 1:
         raise ValueError("window_rows must be > 1")
 
-    basis = (pl.col("mark_px") - pl.col("index_px")).alias("bm_basis")
+    basis_expr = pl.col("mark_px") - pl.col("index_px")
+    basis = basis_expr.alias("bm_basis")
     basis_mean = (
-        pl.col("bm_basis")
-        .rolling_mean(window_size=window_rows)
+        basis_expr.rolling_mean(window_size=window_rows)
         .over(["exchange_id", "symbol_id"])
         .alias(f"bm_basis_mean_{window_rows}")
     )
     basis_std = (
-        pl.col("bm_basis")
-        .rolling_std(window_size=window_rows)
+        basis_expr.rolling_std(window_size=window_rows)
         .over(["exchange_id", "symbol_id"])
         .alias(f"bm_basis_std_{window_rows}")
     )
@@ -272,9 +270,9 @@ def add_basis_momentum_features(lf: pl.LazyFrame, *, window_rows: int = 100) -> 
         .otherwise(None)
         .alias(f"bm_basis_z_{window_rows}")
     )
-    basis_mom = pl.col("bm_basis").diff().alias("bm_basis_mom")
+    basis_mom = basis_expr.diff().over(["exchange_id", "symbol_id"]).alias("bm_basis_mom")
 
-    return lf.with_columns([basis, basis_mean, basis_std, basis_z, basis_mom])
+    return lf.with_columns([basis, basis_mean, basis_std, basis_mom]).with_columns([basis_z])
 
 
 def add_trade_burst_features(lf: pl.LazyFrame, *, window_rows: int = 100) -> pl.LazyFrame:
@@ -283,16 +281,15 @@ def add_trade_burst_features(lf: pl.LazyFrame, *, window_rows: int = 100) -> pl.
         raise ValueError("window_rows must be > 1")
 
     lf = lf.sort(["exchange_id", "symbol_id", "ts_local_us"])
-    dt_us = pl.col("ts_local_us").diff().over(["exchange_id", "symbol_id"]).alias("tb_dt_us")
+    dt_expr = pl.col("ts_local_us").diff().over(["exchange_id", "symbol_id"])
+    dt_us = dt_expr.alias("tb_dt_us")
     dt_mean = (
-        pl.col("tb_dt_us")
-        .rolling_mean(window_size=window_rows)
+        dt_expr.rolling_mean(window_size=window_rows)
         .over(["exchange_id", "symbol_id"])
         .alias(f"tb_dt_mean_{window_rows}")
     )
     dt_std = (
-        pl.col("tb_dt_us")
-        .rolling_std(window_size=window_rows)
+        dt_expr.rolling_std(window_size=window_rows)
         .over(["exchange_id", "symbol_id"])
         .alias(f"tb_dt_std_{window_rows}")
     )
