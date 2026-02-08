@@ -133,6 +133,28 @@ def execute_compiled(compiled: dict[str, Any]) -> tuple[pl.DataFrame, _Execution
     """Execute a compiled request across all supported modes."""
     timeline_col = compiled["timeline"]["time_col"]
     sources, coverage_checks, probe_checks = _load_sources(compiled["sources"], timeline_col)
+    return execute_compiled_with_sources(
+        compiled,
+        sources,
+        coverage_checks=coverage_checks,
+        probe_checks=probe_checks,
+    )
+
+
+def execute_compiled_with_sources(
+    compiled: dict[str, Any],
+    sources: dict[str, pl.LazyFrame],
+    *,
+    coverage_checks: list[dict[str, Any]] | None = None,
+    probe_checks: list[dict[str, Any]] | None = None,
+) -> tuple[pl.DataFrame, _ExecutionArtifacts]:
+    """Execute a compiled request with pre-loaded source frames.
+
+    This is used by higher-level orchestrators (for example workflow DAG execution)
+    that resolve sources outside of the single-request input contract.
+    """
+    coverage_checks = coverage_checks or []
+    probe_checks = probe_checks or []
 
     mode = compiled["mode"]
     if mode == "bar_then_feature":
@@ -331,6 +353,13 @@ def _load_sources(
     return sources, coverage_checks, probe_checks
 
 
+def load_sources(
+    source_specs: list[dict[str, Any]], timeline_col: str
+) -> tuple[dict[str, pl.LazyFrame], list[dict[str, Any]], list[dict[str, Any]]]:
+    """Public wrapper for loading source specs into LazyFrames."""
+    return _load_sources(source_specs, timeline_col)
+
+
 def _load_source(spec: dict[str, Any], timeline_col: str) -> pl.LazyFrame:
     if "inline_rows" in spec:
         return pl.LazyFrame(spec["inline_rows"])
@@ -343,6 +372,11 @@ def _load_source(spec: dict[str, Any], timeline_col: str) -> pl.LazyFrame:
         ts_col=timeline_col,
         columns=spec.get("columns"),
     )
+
+
+def load_source(spec: dict[str, Any], timeline_col: str) -> pl.LazyFrame:
+    """Public wrapper for loading a single source spec."""
+    return _load_source(spec, timeline_col)
 
 
 def _execute_bar_then_feature(

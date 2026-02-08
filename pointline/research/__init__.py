@@ -1,6 +1,6 @@
 """Research API for the Pointline data lake.
 
-This package provides three layers:
+This package provides four layers:
 
 1. Core API (explicit symbol resolution):
    - research.load_trades(symbol_id=..., start_ts_us=..., end_ts_us=...)
@@ -14,6 +14,10 @@ This package provides three layers:
 3. Pipeline API (contract-first v2 execution):
    - research.pipeline(request: dict) -> dict
    - Best for: production research workflows with strict PIT/gate controls
+
+4. Workflow API (hybrid multi-stage orchestration):
+   - research.workflow(request: dict) -> dict
+   - Best for: composing event_joined/tick_then_bar/bar_then_feature in one run
 
 Example - Core API (explicit):
     >>> from pointline import research, registry
@@ -65,6 +69,8 @@ from pointline.research import features, query
 from pointline.research.contracts import (
     validate_quant_research_input_v2,
     validate_quant_research_output_v2,
+    validate_quant_research_workflow_input_v2,
+    validate_quant_research_workflow_output_v2,
 )
 from pointline.research.core import (
     _apply_filters,
@@ -94,6 +100,7 @@ from pointline.research.discovery import (
     summarize_symbol,
 )
 from pointline.research.pipeline import compile_request, pipeline
+from pointline.research.workflow import compile_workflow_request, workflow
 
 __all__ = [
     # Core API functions
@@ -118,8 +125,12 @@ __all__ = [
     # Pipeline API
     "pipeline",
     "compile_request",
+    "workflow",
+    "compile_workflow_request",
     "validate_quant_research_input_v2",
     "validate_quant_research_output_v2",
+    "validate_quant_research_workflow_input_v2",
+    "validate_quant_research_workflow_output_v2",
     # Feature engineering utilities
     "features",
     # Internal functions (exposed for testing/advanced use)
