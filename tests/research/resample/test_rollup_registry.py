@@ -12,6 +12,7 @@ def test_registry_has_starter_rollups():
     assert FeatureRollupRegistry.exists("weighted_close")
     assert FeatureRollupRegistry.exists("trimmed_mean_10pct")
     assert FeatureRollupRegistry.exists("tail_ratio_p95_p50")
+    assert FeatureRollupRegistry.exists("ofi_imbalance")
 
 
 def test_validate_params_missing_required():
@@ -69,3 +70,8 @@ def test_validate_required_columns_checks_param_column_references():
 def test_build_expr_applies_default_params():
     expr = FeatureRollupRegistry.build_expr("tail_ratio_p95_p50", "_x", params=None)
     assert isinstance(expr, pl.Expr)
+
+
+def test_ofi_imbalance_rejects_non_numeric_epsilon():
+    with pytest.raises(ValueError, match="expected number"):
+        FeatureRollupRegistry.validate_params("ofi_imbalance", {"epsilon": "bad"})

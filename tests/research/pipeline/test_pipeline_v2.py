@@ -253,6 +253,60 @@ def test_pipeline_tick_then_bar_custom_rollup_weighted_close():
     assert "spread_stats_weighted_close" in output["results"]["columns"]
 
 
+def test_pipeline_tick_then_bar_custom_rollup_ofi_imbalance():
+    request = _base_request("tick_then_bar")
+    request["sources"][0]["name"] = "books"
+    request["sources"][0]["inline_rows"] = [
+        {
+            "ts_local_us": 10_000_000,
+            "exchange_id": 1,
+            "symbol_id": 12345,
+            "bids_px_int": [100],
+            "asks_px_int": [101],
+            "bids_sz_int": [10],
+            "asks_sz_int": [12],
+            "file_id": 1,
+            "file_line_number": 1,
+        },
+        {
+            "ts_local_us": 20_000_000,
+            "exchange_id": 1,
+            "symbol_id": 12345,
+            "bids_px_int": [101],
+            "asks_px_int": [102],
+            "bids_sz_int": [8],
+            "asks_sz_int": [9],
+            "file_id": 1,
+            "file_line_number": 2,
+        },
+        {
+            "ts_local_us": 30_000_000,
+            "exchange_id": 1,
+            "symbol_id": 12345,
+            "bids_px_int": [101],
+            "asks_px_int": [101],
+            "bids_sz_int": [6],
+            "asks_sz_int": [15],
+            "file_id": 1,
+            "file_line_number": 3,
+        },
+    ]
+    request["operators"] = [
+        _operator_contract(
+            "ofi_cont",
+            source_column="bids_sz_int",
+            name="ofi_stats",
+            feature_rollups=["sum", "ofi_imbalance"],
+            feature_rollup_params={"ofi_imbalance": {"epsilon": 1e-9}},
+        )
+    ]
+    request["labels"] = []
+
+    output = pipeline(request)
+    assert "ofi_stats_sum" in output["results"]["columns"]
+    assert "ofi_stats_ofi_imbalance" in output["results"]["columns"]
+
+
 def test_pipeline_tick_then_bar_rejects_unknown_custom_rollup():
     request = _base_request("tick_then_bar")
     request["sources"][0]["name"] = "quotes"

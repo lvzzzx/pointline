@@ -340,6 +340,43 @@ class TestAggregatePatternB:
         result = aggregate(data, config).collect()
         assert result["tail_ratio_tail_ratio_p95_p50"][0] >= 0.0
 
+    def test_custom_rollup_ofi_imbalance_from_ofi_cont(self):
+        """Pattern B supports normalized OFI imbalance from ofi_cont feature stream."""
+        data = pl.LazyFrame(
+            {
+                "exchange_id": [1, 1, 1],
+                "symbol_id": [12345, 12345, 12345],
+                "bucket_ts": [60_000_000, 60_000_000, 60_000_000],
+                "ts_local_us": [10_000_000, 20_000_000, 30_000_000],
+                "bids_px_int": [[100], [101], [101]],
+                "asks_px_int": [[101], [102], [101]],
+                "bids_sz_int": [[10], [8], [6]],
+                "asks_sz_int": [[12], [9], [15]],
+            }
+        )
+
+        config = AggregateConfig(
+            by=["exchange_id", "symbol_id", "bucket_ts"],
+            aggregations=[
+                AggregationSpec(
+                    name="ofi_bar",
+                    source_column="bids_sz_int",
+                    agg="ofi_cont",
+                    feature_rollups=["sum", "ofi_imbalance"],
+                    feature_rollup_params={"ofi_imbalance": {"epsilon": 1e-9}},
+                ),
+            ],
+            mode="tick_then_bar",
+            research_mode="HFT",
+        )
+
+        result = aggregate(data, config).collect()
+        assert "ofi_bar_sum" in result.columns
+        assert "ofi_bar_ofi_imbalance" in result.columns
+
+        assert result["ofi_bar_sum"][0] == 3
+        assert result["ofi_bar_ofi_imbalance"][0] == pytest.approx(3.0 / 37.0, abs=1e-9)
+
 
 class TestAggregateSemanticValidation:
     """Test semantic type policy enforcement."""

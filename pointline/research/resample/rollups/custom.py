@@ -64,3 +64,23 @@ def tail_ratio_p95_p50(feature_col: str, params: dict[str, object]) -> pl.Expr:
     epsilon = max(float(params.get("epsilon", 1e-12)), 0.0)
     denom = pl.max_horizontal(q50.abs(), pl.lit(epsilon))
     return q95 / denom
+
+
+@FeatureRollupRegistry.register_feature_rollup(
+    name="ofi_imbalance",
+    required_params={},
+    required_columns=[],
+    mode_allowlist=["HFT", "MFT", "LFT"],
+    semantic_allowlist=["any"],
+    pit_policy={"feature_direction": "backward_only"},
+    determinism_policy={"required_sort": ["exchange_id", "symbol_id", "ts_local_us"]},
+    optional_params={"epsilon": "number"},
+    default_params={"epsilon": 1e-12},
+)
+def ofi_imbalance(feature_col: str, params: dict[str, object]) -> pl.Expr:
+    """Normalized OFI rollup: sum(OFI) / max(sum(abs(OFI)), epsilon)."""
+    col = pl.col(feature_col)
+    epsilon = max(float(params.get("epsilon", 1e-12)), 0.0)
+    numer = col.sum()
+    denom = col.abs().sum()
+    return pl.when(denom > epsilon).then(numer / denom).otherwise(None)
