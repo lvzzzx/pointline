@@ -11,6 +11,12 @@ import polars as pl
 
 from .config import AggregateConfig, AggregationSpec
 from .registry import SEMANTIC_POLICIES, AggregationMetadata, AggregationRegistry
+from .rollups import (
+    FeatureRollupRegistry,
+    build_builtin_feature_rollup_expr,
+    is_builtin_feature_rollup,
+    normalize_feature_rollup_names,
+)
 
 
 def aggregate(
@@ -95,17 +101,33 @@ def aggregate(
 
         # Aggregate computed features
         feature_agg_exprs: list[pl.Expr] = []
+        available_columns = set(feature_data.columns)
         for spec, _meta in stage_2_aggs:
             feature_col = f"_{spec.agg}_feature"
+            rollups = normalize_feature_rollup_names(spec.feature_rollups)
+            params_by_rollup = spec.feature_rollup_params or {}
+            unknown_param_rollups = sorted(set(params_by_rollup) - set(rollups))
+            if unknown_param_rollups:
+                raise ValueError(
+                    f"feature_rollup_params contains unknown rollups for {spec.name}: "
+                    f"{unknown_param_rollups}"
+                )
 
-            # Standard distribution statistics for Pattern B
+            _validate_custom_rollups_for_spec(
+                spec=spec,
+                rollups=rollups,
+                params_by_rollup=params_by_rollup,
+                research_mode=config.research_mode,
+                available_columns=available_columns,
+            )
+
             feature_agg_exprs.extend(
-                [
-                    pl.col(feature_col).mean().alias(f"{spec.name}_mean"),
-                    pl.col(feature_col).std().alias(f"{spec.name}_std"),
-                    pl.col(feature_col).min().alias(f"{spec.name}_min"),
-                    pl.col(feature_col).max().alias(f"{spec.name}_max"),
-                ]
+                _build_feature_rollup_expr(
+                    feature_col=feature_col,
+                    rollup=rollup,
+                    params=params_by_rollup.get(rollup),
+                ).alias(f"{spec.name}_{rollup}")
+                for rollup in rollups
             )
 
         feature_result = feature_data.group_by(config.by).agg(feature_agg_exprs)
@@ -228,3 +250,34 @@ def _build_builtin_agg_expr(spec: AggregationSpec) -> pl.Expr:
             return col.n_unique()
         case _:
             raise ValueError(f"Unknown aggregation: {spec.agg}")
+
+
+def _validate_custom_rollups_for_spec(
+    *,
+    spec: AggregationSpec,
+    rollups: list[str],
+    params_by_rollup: dict[str, dict[str, object]],
+    research_mode: str,
+    available_columns: set[str],
+) -> None:
+    for rollup in rollups:
+        if is_builtin_feature_rollup(rollup):
+            continue
+        if not FeatureRollupRegistry.exists(rollup):
+            raise ValueError(f"Feature rollup not registered: {rollup}")
+        FeatureRollupRegistry.validate_for_mode(rollup, research_mode)
+        FeatureRollupRegistry.validate_semantic(rollup, spec.semantic_type)
+        params = params_by_rollup.get(rollup)
+        FeatureRollupRegistry.validate_params(rollup, params)
+        FeatureRollupRegistry.validate_required_columns(rollup, available_columns, params)
+
+
+def _build_feature_rollup_expr(
+    *,
+    feature_col: str,
+    rollup: str,
+    params: dict[str, object] | None = None,
+) -> pl.Expr:
+    if is_builtin_feature_rollup(rollup):
+        return build_builtin_feature_rollup_expr(feature_col, rollup)
+    return FeatureRollupRegistry.build_expr(rollup, feature_col, params)

@@ -1,7 +1,7 @@
 """Configuration schemas for resample and aggregate operations."""
 
 from dataclasses import dataclass
-from typing import Literal
+from typing import Any, Literal
 
 
 @dataclass(frozen=True)
@@ -13,12 +13,19 @@ class AggregationSpec:
         source_column: Input column to aggregate
         agg: Aggregation name (e.g., "sum", "mean", "microprice_close")
         semantic_type: Optional semantic type for validation (e.g., "price", "size")
+        feature_rollups: Optional rollups for feature_then_aggregate stage
+            Example: ["sum", "last", "close"].
+            If omitted, Pattern B defaults to ["mean", "std", "min", "max"].
+        feature_rollup_params: Optional params per rollup name.
+            Example: {"weighted_close": {"weight_column": "qty_int"}}.
     """
 
     name: str
     source_column: str
     agg: str
     semantic_type: str | None = None
+    feature_rollups: list[str] | None = None
+    feature_rollup_params: dict[str, dict[str, Any]] | None = None
 
 
 @dataclass(frozen=True)

@@ -9,8 +9,8 @@ This module provides:
 - Aggregation execution engine
 """
 
-# Import builtins and custom aggregations to register
-from . import aggregations, builtins  # noqa: F401
+# Import builtins/custom aggregations and rollups to register
+from . import aggregations, builtins, rollups  # noqa: F401
 from .aggregate import aggregate
 from .bucket_assignment import assign_to_buckets
 from .config import AggregateConfig, AggregationSpec, ResampleConfig
@@ -21,6 +21,13 @@ from .registry import (
     AggregationRegistry,
     ComputeFeaturesCallable,
 )
+from .rollups import (
+    BUILTIN_FEATURE_ROLLUPS,
+    DEFAULT_FEATURE_ROLLUPS,
+    FeatureRollupCallable,
+    FeatureRollupMetadata,
+    FeatureRollupRegistry,
+)
 
 __all__ = [
     # Registry
@@ -28,6 +35,11 @@ __all__ = [
     "AggregationMetadata",
     "AggregateRawCallable",
     "ComputeFeaturesCallable",
+    "FeatureRollupRegistry",
+    "FeatureRollupMetadata",
+    "FeatureRollupCallable",
+    "DEFAULT_FEATURE_ROLLUPS",
+    "BUILTIN_FEATURE_ROLLUPS",
     "SEMANTIC_POLICIES",
     # Config
     "AggregateConfig",
