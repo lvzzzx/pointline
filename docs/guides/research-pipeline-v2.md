@@ -2,6 +2,9 @@
 
 `research.pipeline(request)` is the canonical production execution path for feature engineering, resample, and aggregate workflows.
 
+For multi-stage hybrid compositions across modes, use:
+- `research.workflow(request)` (see `docs/guides/research-workflow-hybrid.md`)
+
 ## Contract Schemas
 
 - Input: `schemas/quant_research_input.v2.json`
@@ -19,6 +22,20 @@ from pointline.research import (
 validate_quant_research_input_v2(request)
 output = pipeline(request)
 validate_quant_research_output_v2(output)
+```
+
+Hybrid workflow validation:
+
+```python
+from pointline.research import (
+    workflow,
+    validate_quant_research_workflow_input_v2,
+    validate_quant_research_workflow_output_v2,
+)
+
+validate_quant_research_workflow_input_v2(workflow_request)
+workflow_output = workflow(workflow_request)
+validate_quant_research_workflow_output_v2(workflow_output)
 ```
 
 ## Modes
