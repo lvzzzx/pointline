@@ -13,14 +13,14 @@ from unittest.mock import patch
 import polars as pl
 import pytest
 
-from pointline.research.features.spines import ClockSpineConfig
-from pointline.research.features.spines.clock import ClockSpineBuilder
+from pointline.research.spines import ClockSpineConfig
+from pointline.research.spines.clock import ClockSpineBuilder
 
 
 @pytest.fixture
 def mock_dim_symbol():
     """Mock dim_symbol table for testing."""
-    with patch("pointline.research.features.spines.clock.read_dim_symbol_table") as mock:
+    with patch("pointline.research.spines.clock.read_dim_symbol_table") as mock:
         # Return a mock DataFrame with test symbol_ids
         mock_df = pl.DataFrame(
             {
@@ -271,7 +271,7 @@ class TestClockSpineEdgeCases:
     def test_wrong_config_type(self):
         """Test validation of config type."""
         builder = ClockSpineBuilder()
-        from pointline.research.features.spines.base import SpineBuilderConfig
+        from pointline.research.spines.base import SpineBuilderConfig
 
         # Wrong config type
         config = SpineBuilderConfig()

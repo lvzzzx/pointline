@@ -64,8 +64,8 @@ Example - Query API (decoded):
 """
 
 # Import everything from core module to maintain backward compatibility
-# Import query module (not individual functions, so users access via query.*)
-from pointline.research import query
+# Import query/spines modules (not individual functions, so users access via module.*)
+from pointline.research import query, spines
 from pointline.research.contracts import (
     validate_quant_research_input_v2,
     validate_quant_research_output_v2,
@@ -122,6 +122,8 @@ __all__ = [
     "summarize_symbol",
     # Query module (convenience layer)
     "query",
+    # Spine builders (top-level)
+    "spines",
     # Pipeline API
     "pipeline",
     "compile_request",

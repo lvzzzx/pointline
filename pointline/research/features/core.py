@@ -9,10 +9,9 @@ import polars as pl
 
 from pointline.dim_symbol import read_dim_symbol_table
 from pointline.research import core as research_core
+from pointline.research.spines import get_builder_by_config
+from pointline.research.spines.base import SpineBuilderConfig
 from pointline.types import TimestampInput
-
-from .spines import get_builder_by_config
-from .spines.base import SpineBuilderConfig
 
 
 @dataclass(frozen=True)
@@ -153,7 +152,7 @@ def build_event_spine(
 
     Example:
         from pointline.research.features import EventSpineConfig, build_event_spine
-        from pointline.research.features.spines import VolumeBarConfig
+        from pointline.research.spines import VolumeBarConfig
 
         config = EventSpineConfig(
             builder_config=VolumeBarConfig(volume_threshold=1000.0)

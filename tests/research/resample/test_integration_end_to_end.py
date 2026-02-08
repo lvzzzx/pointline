@@ -12,19 +12,19 @@ from unittest.mock import patch
 import polars as pl
 import pytest
 
-from pointline.research.features.spines import ClockSpineBuilder, ClockSpineConfig
 from pointline.research.resample import (
     AggregateConfig,
     AggregationSpec,
     aggregate,
     assign_to_buckets,
 )
+from pointline.research.spines import ClockSpineBuilder, ClockSpineConfig
 
 
 @pytest.fixture
 def mock_dim_symbol():
     """Mock dim_symbol table for testing."""
-    with patch("pointline.research.features.spines.clock.read_dim_symbol_table") as mock:
+    with patch("pointline.research.spines.clock.read_dim_symbol_table") as mock:
         # Return a mock DataFrame with test symbol_ids
         mock_df = pl.DataFrame(
             {

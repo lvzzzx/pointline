@@ -371,21 +371,21 @@ df = lf.collect()
 - Harris, L. (2003). *Trading and Exchanges: Market Microstructure for Practitioners*, Chapter 7.
 
 **Implementation:**
-- Pointline Spine Builder System: `/pointline/research/features/spines/`
+- Pointline Spine Builder System: `/pointline/research/spines/`
 - Feature Engineering Guide: `docs/guides/feature-engineering.md` (TODO)
 
 ## API Reference
 
 **Quick Links:**
 - `build_event_spine()`: `pointline/research/features/core.py:125`
-- `ClockSpineConfig`: `pointline/research/features/spines/clock.py:17`
-- `TradesSpineConfig`: `pointline/research/features/spines/trades.py:17`
-- `VolumeBarConfig`: `pointline/research/features/spines/volume.py:21`
-- `DollarBarConfig`: `pointline/research/features/spines/dollar.py:21`
+- `ClockSpineConfig`: `pointline/research/spines/clock.py:17`
+- `TradesSpineConfig`: `pointline/research/spines/trades.py:17`
+- `VolumeBarConfig`: `pointline/research/spines/volume.py:21`
+- `DollarBarConfig`: `pointline/research/spines/dollar.py:21`
 
 **Registry Functions:**
 ```python
-from pointline.research.features.spines import (
+from pointline.research.spines import (
     list_builders,      # List all registered builders
     get_builder,        # Get builder by name
     detect_builder,     # Auto-detect builder from mode string
@@ -412,7 +412,7 @@ See `docs/guides/custom-spine-builders.md` (TODO) for how to implement your own 
 Example skeleton:
 
 ```python
-from pointline.research.features.spines import SpineBuilder, SpineBuilderConfig, register_builder
+from pointline.research.spines import SpineBuilder, SpineBuilderConfig, register_builder
 
 class CustomSpineBuilder:
     @property

@@ -52,7 +52,7 @@ This document fixes critical issues from the initial draft:
 │ ├─ DollarSpineBuilder (notional thresholds)                 │
 │ └─ TradeSpineBuilder (trade count)                          │
 │                                                              │
-│ Location: pointline/research/features/spines/ (EXISTING)   │
+│ Location: pointline/research/spines/ (EXISTING)   │
 │ Output: LazyFrame[ts_local_us, exchange_id, symbol_id]      │
 └────────────────────┬────────────────────────────────────────┘
                      │
@@ -143,7 +143,7 @@ With explicit [start, end) windows:
 ### 2. Spine Location (CORRECTED)
 
 **Use Existing Spine System:**
-- Location: `pointline/research/features/spines/` (EXISTING)
+- Location: `pointline/research/spines/` (EXISTING)
 - Extend existing builders, don't create parallel system
 - Migration: Add protocol to existing classes, preserve current functionality
 
@@ -196,13 +196,13 @@ class AggregationMetadata:
 Extend existing spine system with protocol, don't replace it
 
 ### Location
-**CORRECTED:** Use `pointline/research/features/spines/` (existing directory)
+**CORRECTED:** Use `pointline/research/spines/` (existing directory)
 
 ### Deliverables
 
 #### 1. Spine Protocol Definition
 
-**File**: `pointline/research/features/spines/protocol.py` (NEW)
+**File**: `pointline/research/spines/protocol.py` (NEW)
 
 ```python
 from typing import Protocol
@@ -254,7 +254,7 @@ class SpineBuilder(Protocol):
 
 #### 2. Update Existing Spine Builders
 
-**File**: `pointline/research/features/spines/clock.py` (EXISTING - UPDATE)
+**File**: `pointline/research/spines/clock.py` (EXISTING - UPDATE)
 
 ```python
 # EXISTING FILE - ADD PROTOCOL IMPLEMENTATION
@@ -342,7 +342,7 @@ class ClockSpineBuilder:
         return value * multipliers[unit]
 ```
 
-**File**: `pointline/research/features/spines/volume.py` (EXISTING - UPDATE)
+**File**: `pointline/research/spines/volume.py` (EXISTING - UPDATE)
 
 ```python
 # EXISTING FILE - ADD PROTOCOL IMPLEMENTATION AND FIX COLUMN NAMES
@@ -429,7 +429,7 @@ class VolumeSpineBuilder:
 ```python
 import pytest
 import polars as pl
-from pointline.research.features.spines import ClockSpineBuilder
+from pointline.research.spines import ClockSpineBuilder
 
 def test_clock_spine_bar_end_semantics():
     """CRITICAL: Verify spine timestamps are bar ENDS."""
@@ -496,7 +496,7 @@ def test_volume_spine_threshold_crossings():
 
     COMPLETE: Not a TODO placeholder.
     """
-    from pointline.research.features.spines import VolumeSpineBuilder
+    from pointline.research.spines import VolumeSpineBuilder
 
     # Create synthetic trades
     trades = pl.LazyFrame({
@@ -518,7 +518,7 @@ def test_volume_spine_threshold_crossings():
 ### Files Updated/Created
 
 ```
-pointline/research/features/spines/
+pointline/research/spines/
 ├── __init__.py              # EXISTING - update exports
 ├── protocol.py              # NEW - SpineBuilder protocol
 ├── clock.py                 # EXISTING - add protocol impl
@@ -1814,7 +1814,7 @@ Due to length, these phases are abbreviated here but follow the same correction 
 
 ### 4. Spine Location ✅
 - **BEFORE:** Created parallel `pointline/research/spine/` structure
-- **AFTER:** Extends existing `pointline/research/features/spines/`
+- **AFTER:** Extends existing `pointline/research/spines/`
 - **Rationale:** Avoid duplication and maintenance drift
 
 ### 5. API Accuracy ✅

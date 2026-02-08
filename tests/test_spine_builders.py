@@ -4,7 +4,7 @@ import polars as pl
 import pytest
 
 from pointline.research.features.core import EventSpineConfig, build_event_spine
-from pointline.research.features.spines import (
+from pointline.research.spines import (
     ClockSpineConfig,
     DollarBarConfig,
     TradesSpineConfig,

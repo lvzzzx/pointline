@@ -11,7 +11,7 @@ This module provides extensible resampling methods for feature engineering:
 - Time weighted spine: Time-weighted bars (TWAP/VWAP)
 
 Usage:
-    from pointline.research.features.spines import get_builder, ClockSpineConfig
+    from pointline.research.spines import get_builder, ClockSpineConfig
 
     builder = get_builder("clock")
     spine = builder.build_spine(
