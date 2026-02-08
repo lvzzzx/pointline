@@ -2,6 +2,8 @@
 
 Generates spine points at regular time intervals (e.g., every 1 second).
 This is the most common resampling method for time-series analysis.
+
+UPDATED: Now includes explicit bar-end semantics per resample-aggregate design.
 """
 
 from dataclasses import dataclass
@@ -27,26 +29,44 @@ class ClockSpineConfig(SpineBuilderConfig):
 
 
 class ClockSpineBuilder:
-    """Clock spine builder: Fixed time interval resampling."""
+    """Clock spine builder: Fixed time interval resampling.
+
+    Bar Semantics (CRITICAL):
+    -------------------------
+    - Spine timestamps are BAR ENDS (interval ends, not starts)
+    - Bar at timestamp T contains data with ts_local_us < T
+    - Bar window = [T_prev, T) (half-open interval)
+
+    Example:
+        config = ClockSpineConfig(step_ms=60000)  # 1 minute
+        spine = builder.build_spine(..., start_ts_us=0, end_ts_us=180_000_000, config=config)
+
+        Generates: [60_000_000, 120_000_000, 180_000_000]
+        These are bar ENDS: Bar at 60s contains data in [0s, 60s)
+    """
 
     @property
     def name(self) -> str:
+        """Unique identifier for this builder."""
         return "clock"
 
     @property
     def display_name(self) -> str:
+        """Human-readable name."""
         return "Clock (Fixed Time Intervals)"
 
     @property
     def supports_single_symbol(self) -> bool:
+        """Whether this builder supports single-symbol mode."""
         return True
 
     @property
     def supports_multi_symbol(self) -> bool:
+        """Whether this builder supports multi-symbol mode."""
         return True
 
     def can_handle(self, mode: str) -> bool:
-        """Recognize: clock, time, fixed_time."""
+        """Check if this builder can handle the given mode string."""
         return mode.lower() in {"clock", "time", "fixed_time"}
 
     def build_spine(
@@ -58,6 +78,8 @@ class ClockSpineBuilder:
     ) -> pl.LazyFrame:
         """Build clock spine with fixed time intervals.
 
+        CRITICAL: Spine timestamps are BAR ENDS (interval ends).
+
         Args:
             symbol_id: Single symbol_id or list of symbol_ids
             start_ts_us: Start timestamp (microseconds, UTC)
@@ -67,6 +89,14 @@ class ClockSpineBuilder:
         Returns:
             LazyFrame with (ts_local_us, exchange_id, symbol_id)
             sorted by (exchange_id, symbol_id, ts_local_us)
+
+            IMPORTANT: ts_local_us values are bar ENDS (interval ends).
+
+        Example:
+            start_ts_us=0, end_ts_us=180_000_000, step_ms=60000
+            → Generates: [60_000_000, 120_000_000, 180_000_000]
+            → Bar at 60ms contains data in [0ms, 60ms)
+            → Bar at 120ms contains data in [60ms, 120ms)
         """
         if not isinstance(config, ClockSpineConfig):
             raise TypeError(f"Expected ClockSpineConfig, got {type(config).__name__}")
@@ -83,19 +113,34 @@ class ClockSpineBuilder:
         # Compute step in microseconds
         step_us = config.step_ms * 1_000
 
-        # Compute number of steps
-        steps = (end_ts_us - start_ts_us) // step_us + 1
-        total_rows = steps * len(symbol_ids)
+        # Generate bar boundary timestamps (interval ENDS)
+        # CRITICAL: First bar end is at start + step, not at start
+        grid_start = self._align_to_grid(start_ts_us, step_us)
+        timestamps: list[int] = []
+        current = grid_start
+        while current <= end_ts_us:
+            timestamps.append(current)
+            current += step_us
 
+        if not timestamps:
+            # Edge case: no bars in range
+            return pl.LazyFrame(
+                schema={
+                    "ts_local_us": pl.Int64,
+                    "exchange_id": pl.Int16,
+                    "symbol_id": pl.Int64,
+                }
+            )
+
+        # Safety check
+        total_rows = len(timestamps) * len(symbol_ids)
         if total_rows > config.max_rows:
             raise RuntimeError(
                 f"Clock spine would generate too many rows: {total_rows:,} > {config.max_rows:,}. "
                 f"Increase step_ms or max_rows."
             )
 
-        # Generate timestamps
-        stop_us = start_ts_us + step_us * steps
-        timestamps = pl.int_range(start_ts_us, stop_us, step_us, eager=True)
+        # Create time DataFrame
         time_df = pl.DataFrame({"ts_local_us": timestamps})
 
         # Create symbols table with correct types
@@ -111,6 +156,34 @@ class ClockSpineBuilder:
 
         # Sort by (exchange_id, symbol_id, ts_local_us) for deterministic ordering
         return spine.sort(["exchange_id", "symbol_id", "ts_local_us"])
+
+    def _align_to_grid(self, ts: int, step_us: int) -> int:
+        """Align timestamp to grid and return FIRST bar end.
+
+        Args:
+            ts: Input timestamp (microseconds)
+            step_us: Step size in microseconds
+
+        Returns:
+            First bar end timestamp >= ts aligned to grid
+
+        Example:
+            ts=0, step_us=60_000_000
+            → Returns 60_000_000 (first bar ends at 1 minute)
+
+            ts=50_000_000, step_us=60_000_000
+            → Returns 60_000_000 (first bar ends at 1 minute)
+
+            ts=70_000_000, step_us=60_000_000
+            → Returns 120_000_000 (first bar ends at 2 minutes)
+        """
+        # Find how many complete intervals have passed
+        intervals_passed = ts // step_us
+
+        # First bar end is one interval after the last complete interval
+        bar_end = (intervals_passed + 1) * step_us
+
+        return bar_end
 
     def _resolve_exchange_ids(self, symbol_ids: list[int]) -> list[int]:
         """Resolve exchange_ids from symbol_ids via dim_symbol."""

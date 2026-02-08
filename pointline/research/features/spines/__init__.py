@@ -27,8 +27,8 @@ Usage:
 from . import clock, dollar, trades, volume  # noqa: F401
 from .base import SpineBuilder, SpineBuilderConfig
 
-# Export builder configs
-from .clock import ClockSpineConfig
+# Export builder configs and builders
+from .clock import ClockSpineBuilder, ClockSpineConfig
 from .dollar import DollarBarConfig
 
 # Registry functions
@@ -54,6 +54,8 @@ __all__ = [
     "detect_builder",
     "list_builders",
     "get_builder_info",
+    # Builders
+    "ClockSpineBuilder",
     # Configs
     "ClockSpineConfig",
     "TradesSpineConfig",

@@ -32,9 +32,29 @@ class SpineBuilder(Protocol):
     Each builder implements a specific resampling strategy (e.g., volume bars, dollar bars).
     Builders are registered in the global registry and can be looked up by name.
 
+    Bar Timestamp Semantics (CRITICAL):
+    -----------------------------------
+    - Spine timestamps are BAR ENDS (interval ends, not starts)
+    - Bar at timestamp T contains all data with ts_local_us < T
+    - Bar window = [T_prev, T) (half-open interval, right-exclusive)
+
+    Example:
+        Spine timestamps: [60ms, 120ms, 180ms]
+
+        Bar at 60ms contains: data in [0ms, 60ms)
+        Bar at 120ms contains: data in [60ms, 120ms)
+        Bar at 180ms contains: data in [120ms, 180ms)
+
+        Data at 50ms → assigned to bar at 60ms
+        Data at 60ms → assigned to bar at 120ms (boundary goes to next)
+        Data at 110ms → assigned to bar at 120ms
+
+    This ensures Point-In-Time (PIT) correctness: all data in bar has ts < bar timestamp.
+
     Contract:
     - build_spine() must return LazyFrame with (ts_local_us, exchange_id, symbol_id)
     - Output must be sorted by (exchange_id, symbol_id, ts_local_us)
+    - Timestamps must be bar ENDS (interval ends)
     - Must preserve PIT correctness (no lookahead bias)
     """
 

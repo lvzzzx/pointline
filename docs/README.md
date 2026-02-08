@@ -60,6 +60,7 @@ pytest
 | [Choosing an API](guides/choosing-an-api.md) | Query API vs Core API decision guide |
 | [Dim Asset Stats Usage](guides/dim-asset-stats-usage.md) | Working with asset statistics |
 | [Feature Engineering (MFT)](guides/feature-engineering.md) | PIT-correct feature framework for MFT workflows |
+| [Feature Pipeline Modes](guides/feature-pipeline-modes.md) | Decision matrix and PIT-safe templates for event-joined, tick-then-bar, and bar-then-feature workflows |
 | [Roles & Responsibilities](roles-and-responsibilities.md) | Ownership boundaries, review routing, and handoff contracts |
 
 **Common tasks:**
@@ -108,6 +109,7 @@ pointline dim-symbol upsert --file ./symbols.csv
 | [Performance](architecture/performance-considerations.md) | Query optimization and best practices |
 | [Storage & I/O](architecture/storage-io-design.md) | Bronze/Silver/Gold layer design |
 | [Bronze Prehooks](architecture/bronze-prehooks-design.md) | ETL preprocessing pipeline |
+| [Resample & Aggregate Design](architecture/resample-aggregate-design.md) | Contract-first architecture for PIT-safe resampling, typed/custom aggregation, and mode-aware pipelines |
 | [Quant Researcher Agent Spec](agents/quant-researcher-agent-spec.md) | Contract-first plan and I/O schemas for automated quant research runs |
 
 ---
