@@ -12,6 +12,7 @@ from pointline.research import (
     validate_quant_research_workflow_output_v2,
     workflow,
 )
+from pointline.research.contracts import SchemaValidationError
 from pointline.research.resample import AggregationRegistry
 from pointline.research.workflow import WorkflowError
 
@@ -344,3 +345,17 @@ def test_stage_config_hash_changes_when_artifact_ref_changes():
         if stage_run["stage_id"] == "s2"
     )
     assert stage2_hash_a != stage2_hash_b
+
+
+def test_workflow_schema_rejects_fail_fast_false():
+    request = _base_workflow_request()
+    request["constraints"]["fail_fast"] = False
+    with pytest.raises(SchemaValidationError):
+        validate_quant_research_workflow_input_v2(request)
+
+
+def test_compile_workflow_rejects_fail_fast_false_defensive():
+    request = _base_workflow_request()
+    request["constraints"]["fail_fast"] = False
+    with pytest.raises(WorkflowError, match="fail_fast must be true"):
+        compile_workflow_request(request)

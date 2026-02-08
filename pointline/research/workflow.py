@@ -118,8 +118,7 @@ def workflow(request: dict[str, Any]) -> dict[str, Any]:
                 workflow_failed_gates.extend(
                     f"{stage_id}:{gate_name}" for gate_name in gates["failed_gates"]
                 )
-                if compiled["constraints"]["fail_fast"]:
-                    break
+                break
 
         except Exception as exc:
             schema_errors.append(str(exc))
@@ -232,6 +231,8 @@ def compile_workflow_request(request: dict[str, Any]) -> dict[str, Any]:
     """Compile workflow request into an executable DAG plan."""
     compiled = deepcopy(request)
     compiled["workflow_run_id"] = f"wf-{uuid.uuid4().hex[:12]}"
+    if not compiled["constraints"].get("fail_fast", True):
+        raise WorkflowError("workflow.constraints.fail_fast must be true in v2")
 
     base_source_map: dict[str, dict[str, Any]] = {}
     for source in compiled["base_sources"]:

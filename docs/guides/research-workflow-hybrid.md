@@ -27,6 +27,7 @@ Each stage source uses explicit references:
 
 Workflow executes stages in DAG order.
 If a stage fails critical gates, the workflow stops immediately and returns `decision.status="reject"`.
+In v2, this behavior is mandatory (`constraints.fail_fast` must be `true`).
 
 ## Minimal shape
 

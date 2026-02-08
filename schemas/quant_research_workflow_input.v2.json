@@ -368,8 +368,7 @@
       "required": ["fail_fast"],
       "properties": {
         "fail_fast": {
-          "type": "boolean",
-          "default": true
+          "const": true
         }
       }
     },
