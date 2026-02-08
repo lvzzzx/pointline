@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib
 from copy import deepcopy
 
 import pytest
@@ -15,6 +16,8 @@ from pointline.research import (
 from pointline.research.contracts import SchemaValidationError
 from pointline.research.resample import AggregationRegistry
 from pointline.research.workflow import WorkflowError
+
+workflow_module = importlib.import_module("pointline.research.workflow")
 
 
 def _operator_contract(
@@ -359,3 +362,20 @@ def test_compile_workflow_rejects_fail_fast_false_defensive():
     request["constraints"]["fail_fast"] = False
     with pytest.raises(WorkflowError, match="fail_fast must be true"):
         compile_workflow_request(request)
+
+
+def test_workflow_rejects_when_workflow_level_lineage_gate_fails(monkeypatch):
+    request = _base_workflow_request()
+    original_publish = workflow_module._publish_stage_outputs
+
+    def _drop_lineage_entry(stage, frame, artifact_store, lineage):
+        refs = original_publish(stage, frame, artifact_store, lineage)
+        if lineage:
+            lineage.pop()
+        return refs
+
+    monkeypatch.setattr(workflow_module, "_publish_stage_outputs", _drop_lineage_entry)
+
+    output = workflow(request)
+    assert output["decision"]["status"] == "reject"
+    assert "workflow:lineage_completeness_check" in output["quality_gates"]["failed_gates"]

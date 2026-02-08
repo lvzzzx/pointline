@@ -462,22 +462,34 @@ def _build_workflow_quality_gates(
     missing = sorted(
         f"artifact:{stage_id}:{output_name}" for stage_id, output_name in expected - actual
     )
+    lineage_passed = not missing
+    reference_errors: list[str] = []
+    reference_passed = len(reference_errors) == 0
+    schema_passed = len(schema_errors) == 0
+
+    failed = set(workflow_failed_gates)
+    if not lineage_passed:
+        failed.add("workflow:lineage_completeness_check")
+    if not reference_passed:
+        failed.add("workflow:reference_resolution_check")
+    if not schema_passed:
+        failed.add("workflow:schema_compatibility_check")
 
     return {
         "lineage_completeness_check": {
-            "passed": not missing,
+            "passed": lineage_passed,
             "missing": missing,
         },
         "reference_resolution_check": {
-            "passed": True,
-            "errors": [],
+            "passed": reference_passed,
+            "errors": reference_errors,
         },
         "schema_compatibility_check": {
-            "passed": len(schema_errors) == 0,
+            "passed": schema_passed,
             "errors": schema_errors,
         },
         "stage_gate_failures": stage_gate_failures,
-        "failed_gates": sorted(set(workflow_failed_gates)),
+        "failed_gates": sorted(failed),
     }
 
 
