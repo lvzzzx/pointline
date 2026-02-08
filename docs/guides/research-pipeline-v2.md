@@ -44,6 +44,26 @@ validate_quant_research_workflow_output_v2(workflow_output)
 - `tick_then_bar`: compute tick-level features through typed operators, then aggregate.
 - `event_joined`: PIT as-of align multi-stream event tables on a shared event spine.
 
+For `tick_then_bar` operators (`stage="feature_then_aggregate"`), you can customize bar rollups via
+`feature_rollups`, for example: `["sum", "last", "close"]`.
+
+You can also use registry-backed custom rollups with typed params:
+
+```python
+{
+  "name": "spread_stats",
+  "output_name": "spread_stats",
+  "stage": "feature_then_aggregate",
+  "agg": "spread_distribution",
+  "source_column": "bid_px_int",
+  "feature_rollups": ["mean", "weighted_close", "tail_ratio_p95_p50"],
+  "feature_rollup_params": {
+    "weighted_close": {"weight_column": "ask_px_int"},
+    "tail_ratio_p95_p50": {"epsilon": 1e-6}
+  }
+}
+```
+
 ## Required Input Top-Level Fields
 
 - `schema_version`

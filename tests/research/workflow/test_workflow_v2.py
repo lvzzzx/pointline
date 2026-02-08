@@ -16,10 +16,17 @@ from pointline.research.resample import AggregationRegistry
 from pointline.research.workflow import WorkflowError
 
 
-def _operator_contract(agg: str, *, source_column: str, name: str | None = None) -> dict:
+def _operator_contract(
+    agg: str,
+    *,
+    source_column: str,
+    name: str | None = None,
+    feature_rollups: list[str] | None = None,
+    feature_rollup_params: dict | None = None,
+) -> dict:
     meta = AggregationRegistry.get(agg)
     op_name = name or agg
-    return {
+    contract = {
         "name": op_name,
         "output_name": op_name,
         "stage": meta.stage,
@@ -32,6 +39,11 @@ def _operator_contract(agg: str, *, source_column: str, name: str | None = None)
         "impl_ref": meta.impl_ref,
         "version": meta.version,
     }
+    if feature_rollups is not None:
+        contract["feature_rollups"] = feature_rollups
+    if feature_rollup_params is not None:
+        contract["feature_rollup_params"] = feature_rollup_params
+    return contract
 
 
 def _stage_constraints() -> dict:
@@ -171,6 +183,29 @@ def test_workflow_end_to_end_validates_output():
     assert output["decision"]["status"] in {"go", "revise"}
     assert output["results"]["final_stage_id"] == "s3"
     assert len(output["stage_runs"]) == 3
+
+
+def test_workflow_supports_custom_rollups_in_intermediate_stage():
+    request = _base_workflow_request()
+    request["stages"][0]["operators"] = [
+        _operator_contract(
+            "spread_distribution",
+            source_column="bid_px_int",
+            name="spread_stats",
+            feature_rollups=["weighted_close"],
+            feature_rollup_params={"weighted_close": {"weight_column": "ask_px_int"}},
+        )
+    ]
+    request["stages"][1]["operators"] = [
+        _operator_contract("sum", source_column="spread_stats_weighted_close", name="sum_weighted")
+    ]
+    request["stages"][1]["spine"]["end_ts_us"] = 180_000_000
+    request["stages"][1]["evaluation"] = {"metrics": ["row_count"], "split_method": "fixed"}
+
+    output = workflow(request)
+    assert output["run"]["status"] == "success"
+    stage1 = next(item for item in output["stage_runs"] if item["stage_id"] == "s1")
+    assert "spread_stats_weighted_close" in stage1["columns"]
 
 
 def test_workflow_fail_fast_on_stage_gate_failure():

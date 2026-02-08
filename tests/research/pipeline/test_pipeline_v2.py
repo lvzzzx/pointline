@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 
+import polars as pl
 import pytest
 
 from pointline.research import (
@@ -14,12 +15,20 @@ from pointline.research import (
 )
 from pointline.research.contracts import SchemaValidationError
 from pointline.research.resample import AggregationRegistry
+from pointline.research.resample.rollups import FeatureRollupRegistry
 
 
-def _operator_contract(agg: str, *, source_column: str, name: str | None = None) -> dict:
+def _operator_contract(
+    agg: str,
+    *,
+    source_column: str,
+    name: str | None = None,
+    feature_rollups: list[str] | None = None,
+    feature_rollup_params: dict | None = None,
+) -> dict:
     meta = AggregationRegistry.get(agg)
     op_name = name or agg
-    return {
+    contract = {
         "name": op_name,
         "output_name": op_name,
         "stage": meta.stage,
@@ -32,6 +41,11 @@ def _operator_contract(agg: str, *, source_column: str, name: str | None = None)
         "impl_ref": meta.impl_ref,
         "version": meta.version,
     }
+    if feature_rollups is not None:
+        contract["feature_rollups"] = feature_rollups
+    if feature_rollup_params is not None:
+        contract["feature_rollup_params"] = feature_rollup_params
+    return contract
 
 
 def _base_request(mode: str) -> dict:
@@ -157,6 +171,208 @@ def test_pipeline_tick_then_bar_end_to_end():
     assert "spread_stats_mean" in output["results"]["columns"]
 
 
+def test_pipeline_tick_then_bar_custom_rollups_sum_last_close():
+    request = _base_request("tick_then_bar")
+    request["sources"][0]["name"] = "quotes"
+    request["sources"][0]["inline_rows"] = [
+        {
+            "ts_local_us": 10_000_000,
+            "exchange_id": 1,
+            "symbol_id": 12345,
+            "bid_px_int": 50000,
+            "ask_px_int": 50005,
+            "file_id": 1,
+            "file_line_number": 1,
+        },
+        {
+            "ts_local_us": 20_000_000,
+            "exchange_id": 1,
+            "symbol_id": 12345,
+            "bid_px_int": 50010,
+            "ask_px_int": 50015,
+            "file_id": 1,
+            "file_line_number": 2,
+        },
+    ]
+    request["operators"] = [
+        _operator_contract(
+            "spread_distribution",
+            source_column="bid_px_int",
+            name="spread_stats",
+            feature_rollups=["sum", "last", "close"],
+        )
+    ]
+    request["labels"] = []
+
+    output = pipeline(request)
+    cols = output["results"]["columns"]
+    assert "spread_stats_sum" in cols
+    assert "spread_stats_last" in cols
+    assert "spread_stats_close" in cols
+    assert "spread_stats_mean" not in cols
+
+
+def test_pipeline_tick_then_bar_custom_rollup_weighted_close():
+    request = _base_request("tick_then_bar")
+    request["sources"][0]["name"] = "quotes"
+    request["sources"][0]["inline_rows"] = [
+        {
+            "ts_local_us": 10_000_000,
+            "exchange_id": 1,
+            "symbol_id": 12345,
+            "bid_px_int": 50000,
+            "ask_px_int": 50005,
+            "file_id": 1,
+            "file_line_number": 1,
+        },
+        {
+            "ts_local_us": 20_000_000,
+            "exchange_id": 1,
+            "symbol_id": 12345,
+            "bid_px_int": 50010,
+            "ask_px_int": 50015,
+            "file_id": 1,
+            "file_line_number": 2,
+        },
+    ]
+    request["operators"] = [
+        _operator_contract(
+            "spread_distribution",
+            source_column="bid_px_int",
+            name="spread_stats",
+            feature_rollups=["weighted_close"],
+            feature_rollup_params={"weighted_close": {"weight_column": "ask_px_int"}},
+        )
+    ]
+    request["labels"] = []
+
+    output = pipeline(request)
+    assert "spread_stats_weighted_close" in output["results"]["columns"]
+
+
+def test_pipeline_tick_then_bar_rejects_unknown_custom_rollup():
+    request = _base_request("tick_then_bar")
+    request["sources"][0]["name"] = "quotes"
+    request["sources"][0]["inline_rows"] = [
+        {
+            "ts_local_us": 10_000_000,
+            "exchange_id": 1,
+            "symbol_id": 12345,
+            "bid_px_int": 50000,
+            "ask_px_int": 50005,
+            "file_id": 1,
+            "file_line_number": 1,
+        },
+    ]
+    request["operators"] = [
+        _operator_contract(
+            "spread_distribution",
+            source_column="bid_px_int",
+            name="spread_stats",
+            feature_rollups=["my_unknown_rollup"],
+        )
+    ]
+    request["labels"] = []
+
+    with pytest.raises(ValueError, match="Feature rollup not registered"):
+        pipeline(request)
+
+
+def test_pipeline_tick_then_bar_rejects_missing_custom_rollup_params():
+    request = _base_request("tick_then_bar")
+    request["sources"][0]["name"] = "quotes"
+    request["sources"][0]["inline_rows"] = [
+        {
+            "ts_local_us": 10_000_000,
+            "exchange_id": 1,
+            "symbol_id": 12345,
+            "bid_px_int": 50000,
+            "ask_px_int": 50005,
+            "file_id": 1,
+            "file_line_number": 1,
+        },
+    ]
+    request["operators"] = [
+        _operator_contract(
+            "spread_distribution",
+            source_column="bid_px_int",
+            name="spread_stats",
+            feature_rollups=["weighted_close"],
+        )
+    ]
+    request["labels"] = []
+
+    with pytest.raises(ValueError, match="missing required params"):
+        pipeline(request)
+
+
+def test_pipeline_tick_then_bar_rejects_params_for_unknown_rollup_key():
+    request = _base_request("tick_then_bar")
+    request["sources"][0]["name"] = "quotes"
+    request["sources"][0]["inline_rows"] = [
+        {
+            "ts_local_us": 10_000_000,
+            "exchange_id": 1,
+            "symbol_id": 12345,
+            "bid_px_int": 50000,
+            "ask_px_int": 50005,
+            "file_id": 1,
+            "file_line_number": 1,
+        },
+    ]
+    request["operators"] = [
+        _operator_contract(
+            "spread_distribution",
+            source_column="bid_px_int",
+            name="spread_stats",
+            feature_rollups=["sum"],
+            feature_rollup_params={"weighted_close": {"weight_column": "ask_px_int"}},
+        )
+    ]
+    request["labels"] = []
+
+    with pytest.raises(ValueError, match="contains unknown rollups"):
+        pipeline(request)
+
+
+def test_pipeline_tick_then_bar_rejects_disallowed_mode_for_custom_rollup():
+    @FeatureRollupRegistry.register_feature_rollup(
+        name="test_mft_only_rollup_pipeline",
+        required_params={},
+        required_columns=[],
+        mode_allowlist=["MFT"],
+        semantic_allowlist=["any"],
+    )
+    def test_mft_only_rollup_pipeline(feature_col: str, params: dict) -> object:
+        return pl.col(feature_col).mean()
+
+    request = _base_request("tick_then_bar")
+    request["sources"][0]["name"] = "quotes"
+    request["sources"][0]["inline_rows"] = [
+        {
+            "ts_local_us": 10_000_000,
+            "exchange_id": 1,
+            "symbol_id": 12345,
+            "bid_px_int": 50000,
+            "ask_px_int": 50005,
+            "file_id": 1,
+            "file_line_number": 1,
+        },
+    ]
+    request["operators"] = [
+        _operator_contract(
+            "spread_distribution",
+            source_column="bid_px_int",
+            name="spread_stats",
+            feature_rollups=["test_mft_only_rollup_pipeline"],
+        )
+    ]
+    request["labels"] = []
+
+    with pytest.raises(ValueError, match="not allowed in HFT"):
+        pipeline(request)
+
+
 def test_pipeline_event_joined_end_to_end():
     request = _base_request("event_joined")
     request["spine"] = {"type": "trades", "source": "trades"}
@@ -208,6 +424,61 @@ def test_quality_gate_blocks_forward_feature_operator():
 def test_input_contract_requires_operator_contract_fields():
     request = _base_request("bar_then_feature")
     del request["operators"][0]["impl_ref"]
+
+    with pytest.raises(SchemaValidationError):
+        validate_quant_research_input_v2(request)
+
+
+def test_input_contract_allows_custom_rollup_identifier():
+    request = _base_request("tick_then_bar")
+    request["sources"][0]["name"] = "quotes"
+    request["sources"][0]["inline_rows"] = [
+        {
+            "ts_local_us": 10_000_000,
+            "exchange_id": 1,
+            "symbol_id": 12345,
+            "bid_px_int": 50000,
+            "ask_px_int": 50005,
+            "file_id": 1,
+            "file_line_number": 1,
+        },
+    ]
+    request["operators"] = [
+        _operator_contract(
+            "spread_distribution",
+            source_column="bid_px_int",
+            name="spread_stats",
+            feature_rollups=["weighted_close"],
+            feature_rollup_params={"weighted_close": {"weight_column": "ask_px_int"}},
+        )
+    ]
+    request["labels"] = []
+    validate_quant_research_input_v2(request)
+
+
+def test_input_contract_rejects_invalid_custom_rollup_identifier():
+    request = _base_request("tick_then_bar")
+    request["sources"][0]["name"] = "quotes"
+    request["sources"][0]["inline_rows"] = [
+        {
+            "ts_local_us": 10_000_000,
+            "exchange_id": 1,
+            "symbol_id": 12345,
+            "bid_px_int": 50000,
+            "ask_px_int": 50005,
+            "file_id": 1,
+            "file_line_number": 1,
+        },
+    ]
+    request["operators"] = [
+        _operator_contract(
+            "spread_distribution",
+            source_column="bid_px_int",
+            name="spread_stats",
+            feature_rollups=["Weighted-Close"],
+        )
+    ]
+    request["labels"] = []
 
     with pytest.raises(SchemaValidationError):
         validate_quant_research_input_v2(request)

@@ -91,6 +91,10 @@ request = {
                     "determinism_policy": {"required_sort": ["exchange_id", "symbol_id", "ts_local_us"]},
                     "impl_ref": "pointline.research.resample.aggregations.microstructure.compute_ofi",
                     "version": "2.0",
+                    "feature_rollups": ["sum", "weighted_close"],
+                    "feature_rollup_params": {
+                        "weighted_close": {"weight_column": "ask_sz_int"}
+                    }
                 }
             ],
             "labels": [],

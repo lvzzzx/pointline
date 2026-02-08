@@ -168,6 +168,178 @@ class TestAggregatePatternB:
         result = aggregate(data, config).collect()
         assert "spread_alias_mean" in result.columns
 
+    def test_pattern_b_supports_custom_rollups_sum_last_close(self):
+        """Pattern B supports custom rollups for tick-feature aggregation."""
+
+        @AggregationRegistry.register_compute_features(
+            name="test_tick_rollup",
+            semantic_type="test",
+            mode_allowlist=["HFT", "MFT"],
+            required_columns=["value"],
+        )
+        def test_tick_rollup(lf: pl.LazyFrame, spec: AggregationSpec) -> pl.LazyFrame:
+            return lf.with_columns([(pl.col("value") * 2).alias("_test_tick_rollup_feature")])
+
+        data = pl.LazyFrame(
+            {
+                "exchange_id": [1, 1, 1],
+                "symbol_id": [12345, 12345, 12345],
+                "bucket_ts": [60_000_000, 60_000_000, 60_000_000],
+                "value": [10, 20, 30],
+            }
+        )
+
+        config = AggregateConfig(
+            by=["exchange_id", "symbol_id", "bucket_ts"],
+            aggregations=[
+                AggregationSpec(
+                    name="tick_rollup",
+                    source_column="value",
+                    agg="test_tick_rollup",
+                    feature_rollups=["sum", "last", "close"],
+                ),
+            ],
+            mode="tick_then_bar",
+            research_mode="HFT",
+        )
+
+        result = aggregate(data, config).collect()
+        assert "tick_rollup_sum" in result.columns
+        assert "tick_rollup_last" in result.columns
+        assert "tick_rollup_close" in result.columns
+        assert "tick_rollup_mean" not in result.columns
+        assert result["tick_rollup_sum"][0] == 120  # (10*2 + 20*2 + 30*2)
+        assert result["tick_rollup_last"][0] == 60
+        assert result["tick_rollup_close"][0] == 60
+
+    def test_pattern_b_rejects_unknown_rollup(self):
+        """Pattern B should fail fast for unsupported rollups."""
+        data = pl.LazyFrame(
+            {
+                "exchange_id": [1, 1],
+                "symbol_id": [12345, 12345],
+                "bucket_ts": [60_000_000, 60_000_000],
+                "bid_px_int": [50000, 50010],
+                "ask_px_int": [50005, 50015],
+            }
+        )
+
+        config = AggregateConfig(
+            by=["exchange_id", "symbol_id", "bucket_ts"],
+            aggregations=[
+                AggregationSpec(
+                    name="spread_bad",
+                    source_column="bid_px_int",
+                    agg="spread_distribution",
+                    feature_rollups=["median"],
+                ),
+            ],
+            mode="tick_then_bar",
+            research_mode="HFT",
+        )
+
+        with pytest.raises(ValueError, match="Feature rollup not registered"):
+            aggregate(data, config).collect()
+
+    def test_pattern_b_supports_builtin_and_custom_rollups_together(self):
+        """Pattern B supports mixed built-in and custom rollups in one operator."""
+        data = pl.LazyFrame(
+            {
+                "exchange_id": [1, 1, 1],
+                "symbol_id": [12345, 12345, 12345],
+                "bucket_ts": [60_000_000, 60_000_000, 60_000_000],
+                "bid_px_int": [50000, 50010, 50020],
+                "ask_px_int": [50005, 50015, 50025],
+            }
+        )
+
+        config = AggregateConfig(
+            by=["exchange_id", "symbol_id", "bucket_ts"],
+            aggregations=[
+                AggregationSpec(
+                    name="spread_mix",
+                    source_column="bid_px_int",
+                    agg="spread_distribution",
+                    feature_rollups=["mean", "weighted_close"],
+                    feature_rollup_params={"weighted_close": {"weight_column": "ask_px_int"}},
+                ),
+            ],
+            mode="tick_then_bar",
+            research_mode="HFT",
+        )
+
+        result = aggregate(data, config).collect()
+        assert "spread_mix_mean" in result.columns
+        assert "spread_mix_weighted_close" in result.columns
+
+    def test_weighted_close_requires_weight_column_param(self):
+        """Custom rollups should fail when required params are missing."""
+        data = pl.LazyFrame(
+            {
+                "exchange_id": [1, 1],
+                "symbol_id": [12345, 12345],
+                "bucket_ts": [60_000_000, 60_000_000],
+                "bid_px_int": [50000, 50010],
+                "ask_px_int": [50005, 50015],
+            }
+        )
+
+        config = AggregateConfig(
+            by=["exchange_id", "symbol_id", "bucket_ts"],
+            aggregations=[
+                AggregationSpec(
+                    name="spread_weighted",
+                    source_column="bid_px_int",
+                    agg="spread_distribution",
+                    feature_rollups=["weighted_close"],
+                ),
+            ],
+            mode="tick_then_bar",
+            research_mode="HFT",
+        )
+
+        with pytest.raises(ValueError, match="missing required params"):
+            aggregate(data, config).collect()
+
+    def test_custom_rollup_tail_ratio_with_zero_median(self):
+        """tail_ratio_p95_p50 should remain finite with near-zero median."""
+
+        @AggregationRegistry.register_compute_features(
+            name="test_feature_zero_center",
+            semantic_type="test",
+            mode_allowlist=["HFT"],
+            required_columns=["value"],
+        )
+        def test_feature_zero_center(lf: pl.LazyFrame, spec: AggregationSpec) -> pl.LazyFrame:
+            return lf.with_columns([pl.col("value").alias("_test_feature_zero_center_feature")])
+
+        data = pl.LazyFrame(
+            {
+                "exchange_id": [1, 1, 1, 1],
+                "symbol_id": [12345, 12345, 12345, 12345],
+                "bucket_ts": [60_000_000, 60_000_000, 60_000_000, 60_000_000],
+                "value": [-0.0, 0.0, 0.0, 1.0],
+            }
+        )
+
+        config = AggregateConfig(
+            by=["exchange_id", "symbol_id", "bucket_ts"],
+            aggregations=[
+                AggregationSpec(
+                    name="tail_ratio",
+                    source_column="value",
+                    agg="test_feature_zero_center",
+                    feature_rollups=["tail_ratio_p95_p50"],
+                    feature_rollup_params={"tail_ratio_p95_p50": {"epsilon": 1e-6}},
+                ),
+            ],
+            mode="tick_then_bar",
+            research_mode="HFT",
+        )
+
+        result = aggregate(data, config).collect()
+        assert result["tail_ratio_tail_ratio_p95_p50"][0] >= 0.0
+
 
 class TestAggregateSemanticValidation:
     """Test semantic type policy enforcement."""
