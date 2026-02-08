@@ -143,7 +143,7 @@ Registry governs both built-in and custom aggregations.
 ## Custom Aggregations (starter set)
 
 - `microprice_close`
-- `ofi_sum`
+- `ofi_cont`
 - `signed_trade_imbalance`
 - `liq_qty_sum`
 - `liq_count`

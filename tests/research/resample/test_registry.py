@@ -361,7 +361,7 @@ class TestRegistryProfiles:
             "microprice_close" in hft_profile
             or "microprice_close" not in AggregationRegistry._registry
         )
-        assert "ofi_sum" in hft_profile or "ofi_sum" not in AggregationRegistry._registry
+        assert "ofi_cont" in hft_profile or "ofi_cont" not in AggregationRegistry._registry
 
     def test_lft_profile_basic_only(self):
         """Test LFT profile has only basic aggregations.
@@ -378,7 +378,7 @@ class TestRegistryProfiles:
 
         # LFT should not have advanced microstructure aggs
         assert "microprice_close" not in lft_profile
-        assert "ofi_sum" not in lft_profile
+        assert "ofi_cont" not in lft_profile
 
 
 class TestAggregateRawCallable:

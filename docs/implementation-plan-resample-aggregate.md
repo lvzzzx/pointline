@@ -628,7 +628,7 @@ class AggregationRegistry:
 
     _registry: dict[str, AggregationMetadata] = {}
     _profiles: dict[str, set[str]] = {
-        "hft_default": {"sum", "mean", "last", "count", "microprice_close", "ofi_sum"},
+        "hft_default": {"sum", "mean", "last", "count", "microprice_close", "ofi_cont"},
         "mft_default": {"sum", "mean", "std", "last", "count", "spread_distribution"},
         "lft_default": {"sum", "mean", "last", "count"},
     }
@@ -1352,13 +1352,13 @@ def spread_distribution(lf: pl.LazyFrame, spec: AggregationSpec) -> pl.LazyFrame
     ])
 
 @AggregationRegistry.register(
-    name="ofi_sum",
+    name="ofi_cont",
     stage="feature_then_aggregate",
     semantic_type="book_depth",
     mode_allowlist=["HFT"],
     required_columns=["bids_sz_int", "asks_sz_int"],
 )
-def ofi_sum(lf: pl.LazyFrame, spec: AggregationSpec) -> pl.LazyFrame:
+def ofi_cont(lf: pl.LazyFrame, spec: AggregationSpec) -> pl.LazyFrame:
     """Order flow imbalance (OFI) at each tick.
 
     OFI = ΔBid_volume - ΔAsk_volume
@@ -1507,7 +1507,7 @@ def test_spread_distribution_computation():
     expected_spread_0 = (50005 - 50000) / 50000 * 10000
     assert abs(result["_spread_bps_feature"][0] - expected_spread_0) < 0.01
 
-def test_ofi_sum_diff_calculation():
+def test_ofi_cont_diff_calculation():
     """Test OFI computes differences correctly."""
     # TODO: Test with sequential book snapshots
     pass
@@ -1533,7 +1533,7 @@ def test_liq_oi_pressure():
 ```
 pointline/research/resample/aggregations/
 ├── __init__.py
-├── microstructure.py        # microprice_close, spread_distribution, ofi_sum
+├── microstructure.py        # microprice_close, spread_distribution, ofi_cont
 ├── trade_flow.py            # signed_trade_imbalance
 └── liquidations.py          # liq_qty_sum, liq_count, liq_oi_pressure
 
@@ -1547,7 +1547,7 @@ tests/research/resample/aggregations/
 - [ ] All custom aggregations registered
 - [ ] microprice_close computes correctly
 - [ ] spread_distribution produces distribution stats
-- [ ] ofi_sum uses diff() correctly
+- [ ] ofi_cont uses diff() correctly
 - [ ] signed_trade_imbalance separates buy/sell
 - [ ] liq_qty_sum filters liquidations
 - [ ] liq_oi_pressure normalizes by OI
@@ -2641,7 +2641,7 @@ def benchmark_volume_vs_clock():
 - [ ] Custom aggregations implemented:
   - [ ] microprice_close
   - [ ] spread_distribution
-  - [ ] ofi_sum
+  - [ ] ofi_cont
   - [ ] signed_trade_imbalance
   - [ ] liq_qty_sum
   - [ ] liq_count

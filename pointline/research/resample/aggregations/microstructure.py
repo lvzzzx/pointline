@@ -93,48 +93,82 @@ def spread_distribution(lf: pl.LazyFrame, spec: AggregationSpec) -> pl.LazyFrame
 
 
 @AggregationRegistry.register_compute_features(
-    name="ofi_sum",
+    name="ofi_cont",
     semantic_type="book_depth",
     mode_allowlist=["HFT"],
-    required_columns=["bids_sz_int", "asks_sz_int"],
+    required_columns=[
+        "exchange_id",
+        "symbol_id",
+        "ts_local_us",
+        "bids_px_int",
+        "asks_px_int",
+        "bids_sz_int",
+        "asks_sz_int",
+    ],
 )
-def ofi_sum(lf: pl.LazyFrame, spec: AggregationSpec) -> pl.LazyFrame:
-    """Order flow imbalance (OFI) at each tick.
+def ofi_cont(lf: pl.LazyFrame, spec: AggregationSpec) -> pl.LazyFrame:
+    """Classical contingent OFI (top-of-book) at each tick.
 
-    OFI = ΔBid_volume - ΔAsk_volume
+    Uses the Cont et al. style piecewise top-of-book update:
+    - Bid contribution depends on bid price move (up/equal/down).
+    - Ask contribution depends on ask price move (down/equal/up).
+    - OFI = bid_contribution + ask_contribution.
 
-    Measures buying vs selling pressure from order book changes.
-    Positive OFI = more buying pressure (bid volume increasing)
-    Negative OFI = more selling pressure (ask volume increasing)
-
-    CORRECTED: Uses book_snapshot_25 array columns.
+    Positive OFI indicates net buying pressure, negative indicates selling pressure.
 
     Args:
         lf: LazyFrame with book snapshot data
         spec: Aggregation specification
 
     Returns:
-        LazyFrame with _ofi_sum_feature column
-
-    Example:
-        t0: bid_vol=100, ask_vol=80
-        t1: bid_vol=150, ask_vol=90
-        OFI = (150-100) - (90-80) = 50 - 10 = 40 (buying pressure)
+        LazyFrame with _ofi_cont_feature column
     """
-    sorted_lf = lf.sort(["exchange_id", "symbol_id", "ts_local_us"])
+    schema_names = set(lf.collect_schema().names())
+    sort_cols = [
+        col
+        for col in ["exchange_id", "symbol_id", "ts_local_us", "file_id", "file_line_number"]
+        if col in schema_names
+    ]
+    sorted_lf = lf.sort(sort_cols) if sort_cols else lf
+
+    partition_cols = [col for col in ["exchange_id", "symbol_id"] if col in schema_names]
+
+    bid_px = pl.col("bids_px_int").list.get(0)
+    ask_px = pl.col("asks_px_int").list.get(0)
+    bid_sz = pl.col("bids_sz_int").list.get(0)
+    ask_sz = pl.col("asks_sz_int").list.get(0)
+
+    if partition_cols:
+        bid_px_prev = bid_px.shift(1).over(partition_cols)
+        ask_px_prev = ask_px.shift(1).over(partition_cols)
+        bid_sz_prev = bid_sz.shift(1).over(partition_cols)
+        ask_sz_prev = ask_sz.shift(1).over(partition_cols)
+    else:
+        bid_px_prev = bid_px.shift(1)
+        ask_px_prev = ask_px.shift(1)
+        bid_sz_prev = bid_sz.shift(1)
+        ask_sz_prev = ask_sz.shift(1)
+
+    bid_contrib = (
+        pl.when(bid_px_prev.is_null())
+        .then(0)
+        .when(bid_px > bid_px_prev)
+        .then(bid_sz)
+        .when(bid_px == bid_px_prev)
+        .then(bid_sz - bid_sz_prev)
+        .otherwise(-bid_sz_prev)
+    )
+
+    ask_contrib = (
+        pl.when(ask_px_prev.is_null())
+        .then(0)
+        .when(ask_px < ask_px_prev)
+        .then(-ask_sz)
+        .when(ask_px == ask_px_prev)
+        .then(ask_sz_prev - ask_sz)
+        .otherwise(ask_sz_prev)
+    )
+
     return sorted_lf.with_columns(
-        [
-            (
-                pl.col("bids_sz_int")
-                .list.get(0)
-                .diff()
-                .over(["exchange_id", "symbol_id"])
-                .fill_null(0)
-                - pl.col("asks_sz_int")
-                .list.get(0)
-                .diff()
-                .over(["exchange_id", "symbol_id"])
-                .fill_null(0)
-            ).alias("_ofi_sum_feature")
-        ]
+        [(bid_contrib + ask_contrib).fill_null(0).alias("_ofi_cont_feature")]
     )

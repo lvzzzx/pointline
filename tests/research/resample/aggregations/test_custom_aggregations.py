@@ -97,12 +97,12 @@ class TestMicrostructureAggregations:
         expected_spread_0 = (50005 - 50000) / 50000 * 10000
         assert abs(result["_spread_distribution_feature"][0] - expected_spread_0) < 0.01
 
-    def test_ofi_sum_diff_calculation(self):
-        """Test OFI computes differences correctly.
+    def test_ofi_cont_classical_calculation(self):
+        """Test classical contingent OFI computation.
 
         COMPLETE: Full test with book array columns.
         """
-        from pointline.research.resample.aggregations.microstructure import ofi_sum
+        from pointline.research.resample.aggregations.microstructure import ofi_cont
 
         # Book snapshot data with arrays
         data = pl.LazyFrame(
@@ -111,22 +111,22 @@ class TestMicrostructureAggregations:
                 "ts_local_us": [10_000_000, 20_000_000, 30_000_000],
                 "exchange_id": [1, 1, 1],
                 "symbol_id": [12345, 12345, 12345],
-                # Best bid/ask sizes as first element of arrays
-                "bids_sz_int": [[100], [150], [120]],
-                "asks_sz_int": [[80], [90], [100]],
+                "bids_px_int": [[100], [101], [101]],
+                "asks_px_int": [[101], [102], [101]],
+                "bids_sz_int": [[10], [8], [6]],
+                "asks_sz_int": [[12], [9], [15]],
             }
         )
 
-        spec = AggregationSpec(name="ofi", source_column="bids_sz_int", agg="ofi_sum")
-        result = ofi_sum(data, spec).collect()
+        spec = AggregationSpec(name="ofi", source_column="bids_sz_int", agg="ofi_cont")
+        result = ofi_cont(data, spec).collect()
 
-        # OFI = ΔBid - ΔAsk
-        # Row 0: 0 (no prior, filled with 0)
-        # Row 1: (150-100) - (90-80) = 50 - 10 = 40
-        # Row 2: (120-150) - (100-90) = -30 - 10 = -40
-        assert result["_ofi_sum_feature"][0] == 0  # First row, no prior
-        assert result["_ofi_sum_feature"][1] == 40
-        assert result["_ofi_sum_feature"][2] == -40
+        # Row 0: no prior -> 0
+        # Row 1: bid up -> +8, ask up -> +12 => 20
+        # Row 2: bid equal -> (6-8)=-2, ask down -> -15 => -17
+        assert result["_ofi_cont_feature"][0] == 0
+        assert result["_ofi_cont_feature"][1] == 20
+        assert result["_ofi_cont_feature"][2] == -17
 
     def test_spread_distribution_registration(self):
         """Test spread_distribution is registered correctly.
@@ -138,13 +138,13 @@ class TestMicrostructureAggregations:
         assert meta.stage == "feature_then_aggregate"
         assert meta.semantic_type == "quote_top"
 
-    def test_ofi_sum_registration(self):
-        """Test ofi_sum is registered correctly.
+    def test_ofi_cont_registration(self):
+        """Test ofi_cont is registered correctly.
 
         COMPLETE: Full test specification.
         """
-        assert "ofi_sum" in AggregationRegistry._registry
-        meta = AggregationRegistry.get("ofi_sum")
+        assert "ofi_cont" in AggregationRegistry._registry
+        meta = AggregationRegistry.get("ofi_cont")
         assert meta.stage == "feature_then_aggregate"
         assert "HFT" in meta.mode_allowlist
         # OFI is HFT-only (not in MFT/LFT)
@@ -339,17 +339,17 @@ class TestCustomAggregationsModeValidation:
 
         COMPLETE: Full test specification.
         """
-        meta = AggregationRegistry.get("ofi_sum")
+        meta = AggregationRegistry.get("ofi_cont")
         assert "HFT" in meta.mode_allowlist
         assert "MFT" not in meta.mode_allowlist
         assert "LFT" not in meta.mode_allowlist
 
         # Should pass for HFT
-        AggregationRegistry.validate_for_mode("ofi_sum", "HFT")
+        AggregationRegistry.validate_for_mode("ofi_cont", "HFT")
 
         # Should fail for MFT
         with pytest.raises(ValueError, match="not allowed in MFT"):
-            AggregationRegistry.validate_for_mode("ofi_sum", "MFT")
+            AggregationRegistry.validate_for_mode("ofi_cont", "MFT")
 
     def test_microprice_allowed_hft_mft(self):
         """Test microprice allowed in HFT and MFT.

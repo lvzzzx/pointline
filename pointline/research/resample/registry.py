@@ -91,7 +91,7 @@ class AggregationRegistry:
 
     _registry: dict[str, AggregationMetadata] = {}
     _profiles: dict[str, set[str]] = {
-        "hft_default": {"sum", "mean", "last", "count", "microprice_close", "ofi_sum"},
+        "hft_default": {"sum", "mean", "last", "count", "microprice_close", "ofi_cont"},
         "mft_default": {"sum", "mean", "std", "last", "count", "spread_distribution"},
         "lft_default": {"sum", "mean", "last", "count"},
     }

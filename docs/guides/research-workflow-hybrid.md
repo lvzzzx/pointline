@@ -84,7 +84,7 @@ request = {
                     "name": "ofi_1m",
                     "output_name": "ofi_1m",
                     "stage": "feature_then_aggregate",
-                    "agg": "ofi_sum",
+                    "agg": "ofi_cont",
                     "source_column": "bid_px_int",
                     "required_columns": ["bid_px_int", "ask_px_int", "bid_sz_int", "ask_sz_int"],
                     "mode_allowlist": ["HFT"],

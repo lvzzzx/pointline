@@ -599,7 +599,7 @@ class AggregationRegistry:
 
     _registry: dict[str, AggregationMetadata] = {}
     _profiles: dict[str, set[str]] = {
-        "hft_default": {"sum", "mean", "last", "count", "microprice_close", "ofi_sum"},
+        "hft_default": {"sum", "mean", "last", "count", "microprice_close", "ofi_cont"},
         "mft_default": {"sum", "mean", "std", "last", "count", "spread_distribution"},
         "lft_default": {"sum", "mean", "last", "count"},
     }
@@ -1518,12 +1518,12 @@ def spread_distribution(lf: pl.LazyFrame, spec: AggregationSpec) -> pl.LazyFrame
     ])
 
 @AggregationRegistry.register_compute_features(
-    name="ofi_sum",
+    name="ofi_cont",
     semantic_type="book_depth",
     mode_allowlist=["HFT"],
     required_columns=["bids_sz_int", "asks_sz_int"],
 )
-def ofi_sum(lf: pl.LazyFrame, spec: AggregationSpec) -> pl.LazyFrame:
+def ofi_cont(lf: pl.LazyFrame, spec: AggregationSpec) -> pl.LazyFrame:
     """Order flow imbalance (OFI) at each tick.
 
     OFI = ΔBid_volume - ΔAsk_volume
@@ -1669,7 +1669,7 @@ def test_spread_distribution_computation():
     expected_spread_0 = (50005 - 50000) / 50000 * 10000
     assert abs(result["_spread_bps_feature"][0] - expected_spread_0) < 0.01
 
-def test_ofi_sum_diff_calculation():
+def test_ofi_cont_diff_calculation():
     """Test OFI computes differences correctly.
 
     COMPLETE: Full test with book array columns.
@@ -1682,11 +1682,11 @@ def test_ofi_sum_diff_calculation():
         "asks_sz_int": [[80], [90], [100]],
     })
 
-    from pointline.research.resample.aggregations.microstructure import ofi_sum
+    from pointline.research.resample.aggregations.microstructure import ofi_cont
     from pointline.research.resample.config import AggregationSpec
 
-    spec = AggregationSpec(name="ofi", source_column="bids_sz_int", agg="ofi_sum")
-    result = ofi_sum(data, spec).collect()
+    spec = AggregationSpec(name="ofi", source_column="bids_sz_int", agg="ofi_cont")
+    result = ofi_cont(data, spec).collect()
 
     # OFI = ΔBid - ΔAsk
     # Row 0: null (no prior)
@@ -1767,7 +1767,7 @@ def test_oi_change():
 - [ ] Schema alignment verified with current codebase
 - [ ] microprice_close uses book array indices correctly
 - [ ] spread_distribution uses quotes columns
-- [ ] ofi_sum uses book array columns with diff()
+- [ ] ofi_cont uses book array columns with diff()
 - [ ] signed_trade_imbalance uses correct side values (0/1)
 - [ ] funding_rate_mean uses float column (not int)
 - [ ] oi_change uses open_interest (float, not open_interest_int)
