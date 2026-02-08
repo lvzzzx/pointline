@@ -43,6 +43,10 @@ class _ExecutionArtifacts:
     probe_checks: list[dict[str, Any]]
     pit_violations: int
     unassigned_rows: int
+    reproducibility_passed: bool
+    output_hash: str
+    rerun_output_hash: str
+    reproducibility_evidence: str
 
 
 def pipeline(request: dict[str, Any]) -> dict[str, Any]:
@@ -161,23 +165,50 @@ def execute_compiled_with_sources(
     coverage_checks = coverage_checks or []
     probe_checks = probe_checks or []
 
-    mode = compiled["mode"]
-    if mode == "bar_then_feature":
-        result, pit_violations, unassigned = _execute_bar_then_feature(compiled, sources)
-    elif mode == "tick_then_bar":
-        result, pit_violations, unassigned = _execute_tick_then_bar(compiled, sources)
-    elif mode == "event_joined":
-        result, pit_violations, unassigned = _execute_event_joined(compiled, sources)
-    else:
-        raise PipelineError(f"Unsupported mode: {mode}")
-
+    result, pit_violations, unassigned = _execute_mode(compiled, sources)
     result = _apply_labels(result, compiled.get("labels", []))
-    return result.collect(), _ExecutionArtifacts(
+    frame = result.collect()
+
+    # Mandatory reproducibility rerun check on identical compiled inputs.
+    rerun_result, _, _ = _execute_mode(compiled, sources)
+    rerun_result = _apply_labels(rerun_result, compiled.get("labels", []))
+    rerun_frame = rerun_result.collect()
+
+    output_hash = _hash_output_frame(frame)
+    rerun_output_hash = _hash_output_frame(rerun_frame)
+    reproducibility_passed = output_hash == rerun_output_hash
+    reproducibility_evidence = (
+        "Output hash matched deterministic rerun"
+        if reproducibility_passed
+        else (
+            "Output hash mismatch on deterministic rerun: " f"{output_hash} != {rerun_output_hash}"
+        )
+    )
+
+    return frame, _ExecutionArtifacts(
         coverage_checks=coverage_checks,
         probe_checks=probe_checks,
         pit_violations=pit_violations,
         unassigned_rows=unassigned,
+        reproducibility_passed=reproducibility_passed,
+        output_hash=output_hash,
+        rerun_output_hash=rerun_output_hash,
+        reproducibility_evidence=reproducibility_evidence,
     )
+
+
+def _execute_mode(
+    compiled: dict[str, Any],
+    sources: dict[str, pl.LazyFrame],
+) -> tuple[pl.LazyFrame, int, int]:
+    mode = compiled["mode"]
+    if mode == "bar_then_feature":
+        return _execute_bar_then_feature(compiled, sources)
+    if mode == "tick_then_bar":
+        return _execute_tick_then_bar(compiled, sources)
+    if mode == "event_joined":
+        return _execute_event_joined(compiled, sources)
+    raise PipelineError(f"Unsupported mode: {mode}")
 
 
 def evaluate_quality_gates(
@@ -208,7 +239,7 @@ def evaluate_quality_gates(
 
     pit_passed = runtime.pit_violations == 0
     partition_passed = partition_violations == 0
-    reproducibility_passed = True
+    reproducibility_passed = runtime.reproducibility_passed
 
     failed = []
     if not lookahead_passed:
@@ -237,6 +268,9 @@ def evaluate_quality_gates(
         "reproducibility_check": {
             "passed": reproducibility_passed,
             "input_hash": compiled["config_hash"],
+            "output_hash": runtime.output_hash,
+            "rerun_output_hash": runtime.rerun_output_hash,
+            "evidence": runtime.reproducibility_evidence,
         },
         "failed_gates": failed,
     }
@@ -678,6 +712,16 @@ def _normalized_source_fingerprints(source_specs: list[dict[str, Any]]) -> list[
 def _stable_hash(obj: Any) -> str:
     payload = json.dumps(obj, sort_keys=True, separators=(",", ":"), default=str)
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _hash_output_frame(frame: pl.DataFrame) -> str:
+    """Stable output hash for reproducibility checks."""
+    payload = {
+        "columns": frame.columns,
+        "dtypes": [str(dtype) for dtype in frame.dtypes],
+        "rows": frame.to_dicts(),
+    }
+    return _stable_hash(payload)
 
 
 def _utc_now_iso() -> str:

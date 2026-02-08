@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib
 from copy import deepcopy
 
 import polars as pl
@@ -16,6 +17,8 @@ from pointline.research import (
 from pointline.research.contracts import SchemaValidationError
 from pointline.research.resample import AggregationRegistry
 from pointline.research.resample.rollups import FeatureRollupRegistry
+
+pipeline_module = importlib.import_module("pointline.research.pipeline")
 
 
 def _operator_contract(
@@ -419,6 +422,32 @@ def test_quality_gate_blocks_forward_feature_operator():
     output = pipeline(request)
     assert output["decision"]["status"] == "reject"
     assert "lookahead_check" in output["quality_gates"]["failed_gates"]
+
+
+def test_reproducibility_gate_records_hash_evidence():
+    request = _base_request("bar_then_feature")
+    output = pipeline(request)
+
+    repro = output["quality_gates"]["reproducibility_check"]
+    assert repro["passed"] is True
+    assert isinstance(repro["output_hash"], str)
+    assert isinstance(repro["rerun_output_hash"], str)
+    assert repro["output_hash"] == repro["rerun_output_hash"]
+
+
+def test_reproducibility_gate_rejects_hash_mismatch(monkeypatch):
+    request = _base_request("bar_then_feature")
+    calls = {"n": 0}
+
+    def _fake_hash(_frame):
+        calls["n"] += 1
+        return f"hash_{calls['n']}"
+
+    monkeypatch.setattr(pipeline_module, "_hash_output_frame", _fake_hash)
+
+    output = pipeline(request)
+    assert output["decision"]["status"] == "reject"
+    assert "reproducibility_check" in output["quality_gates"]["failed_gates"]
 
 
 def test_input_contract_requires_operator_contract_fields():
