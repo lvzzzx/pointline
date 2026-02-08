@@ -116,6 +116,7 @@ def compile_request(request: dict[str, Any]) -> dict[str, Any]:
     compiled.setdefault("spine", {})
     compiled["spine"].setdefault("type", "clock")
     compiled["spine"].setdefault("max_rows", 5_000_000)
+    compiled.setdefault("context_risk", [])
 
     normalized_ops: list[dict[str, Any]] = []
     for op in compiled["operators"]:
@@ -130,6 +131,7 @@ def compile_request(request: dict[str, Any]) -> dict[str, Any]:
             "timeline": compiled["timeline"],
             "spine": compiled["spine"],
             "operators": compiled["operators"],
+            "context_risk": compiled["context_risk"],
             "labels": compiled["labels"],
             "evaluation": compiled["evaluation"],
             "constraints": compiled["constraints"],

@@ -59,6 +59,25 @@ def _stage_constraints() -> dict:
     }
 
 
+def _context_contract(
+    plugin: str = "oi_capacity",
+    *,
+    name: str | None = None,
+    params: dict | None = None,
+) -> dict:
+    return {
+        "name": name or plugin,
+        "plugin": plugin,
+        "required_columns": ["oi_last"],
+        "params": params or {"oi_col": "oi_last", "lookback_bars": 20},
+        "mode_allowlist": ["MFT", "LFT"],
+        "pit_policy": {"feature_direction": "backward_only"},
+        "determinism_policy": {"required_sort": ["exchange_id", "symbol_id", "ts_local_us"]},
+        "impl_ref": "pointline.research.context.plugins.oi_capacity",
+        "version": "2.0",
+    }
+
+
 def _base_workflow_request() -> dict:
     return {
         "schema_version": "2.0",
@@ -172,6 +191,7 @@ def _base_workflow_request() -> dict:
             },
         ],
         "final_stage_id": "s3",
+        "context_risk": [],
         "constraints": {"fail_fast": True},
         "artifacts": {"include_artifacts": False},
     }
@@ -324,6 +344,32 @@ def test_compile_workflow_hash_is_deterministic():
     compiled_a = compile_workflow_request(deepcopy(request))
     compiled_b = compile_workflow_request(deepcopy(request))
     assert compiled_a["config_hash"] == compiled_b["config_hash"]
+
+
+def test_compile_workflow_hash_changes_when_context_risk_changes():
+    request_a = _base_workflow_request()
+    request_b = _base_workflow_request()
+    request_b["context_risk"] = [
+        _context_contract(params={"oi_col": "oi_last", "lookback_bars": 96})
+    ]
+
+    compiled_a = compile_workflow_request(deepcopy(request_a))
+    compiled_b = compile_workflow_request(deepcopy(request_b))
+    assert compiled_a["config_hash"] != compiled_b["config_hash"]
+
+
+def test_workflow_schema_allows_stage_and_workflow_context_risk():
+    request = _base_workflow_request()
+    request["context_risk"] = [_context_contract(name="wf_capacity")]
+    request["stages"][1]["context_risk"] = [_context_contract(name="stage_capacity")]
+    validate_quant_research_workflow_input_v2(request)
+
+
+def test_workflow_schema_rejects_invalid_context_plugin_identifier():
+    request = _base_workflow_request()
+    request["stages"][0]["context_risk"] = [_context_contract(plugin="OI-Capacity")]
+    with pytest.raises(SchemaValidationError):
+        validate_quant_research_workflow_input_v2(request)
 
 
 def test_stage_config_hash_changes_when_artifact_ref_changes():

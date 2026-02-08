@@ -109,6 +109,25 @@ def _base_request(mode: str) -> dict:
     }
 
 
+def _context_contract(
+    plugin: str = "oi_capacity",
+    *,
+    name: str | None = None,
+    params: dict | None = None,
+) -> dict:
+    return {
+        "name": name or plugin,
+        "plugin": plugin,
+        "required_columns": ["oi_last"],
+        "params": params or {"oi_col": "oi_last", "lookback_bars": 20},
+        "mode_allowlist": ["MFT", "LFT"],
+        "pit_policy": {"feature_direction": "backward_only"},
+        "determinism_policy": {"required_sort": ["exchange_id", "symbol_id", "ts_local_us"]},
+        "impl_ref": "pointline.research.context.plugins.oi_capacity",
+        "version": "2.0",
+    }
+
+
 def test_v2_contract_validation_and_pipeline_output_validation():
     request = _base_request("bar_then_feature")
     validate_quant_research_input_v2(request)
@@ -126,6 +145,19 @@ def test_compile_request_produces_deterministic_hash():
     compiled_b = compile_request(deepcopy(request))
 
     assert compiled_a["config_hash"] == compiled_b["config_hash"]
+
+
+def test_compile_request_hash_changes_when_context_risk_changes():
+    request_a = _base_request("bar_then_feature")
+    request_b = _base_request("bar_then_feature")
+    request_b["context_risk"] = [
+        _context_contract(params={"oi_col": "oi_last", "lookback_bars": 96})
+    ]
+
+    compiled_a = compile_request(deepcopy(request_a))
+    compiled_b = compile_request(deepcopy(request_b))
+
+    assert compiled_a["config_hash"] != compiled_b["config_hash"]
 
 
 def test_pipeline_bar_then_feature_end_to_end():
@@ -692,6 +724,30 @@ def test_input_contract_rejects_invalid_custom_rollup_identifier():
         )
     ]
     request["labels"] = []
+
+    with pytest.raises(SchemaValidationError):
+        validate_quant_research_input_v2(request)
+
+
+def test_input_contract_allows_context_risk_spec():
+    request = _base_request("bar_then_feature")
+    request["context_risk"] = [_context_contract()]
+    validate_quant_research_input_v2(request)
+
+
+def test_input_contract_rejects_context_risk_missing_required_params_field():
+    request = _base_request("bar_then_feature")
+    bad = _context_contract()
+    del bad["params"]
+    request["context_risk"] = [bad]
+
+    with pytest.raises(SchemaValidationError):
+        validate_quant_research_input_v2(request)
+
+
+def test_input_contract_rejects_invalid_context_plugin_identifier():
+    request = _base_request("bar_then_feature")
+    request["context_risk"] = [_context_contract(plugin="OI-Capacity")]
 
     with pytest.raises(SchemaValidationError):
         validate_quant_research_input_v2(request)

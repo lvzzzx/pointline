@@ -217,6 +217,64 @@
         }
       }
     },
+    "context_risk": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "plugin",
+          "required_columns",
+          "params",
+          "mode_allowlist",
+          "pit_policy",
+          "determinism_policy",
+          "version"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "plugin": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]{1,63}$"
+          },
+          "required_columns": {
+            "type": "array",
+            "items": { "type": "string", "minLength": 1 },
+            "uniqueItems": true
+          },
+          "params": {
+            "type": "object",
+            "additionalProperties": true
+          },
+          "mode_allowlist": {
+            "type": "array",
+            "items": { "type": "string", "enum": ["HFT", "MFT", "LFT"] },
+            "minItems": 1,
+            "uniqueItems": true
+          },
+          "pit_policy": {
+            "type": "object",
+            "additionalProperties": true
+          },
+          "determinism_policy": {
+            "type": "object",
+            "additionalProperties": true
+          },
+          "impl_ref": {
+            "type": "string",
+            "minLength": 3
+          },
+          "version": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
     "labels": {
       "type": "array",
       "items": {

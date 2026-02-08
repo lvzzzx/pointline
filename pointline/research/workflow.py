@@ -230,6 +230,7 @@ def workflow(request: dict[str, Any]) -> dict[str, Any]:
 def compile_workflow_request(request: dict[str, Any]) -> dict[str, Any]:
     """Compile workflow request into an executable DAG plan."""
     compiled = deepcopy(request)
+    compiled.setdefault("context_risk", [])
     compiled["workflow_run_id"] = f"wf-{uuid.uuid4().hex[:12]}"
     if not compiled["constraints"].get("fail_fast", True):
         raise WorkflowError("workflow.constraints.fail_fast must be true in v2")
@@ -244,6 +245,7 @@ def compile_workflow_request(request: dict[str, Any]) -> dict[str, Any]:
     stage_map: dict[str, dict[str, Any]] = {}
     order_index: dict[str, int] = {}
     for idx, stage in enumerate(compiled["stages"]):
+        stage.setdefault("context_risk", [])
         stage_id = stage["stage_id"]
         if stage_id in stage_map:
             raise WorkflowError(f"Duplicate stage_id: {stage_id}")
@@ -305,6 +307,7 @@ def compile_workflow_request(request: dict[str, Any]) -> dict[str, Any]:
             "final_stage_id": compiled["final_stage_id"],
             "constraints": compiled["constraints"],
             "artifacts": compiled["artifacts"],
+            "context_risk": compiled["context_risk"],
             "base_sources": _normalized_base_source_fingerprints(compiled["base_sources"]),
             "stages": [
                 {
@@ -314,6 +317,7 @@ def compile_workflow_request(request: dict[str, Any]) -> dict[str, Any]:
                     "spine": stage["spine"],
                     "sources": stage["sources"],
                     "operators": stage["operators"],
+                    "context_risk": stage.get("context_risk", []),
                     "labels": stage["labels"],
                     "evaluation": stage["evaluation"],
                     "constraints": stage["constraints"],
@@ -409,6 +413,7 @@ def _build_stage_request(
         ],
         "spine": deepcopy(stage["spine"]),
         "operators": deepcopy(stage["operators"]),
+        "context_risk": deepcopy(stage.get("context_risk", [])),
         "labels": deepcopy(stage["labels"]),
         "evaluation": deepcopy(stage["evaluation"]),
         "constraints": deepcopy(stage["constraints"]),
