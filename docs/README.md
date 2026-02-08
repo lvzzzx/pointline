@@ -110,6 +110,7 @@ pointline dim-symbol upsert --file ./symbols.csv
 | [Architecture](architecture/design.md) | Data lake design principles and schema |
 | [Performance](architecture/performance-considerations.md) | Query optimization and best practices |
 | [Storage & I/O](architecture/storage-io-design.md) | Bronze/Silver/Gold layer design |
+| [North-Star Research Architecture](architecture/north-star-research-architecture.md) | One-page target architecture for v2 contract-first pipeline/workflow, governance gates, and milestones |
 | [Bronze Prehooks](architecture/bronze-prehooks-design.md) | ETL preprocessing pipeline |
 | [Resample & Aggregate Design](architecture/resample-aggregate-design.md) | Contract-first architecture for PIT-safe resampling, typed/custom aggregation, and mode-aware pipelines |
 | [Quant Researcher Agent Spec](agents/quant-researcher-agent-spec.md) | Contract-first plan and I/O schemas for automated quant research runs |
