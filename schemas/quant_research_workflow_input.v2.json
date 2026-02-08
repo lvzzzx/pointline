@@ -213,6 +213,22 @@
                 "output_name": {
                   "type": "string"
                 },
+                "feature_rollups": {
+                  "type": "array",
+                  "minItems": 1,
+                  "uniqueItems": true,
+                  "items": {
+                    "type": "string",
+                    "pattern": "^[a-z][a-z0-9_]{1,63}$"
+                  }
+                },
+                "feature_rollup_params": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": "object",
+                    "additionalProperties": true
+                  }
+                },
                 "required_columns": {
                   "type": "array",
                   "items": { "type": "string", "minLength": 1 },

@@ -26,6 +26,11 @@ from pointline.research.features.core import pit_align
 from pointline.research.resample import AggregateConfig, AggregationRegistry, AggregationSpec
 from pointline.research.resample.aggregate import aggregate
 from pointline.research.resample.bucket_assignment import assign_to_buckets
+from pointline.research.resample.rollups import (
+    FeatureRollupRegistry,
+    is_builtin_feature_rollup,
+    normalize_feature_rollup_names,
+)
 
 
 class PipelineError(ValueError):
@@ -495,6 +500,7 @@ def _build_spine(compiled: dict[str, Any], source: pl.LazyFrame) -> pl.LazyFrame
 
 def _aggregate_config_from_operators(compiled: dict[str, Any]) -> AggregateConfig:
     aggregations: list[AggregationSpec] = []
+    research_mode = _research_mode_from_mode(compiled["mode"])
     for op in compiled["operators"]:
         if "agg" not in op:
             continue
@@ -507,12 +513,50 @@ def _aggregate_config_from_operators(compiled: dict[str, Any]) -> AggregateConfi
         if not source_column:
             raise PipelineError(f"Operator requires source_column: {op['name']}")
 
+        feature_rollups = op.get("feature_rollups")
+        if feature_rollups and op.get("stage") != "feature_then_aggregate":
+            raise PipelineError(
+                f"feature_rollups is only valid for feature_then_aggregate operators: {op['name']}"
+            )
+        feature_rollup_params = op.get("feature_rollup_params")
+        if feature_rollup_params and op.get("stage") != "feature_then_aggregate":
+            raise PipelineError(
+                "feature_rollup_params is only valid for feature_then_aggregate "
+                f"operators: {op['name']}"
+            )
+        if feature_rollup_params and not feature_rollups:
+            raise PipelineError(
+                f"feature_rollup_params requires feature_rollups for operator: {op['name']}"
+            )
+
+        normalized_rollups = (
+            normalize_feature_rollup_names(feature_rollups) if feature_rollups else None
+        )
+        if normalized_rollups:
+            params_by_rollup = feature_rollup_params or {}
+            unknown_param_rollups = sorted(set(params_by_rollup) - set(normalized_rollups))
+            if unknown_param_rollups:
+                raise PipelineError(
+                    f"feature_rollup_params contains unknown rollups for {op['name']}: "
+                    f"{unknown_param_rollups}"
+                )
+            for rollup in normalized_rollups:
+                if is_builtin_feature_rollup(rollup):
+                    continue
+                if not FeatureRollupRegistry.exists(rollup):
+                    raise PipelineError(f"Feature rollup not registered: {rollup}")
+                FeatureRollupRegistry.validate_for_mode(rollup, research_mode)
+                FeatureRollupRegistry.validate_semantic(rollup, op.get("semantic_type"))
+                FeatureRollupRegistry.validate_params(rollup, params_by_rollup.get(rollup))
+
         aggregations.append(
             AggregationSpec(
                 name=op.get("output_name", op["name"]),
                 source_column=source_column,
                 agg=op["agg"],
                 semantic_type=op.get("semantic_type"),
+                feature_rollups=normalized_rollups,
+                feature_rollup_params=feature_rollup_params,
             )
         )
 
@@ -523,7 +567,7 @@ def _aggregate_config_from_operators(compiled: dict[str, Any]) -> AggregateConfi
         by=["exchange_id", "symbol_id", "bucket_ts"],
         aggregations=aggregations,
         mode=compiled["mode"],
-        research_mode=_research_mode_from_mode(compiled["mode"]),
+        research_mode=research_mode,
     )
 
 

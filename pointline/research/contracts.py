@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -98,6 +99,9 @@ def _validate_node(value: Any, schema: dict[str, Any], path: str) -> None:
         min_len = schema.get("minLength")
         if isinstance(min_len, int) and len(value) < min_len:
             raise SchemaValidationError(f"{path}: expected minLength {min_len}")
+        pattern = schema.get("pattern")
+        if isinstance(pattern, str) and re.match(pattern, value) is None:
+            raise SchemaValidationError(f"{path}: does not match pattern {pattern}")
     elif schema_type == "integer":
         if not isinstance(value, int):
             raise SchemaValidationError(f"{path}: expected integer")
