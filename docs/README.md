@@ -65,6 +65,8 @@ pytest
 | [Feature Pipeline Modes](guides/feature-pipeline-modes.md) | Decision matrix and PIT-safe templates for event-joined, tick-then-bar, and bar-then-feature workflows |
 | [Roles & Responsibilities](roles-and-responsibilities.md) | Ownership boundaries, review routing, and handoff contracts |
 
+Production note: `research.pipeline(...)` and `research.workflow(...)` are the canonical governed execution paths. Legacy helpers under `pointline.research.features` remain importable but are non-canonical for production runs.
+
 **Common tasks:**
 - Load market data → [Quickstart](quickstart.md)
 - Join trades with quotes → [Researcher's Guide §6.1](guides/researcher-guide.md#61-join-trades-with-quotes-as-of-join)

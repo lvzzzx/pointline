@@ -65,7 +65,7 @@ Example - Query API (decoded):
 
 # Import everything from core module to maintain backward compatibility
 # Import query module (not individual functions, so users access via query.*)
-from pointline.research import features, query
+from pointline.research import query
 from pointline.research.contracts import (
     validate_quant_research_input_v2,
     validate_quant_research_output_v2,
@@ -131,8 +131,6 @@ __all__ = [
     "validate_quant_research_output_v2",
     "validate_quant_research_workflow_input_v2",
     "validate_quant_research_workflow_output_v2",
-    # Feature engineering utilities
-    "features",
     # Internal functions (exposed for testing/advanced use)
     "_normalize_timestamp",
     "_apply_filters",
