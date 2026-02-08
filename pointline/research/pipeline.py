@@ -697,6 +697,7 @@ def _normalized_source_fingerprints(source_specs: list[dict[str, Any]]) -> list[
     for spec in source_specs:
         fp = {
             "name": spec["name"],
+            "ref": spec.get("ref"),
             "table": spec.get("table"),
             "symbol_id": spec.get("symbol_id"),
             "start_ts_us": spec.get("start_ts_us"),

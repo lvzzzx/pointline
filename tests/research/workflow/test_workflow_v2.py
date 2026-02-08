@@ -319,3 +319,28 @@ def test_compile_workflow_hash_is_deterministic():
     compiled_a = compile_workflow_request(deepcopy(request))
     compiled_b = compile_workflow_request(deepcopy(request))
     assert compiled_a["config_hash"] == compiled_b["config_hash"]
+
+
+def test_stage_config_hash_changes_when_artifact_ref_changes():
+    request_a = _base_workflow_request()
+    request_a["stages"][0]["outputs"] = [{"name": "bars"}, {"name": "bars_alt"}]
+    request_a["stages"][1]["sources"] = [{"name": "bars", "ref": "artifact:s1:bars"}]
+
+    request_b = _base_workflow_request()
+    request_b["stages"][0]["outputs"] = [{"name": "bars"}, {"name": "bars_alt"}]
+    request_b["stages"][1]["sources"] = [{"name": "bars", "ref": "artifact:s1:bars_alt"}]
+
+    output_a = workflow(request_a)
+    output_b = workflow(request_b)
+
+    stage2_hash_a = next(
+        stage_run["config_hash"]
+        for stage_run in output_a["stage_runs"]
+        if stage_run["stage_id"] == "s2"
+    )
+    stage2_hash_b = next(
+        stage_run["config_hash"]
+        for stage_run in output_b["stage_runs"]
+        if stage_run["stage_id"] == "s2"
+    )
+    assert stage2_hash_a != stage2_hash_b
