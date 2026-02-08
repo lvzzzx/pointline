@@ -49,7 +49,7 @@ def pipeline(request: dict[str, Any]) -> dict[str, Any]:
     frame, runtime = execute_compiled(compiled)
     gates = evaluate_quality_gates(compiled, runtime)
     metrics = compute_metrics(frame, compiled["evaluation"]["metrics"])
-    status = "success" if frame is not None else "failed"
+    status = "success"
 
     completed_at = _utc_now_iso()
     output = {
@@ -348,6 +348,17 @@ def _load_source(spec: dict[str, Any], timeline_col: str) -> pl.LazyFrame:
 def _execute_bar_then_feature(
     compiled: dict[str, Any], sources: dict[str, pl.LazyFrame]
 ) -> tuple[pl.LazyFrame, int, int]:
+    _validate_mode_operator_stages(
+        compiled,
+        mode="bar_then_feature",
+        allowed_stages={"aggregate_then_feature", "bar_feature"},
+    )
+    return _execute_bucketed_aggregation(compiled, sources)
+
+
+def _execute_bucketed_aggregation(
+    compiled: dict[str, Any], sources: dict[str, pl.LazyFrame]
+) -> tuple[pl.LazyFrame, int, int]:
     source_name = _primary_source_name(compiled)
     source = sources[source_name]
     spine = _build_spine(compiled, source)
@@ -365,13 +376,27 @@ def _execute_bar_then_feature(
 def _execute_tick_then_bar(
     compiled: dict[str, Any], sources: dict[str, pl.LazyFrame]
 ) -> tuple[pl.LazyFrame, int, int]:
-    # Uses the same strict bucket semantics and typed registry execution path.
-    return _execute_bar_then_feature(compiled, sources)
+    # TODO(v2): diverge execution plan with explicit tick-level pre-feature stage graph.
+    # Current implementation shares bucketing/aggregation engine with bar_then_feature,
+    # but enforces tick_then_bar operator staging requirements.
+    _validate_mode_operator_stages(
+        compiled,
+        mode="tick_then_bar",
+        allowed_stages={"feature_then_aggregate", "aggregate_then_feature"},
+        require_any={"feature_then_aggregate"},
+    )
+    return _execute_bucketed_aggregation(compiled, sources)
 
 
 def _execute_event_joined(
     compiled: dict[str, Any], sources: dict[str, pl.LazyFrame]
 ) -> tuple[pl.LazyFrame, int, int]:
+    if compiled["operators"]:
+        raise PipelineError(
+            "event_joined mode does not support operators in v2. "
+            "Provide operators only for bar_then_feature or tick_then_bar."
+        )
+
     primary = _primary_source_name(compiled)
     primary_lf = sources[primary]
 
@@ -526,8 +551,11 @@ def _normalize_operator(operator: dict[str, Any]) -> dict[str, Any]:
 
 
 def _count_pit_violations(bucketed: pl.LazyFrame) -> int:
+    candidate_col = (
+        "bucket_ts_candidate" if "bucket_ts_candidate" in bucketed.columns else "bucket_ts"
+    )
     violations = bucketed.filter(
-        pl.col("bucket_ts").is_not_null() & (pl.col("ts_local_us") >= pl.col("bucket_ts"))
+        pl.col(candidate_col).is_not_null() & (pl.col("ts_local_us") >= pl.col(candidate_col))
     )
     return int(violations.select(pl.len().alias("_n")).collect()["_n"][0])
 
@@ -576,3 +604,22 @@ def _stable_hash(obj: Any) -> str:
 
 def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _validate_mode_operator_stages(
+    compiled: dict[str, Any],
+    *,
+    mode: str,
+    allowed_stages: set[str],
+    require_any: set[str] | None = None,
+) -> None:
+    operator_stages = {op.get("stage") for op in compiled["operators"] if "stage" in op}
+    disallowed = sorted(stage for stage in operator_stages if stage not in allowed_stages)
+    if disallowed:
+        raise PipelineError(f"{mode} does not allow operator stages: {disallowed}")
+
+    if require_any:
+        if not any(op.get("stage") in require_any for op in compiled["operators"]):
+            raise PipelineError(
+                f"{mode} requires at least one operator stage in {sorted(require_any)}"
+            )

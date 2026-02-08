@@ -114,12 +114,14 @@ def assign_to_buckets(
     # rows after the final boundary (or malformed joins) are left unassigned.
     bucketed = bucketed.with_columns(
         [
+            # Keep candidate assignment for diagnostics and PIT gate checks.
+            pl.col("bucket_ts").alias("bucket_ts_candidate"),
             pl.when(
                 pl.col("bucket_ts").is_not_null() & (pl.col("ts_local_us") < pl.col("bucket_ts"))
             )
             .then(pl.col("bucket_ts"))
             .otherwise(None)
-            .alias("bucket_ts")
+            .alias("bucket_ts"),
         ]
     )
 

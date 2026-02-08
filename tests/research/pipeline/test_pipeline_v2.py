@@ -211,3 +211,41 @@ def test_input_contract_requires_operator_contract_fields():
 
     with pytest.raises(SchemaValidationError):
         validate_quant_research_input_v2(request)
+
+
+def test_pit_gate_fails_when_events_arrive_after_last_boundary():
+    request = _base_request("bar_then_feature")
+    request["sources"][0]["inline_rows"].append(
+        {
+            "ts_local_us": 130_000_000,
+            "exchange_id": 1,
+            "symbol_id": 12345,
+            "qty_int": 50,
+            "px_int": 50020,
+            "side": 0,
+            "file_id": 1,
+            "file_line_number": 12,
+        }
+    )
+
+    output = pipeline(request)
+    assert output["decision"]["status"] == "reject"
+    assert "pit_ordering_check" in output["quality_gates"]["failed_gates"]
+    assert output["quality_gates"]["pit_ordering_check"]["violations"] >= 1
+
+
+def test_tick_then_bar_requires_feature_then_aggregate_operator():
+    request = _base_request("tick_then_bar")
+    request["labels"] = []
+
+    with pytest.raises(ValueError, match="tick_then_bar requires at least one operator stage"):
+        pipeline(request)
+
+
+def test_event_joined_rejects_operator_payload():
+    request = _base_request("event_joined")
+    request["spine"] = {"type": "trades", "source": "trades"}
+    request["labels"] = []
+
+    with pytest.raises(ValueError, match="event_joined mode does not support operators"):
+        pipeline(request)
