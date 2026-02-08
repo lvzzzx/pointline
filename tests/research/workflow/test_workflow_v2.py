@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib
+import json
 from copy import deepcopy
 
 import pytest
@@ -379,3 +380,24 @@ def test_workflow_rejects_when_workflow_level_lineage_gate_fails(monkeypatch):
     output = workflow(request)
     assert output["decision"]["status"] == "reject"
     assert "workflow:lineage_completeness_check" in output["quality_gates"]["failed_gates"]
+
+
+def test_stage_artifact_plan_includes_constraints(tmp_path):
+    request = _base_workflow_request()
+    request["artifacts"] = {
+        "include_artifacts": True,
+        "output_dir": str(tmp_path),
+        "persist_stage_snapshots": False,
+    }
+
+    output = workflow(request)
+    stage_plan_path = next(
+        path
+        for path in output["artifacts"]["paths"]
+        if path.endswith("/stages/s1/resolved_plan.json")
+    )
+    with open(stage_plan_path, encoding="utf-8") as file_obj:
+        payload = json.load(file_obj)
+
+    assert "constraints" in payload
+    assert payload["constraints"]["cost_model"]["fees_bps"] == 1.0

@@ -96,6 +96,8 @@ def pipeline(request: dict[str, Any]) -> dict[str, Any]:
             "gate_metrics": {
                 "pit_violations": runtime.pit_violations,
                 "unassigned_rows": runtime.unassigned_rows,
+                "forbid_lookahead": compiled["constraints"].get("forbid_lookahead", True),
+                "cost_model": compiled["constraints"].get("cost_model", {}),
             },
         },
     }
@@ -221,12 +223,18 @@ def evaluate_quality_gates(
         if feature_dir == "forward":
             violating_forward_ops.append(op["name"])
 
-    lookahead_passed = len(violating_forward_ops) == 0
-    lookahead_evidence = (
-        "All operators marked backward-only for features"
-        if lookahead_passed
-        else f"Forward feature operators found: {violating_forward_ops}"
-    )
+    forbid_lookahead = bool(compiled["constraints"].get("forbid_lookahead", True))
+    lookahead_passed = len(violating_forward_ops) == 0 or not forbid_lookahead
+    if not violating_forward_ops:
+        lookahead_evidence = "All operators marked backward-only for features"
+    elif not forbid_lookahead:
+        lookahead_evidence = (
+            "Forward feature operators present but allowed by "
+            "constraints.forbid_lookahead=false: "
+            f"{violating_forward_ops}"
+        )
+    else:
+        lookahead_evidence = f"Forward feature operators found: {violating_forward_ops}"
 
     partition_violations = 0
     for op in compiled["operators"]:
@@ -255,6 +263,7 @@ def evaluate_quality_gates(
         "lookahead_check": {
             "passed": lookahead_passed,
             "evidence": lookahead_evidence,
+            "forbid_lookahead": forbid_lookahead,
         },
         "pit_ordering_check": {
             "passed": pit_passed,
@@ -350,6 +359,7 @@ def emit_artifacts(
         "timeline": compiled["timeline"],
         "spine": compiled["spine"],
         "operators": compiled["operators"],
+        "constraints": compiled["constraints"],
         "config_hash": compiled["config_hash"],
     }
 

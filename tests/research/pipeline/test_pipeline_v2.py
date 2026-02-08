@@ -424,6 +424,20 @@ def test_quality_gate_blocks_forward_feature_operator():
     assert "lookahead_check" in output["quality_gates"]["failed_gates"]
 
 
+def test_quality_gate_respects_forbid_lookahead_false():
+    request = _base_request("bar_then_feature")
+    request["operators"][0]["pit_policy"] = {
+        "feature_direction": "forward",
+        "label_direction": "forward_allowed",
+    }
+    request["constraints"]["forbid_lookahead"] = False
+
+    output = pipeline(request)
+    assert "lookahead_check" not in output["quality_gates"]["failed_gates"]
+    assert output["quality_gates"]["lookahead_check"]["passed"] is True
+    assert output["quality_gates"]["lookahead_check"]["forbid_lookahead"] is False
+
+
 def test_reproducibility_gate_records_hash_evidence():
     request = _base_request("bar_then_feature")
     output = pipeline(request)
@@ -448,6 +462,16 @@ def test_reproducibility_gate_rejects_hash_mismatch(monkeypatch):
     output = pipeline(request)
     assert output["decision"]["status"] == "reject"
     assert "reproducibility_check" in output["quality_gates"]["failed_gates"]
+
+
+def test_artifacts_gate_metrics_include_cost_model_evidence():
+    request = _base_request("bar_then_feature")
+    output = pipeline(request)
+
+    gate_metrics = output["artifacts"]["gate_metrics"]
+    assert gate_metrics["forbid_lookahead"] is True
+    assert gate_metrics["cost_model"]["fees_bps"] == 1.0
+    assert gate_metrics["cost_model"]["slippage_bps"] == 2.0
 
 
 def test_input_contract_requires_operator_contract_fields():

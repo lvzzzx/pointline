@@ -524,6 +524,7 @@ def _emit_stage_artifacts(
                 "timeline": stage_compiled["timeline"],
                 "spine": stage_compiled["spine"],
                 "operators": stage_compiled["operators"],
+                "constraints": stage_compiled["constraints"],
                 "config_hash": stage_compiled["config_hash"],
             },
             file_obj,
