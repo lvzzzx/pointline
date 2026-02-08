@@ -360,6 +360,59 @@ def test_pipeline_bar_then_feature_derivatives_funding_features():
     assert "funding_pressure" in cols
 
 
+def test_pipeline_bar_then_feature_derivatives_oi_features():
+    request = _base_request("bar_then_feature")
+    request["sources"][0]["name"] = "derivative_ticker"
+    request["sources"][0]["inline_rows"] = [
+        {
+            "ts_local_us": 10_000_000,
+            "exchange_id": 1,
+            "symbol_id": 12345,
+            "open_interest": 1_000_000.0,
+            "file_id": 1,
+            "file_line_number": 1,
+        },
+        {
+            "ts_local_us": 20_000_000,
+            "exchange_id": 1,
+            "symbol_id": 12345,
+            "open_interest": 1_005_000.0,
+            "file_id": 1,
+            "file_line_number": 2,
+        },
+        {
+            "ts_local_us": 30_000_000,
+            "exchange_id": 1,
+            "symbol_id": 12345,
+            "open_interest": 1_008_000.0,
+            "file_id": 1,
+            "file_line_number": 3,
+        },
+    ]
+    request["operators"] = [
+        _operator_contract("oi_open", source_column="open_interest"),
+        _operator_contract("oi_high", source_column="open_interest"),
+        _operator_contract("oi_low", source_column="open_interest"),
+        _operator_contract("oi_range", source_column="open_interest"),
+        _operator_contract("oi_change", source_column="open_interest"),
+        _operator_contract("oi_last", source_column="open_interest"),
+        _operator_contract("oi_pct_change", source_column="open_interest"),
+        _operator_contract("oi_pressure", source_column="open_interest"),
+    ]
+    request["labels"] = []
+
+    output = pipeline(request)
+    cols = output["results"]["columns"]
+    assert "oi_open" in cols
+    assert "oi_high" in cols
+    assert "oi_low" in cols
+    assert "oi_range" in cols
+    assert "oi_change" in cols
+    assert "oi_last" in cols
+    assert "oi_pct_change" in cols
+    assert "oi_pressure" in cols
+
+
 def test_pipeline_tick_then_bar_rejects_unknown_custom_rollup():
     request = _base_request("tick_then_bar")
     request["sources"][0]["name"] = "quotes"

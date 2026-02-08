@@ -401,6 +401,60 @@ class TestDerivativeAggregations:
         # Last value: 1008000
         assert result["oi_close"][0] == 1008000.0
 
+    def test_oi_open_high_low_range_computation(self):
+        """Test OI open/high/low/range bar descriptors."""
+        from pointline.research.resample.aggregations.derivatives import (
+            oi_high,
+            oi_low,
+            oi_open,
+            oi_range,
+        )
+
+        data = pl.DataFrame(
+            {
+                "bucket_ts": [60_000_000] * 4,
+                "open_interest": [1_000_000.0, 1_005_000.0, 1_002_000.0, 1_008_000.0],
+            }
+        )
+
+        result = data.group_by("bucket_ts").agg(
+            [
+                oi_open("open_interest").alias("oi_open"),
+                oi_high("open_interest").alias("oi_high"),
+                oi_low("open_interest").alias("oi_low"),
+                oi_range("open_interest").alias("oi_range"),
+            ]
+        )
+
+        assert result["oi_open"][0] == 1_000_000.0
+        assert result["oi_high"][0] == 1_008_000.0
+        assert result["oi_low"][0] == 1_000_000.0
+        assert result["oi_range"][0] == 8_000.0
+
+    def test_oi_pct_change_and_pressure_computation(self):
+        """Test normalized OI change features."""
+        from pointline.research.resample.aggregations.derivatives import (
+            oi_pct_change,
+            oi_pressure,
+        )
+
+        data = pl.DataFrame(
+            {
+                "bucket_ts": [60_000_000] * 3,
+                "open_interest": [1_000_000.0, 1_005_000.0, 1_008_000.0],
+            }
+        )
+
+        result = data.group_by("bucket_ts").agg(
+            [
+                oi_pct_change("open_interest").alias("oi_pct_change"),
+                oi_pressure("open_interest").alias("oi_pressure"),
+            ]
+        )
+
+        assert result["oi_pct_change"][0] == pytest.approx(0.008, abs=1e-12)
+        assert result["oi_pressure"][0] == pytest.approx(8_000.0 / 1_008_000.0, abs=1e-12)
+
     def test_oi_change_registration(self):
         """Test oi_change is registered correctly.
 
@@ -410,6 +464,24 @@ class TestDerivativeAggregations:
         meta = AggregationRegistry.get("oi_change")
         assert meta.stage == "aggregate_then_feature"
         assert meta.semantic_type == "state_variable"
+
+    def test_oi_feature_registrations(self):
+        """Test OI feature family is registered."""
+        for name in [
+            "oi_change",
+            "oi_last",
+            "oi_open",
+            "oi_high",
+            "oi_low",
+            "oi_range",
+            "oi_pct_change",
+            "oi_pressure",
+        ]:
+            assert name in AggregationRegistry._registry
+            meta = AggregationRegistry.get(name)
+            assert meta.stage == "aggregate_then_feature"
+            assert "MFT" in meta.mode_allowlist
+            assert "LFT" in meta.mode_allowlist
 
     def test_funding_feature_registrations(self):
         """Test new funding-focused derivative features are registered."""

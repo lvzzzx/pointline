@@ -156,3 +156,75 @@ def oi_last(source_col: str) -> pl.Expr:
         Polars expression computing last OI value
     """
     return pl.col(source_col).last()
+
+
+@AggregationRegistry.register_aggregate_raw(
+    name="oi_open",
+    semantic_type="state_variable",
+    mode_allowlist=["MFT", "LFT"],
+    required_columns=["open_interest"],
+)
+def oi_open(source_col: str) -> pl.Expr:
+    """First open interest value in bar."""
+    return pl.col(source_col).first()
+
+
+@AggregationRegistry.register_aggregate_raw(
+    name="oi_high",
+    semantic_type="state_variable",
+    mode_allowlist=["MFT", "LFT"],
+    required_columns=["open_interest"],
+)
+def oi_high(source_col: str) -> pl.Expr:
+    """Highest open interest value in bar."""
+    return pl.col(source_col).max()
+
+
+@AggregationRegistry.register_aggregate_raw(
+    name="oi_low",
+    semantic_type="state_variable",
+    mode_allowlist=["MFT", "LFT"],
+    required_columns=["open_interest"],
+)
+def oi_low(source_col: str) -> pl.Expr:
+    """Lowest open interest value in bar."""
+    return pl.col(source_col).min()
+
+
+@AggregationRegistry.register_aggregate_raw(
+    name="oi_range",
+    semantic_type="state_variable",
+    mode_allowlist=["MFT", "LFT"],
+    required_columns=["open_interest"],
+)
+def oi_range(source_col: str) -> pl.Expr:
+    """Open interest range inside bar: max - min."""
+    return pl.col(source_col).max() - pl.col(source_col).min()
+
+
+@AggregationRegistry.register_aggregate_raw(
+    name="oi_pct_change",
+    semantic_type="state_variable",
+    mode_allowlist=["MFT", "LFT"],
+    required_columns=["open_interest"],
+)
+def oi_pct_change(source_col: str) -> pl.Expr:
+    """Normalized OI change vs bar open: (close - open) / max(abs(open), eps)."""
+    eps = pl.lit(1e-12)
+    oi_open_val = pl.col(source_col).first()
+    denom = pl.max_horizontal(oi_open_val.abs(), eps)
+    return (pl.col(source_col).last() - oi_open_val) / denom
+
+
+@AggregationRegistry.register_aggregate_raw(
+    name="oi_pressure",
+    semantic_type="state_variable",
+    mode_allowlist=["MFT", "LFT"],
+    required_columns=["open_interest"],
+)
+def oi_pressure(source_col: str) -> pl.Expr:
+    """Normalized OI pressure vs bar close: (close - open) / max(abs(close), eps)."""
+    eps = pl.lit(1e-12)
+    oi_close_val = pl.col(source_col).last()
+    denom = pl.max_horizontal(oi_close_val.abs(), eps)
+    return (oi_close_val - pl.col(source_col).first()) / denom
