@@ -331,3 +331,24 @@ class TestBucketAssignmentEmptyCases:
 
         # Data at 10ms should map to bar at 60ms
         assert bucketed["bucket_ts"][0] == 60_000_000
+
+    def test_data_after_last_spine_point_unassigned(self):
+        """Data after last spine boundary must remain unassigned."""
+        spine = pl.LazyFrame(
+            {
+                "ts_local_us": [60_000_000, 120_000_000],
+                "exchange_id": [1, 1],
+                "symbol_id": [12345, 12345],
+            }
+        )
+        data = pl.LazyFrame(
+            {
+                "ts_local_us": [130_000_000],
+                "exchange_id": [1],
+                "symbol_id": [12345],
+                "value": [100],
+            }
+        )
+
+        bucketed = assign_to_buckets(data, spine).collect()
+        assert bucketed["bucket_ts"][0] is None

@@ -60,6 +60,7 @@ pytest
 | [Choosing an API](guides/choosing-an-api.md) | Query API vs Core API decision guide |
 | [Dim Asset Stats Usage](guides/dim-asset-stats-usage.md) | Working with asset statistics |
 | [Feature Engineering (MFT)](guides/feature-engineering.md) | PIT-correct feature framework for MFT workflows |
+| [Research Pipeline v2](guides/research-pipeline-v2.md) | Contract-first `research.pipeline(request)` for production feature/resample/aggregate runs |
 | [Feature Pipeline Modes](guides/feature-pipeline-modes.md) | Decision matrix and PIT-safe templates for event-joined, tick-then-bar, and bar-then-feature workflows |
 | [Roles & Responsibilities](roles-and-responsibilities.md) | Ownership boundaries, review routing, and handoff contracts |
 

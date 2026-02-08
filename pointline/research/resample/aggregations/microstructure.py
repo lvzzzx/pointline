@@ -42,15 +42,19 @@ def microprice_close(lf: pl.LazyFrame, spec: AggregationSpec) -> pl.LazyFrame:
         Best ask: 50005, size 80
         Microprice = (50000 * 80 + 50005 * 100) / (100 + 80) = 50002.78
     """
+    denom = pl.col("bids_sz_int").list.get(0) + pl.col("asks_sz_int").list.get(0)
     return lf.with_columns(
         [
-            (
+            pl.when(denom > 0)
+            .then(
                 (
                     pl.col("bids_px_int").list.get(0) * pl.col("asks_sz_int").list.get(0)
                     + pl.col("asks_px_int").list.get(0) * pl.col("bids_sz_int").list.get(0)
                 )
-                / (pl.col("bids_sz_int").list.get(0) + pl.col("asks_sz_int").list.get(0))
-            ).alias("_microprice_close_feature")
+                / denom
+            )
+            .otherwise(None)
+            .alias("_microprice_close_feature")
         ]
     )
 
@@ -117,11 +121,20 @@ def ofi_sum(lf: pl.LazyFrame, spec: AggregationSpec) -> pl.LazyFrame:
         t1: bid_vol=150, ask_vol=90
         OFI = (150-100) - (90-80) = 50 - 10 = 40 (buying pressure)
     """
-    return lf.with_columns(
+    sorted_lf = lf.sort(["exchange_id", "symbol_id", "ts_local_us"])
+    return sorted_lf.with_columns(
         [
             (
-                pl.col("bids_sz_int").list.get(0).diff().fill_null(0)
-                - pl.col("asks_sz_int").list.get(0).diff().fill_null(0)
+                pl.col("bids_sz_int")
+                .list.get(0)
+                .diff()
+                .over(["exchange_id", "symbol_id"])
+                .fill_null(0)
+                - pl.col("asks_sz_int")
+                .list.get(0)
+                .diff()
+                .over(["exchange_id", "symbol_id"])
+                .fill_null(0)
             ).alias("_ofi_sum_feature")
         ]
     )

@@ -81,7 +81,9 @@ def aggregate(
         expr = meta.aggregate_raw(spec.source_column) if meta else _build_builtin_agg_expr(spec)
         agg_exprs.append(expr.alias(spec.name))
 
-    result = bucketed_data.group_by(config.by).agg(agg_exprs)
+    result: pl.LazyFrame | None = None
+    if agg_exprs:
+        result = bucketed_data.group_by(config.by).agg(agg_exprs)
 
     # Step 4: Apply Pattern B (compute features then aggregate)
     if stage_2_aggs:
@@ -94,7 +96,7 @@ def aggregate(
         # Aggregate computed features
         feature_agg_exprs: list[pl.Expr] = []
         for spec, _meta in stage_2_aggs:
-            feature_col = f"_{spec.name}_feature"
+            feature_col = f"_{spec.agg}_feature"
 
             # Standard distribution statistics for Pattern B
             feature_agg_exprs.extend(
@@ -109,13 +111,19 @@ def aggregate(
         feature_result = feature_data.group_by(config.by).agg(feature_agg_exprs)
 
         # Join Pattern A and Pattern B results
-        result = result.join(
-            feature_result,
-            on=config.by,
-            how="left",
-        )
+        if result is None:
+            result = feature_result
+        else:
+            result = result.join(
+                feature_result,
+                on=config.by,
+                how="left",
+            )
 
     # Step 5: Left join with spine to preserve all spine points
+    if result is None:
+        raise ValueError("No aggregations configured for execution")
+
     if spine is not None:
         result = spine.join(
             result,

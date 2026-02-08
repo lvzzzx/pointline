@@ -21,7 +21,7 @@ Out of scope:
 
 ## Input Contract
 
-Schema file: `schemas/quant_research_input.v1.json`
+Schema file: `schemas/quant_research_input.v1.json` (legacy) / `schemas/quant_research_input.v2.json` (pipeline v2)
 
 Required top-level fields:
 - `schema_version`
@@ -35,7 +35,7 @@ Required top-level fields:
 
 ## Output Contract
 
-Schema file: `schemas/quant_research_output.v1.json`
+Schema file: `schemas/quant_research_output.v1.json` (legacy) / `schemas/quant_research_output.v2.json` (pipeline v2)
 
 Required top-level fields:
 - `schema_version`

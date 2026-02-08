@@ -67,8 +67,8 @@ This directory contains the complete design specification for Pointline's automa
 
 Input and output contracts are defined in JSON Schema:
 
-- **Input schema**: `/schemas/quant_research_input.v1.json`
-- **Output schema**: `/schemas/quant_research_output.v1.json`
+- **Input schema**: `/schemas/quant_research_input.v2.json` (current), `/schemas/quant_research_input.v1.json` (legacy)
+- **Output schema**: `/schemas/quant_research_output.v2.json` (current), `/schemas/quant_research_output.v1.json` (legacy)
 - **Feature DSL schema**: (Embedded in [feature-dsl-design.md](feature-dsl-design.md))
 
 ## Implementation Status

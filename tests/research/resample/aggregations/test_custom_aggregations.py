@@ -108,6 +108,9 @@ class TestMicrostructureAggregations:
         data = pl.LazyFrame(
             {
                 "bucket_ts": [60_000_000] * 3,
+                "ts_local_us": [10_000_000, 20_000_000, 30_000_000],
+                "exchange_id": [1, 1, 1],
+                "symbol_id": [12345, 12345, 12345],
                 # Best bid/ask sizes as first element of arrays
                 "bids_sz_int": [[100], [150], [120]],
                 "asks_sz_int": [[80], [90], [100]],

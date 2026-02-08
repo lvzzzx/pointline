@@ -140,6 +140,34 @@ class TestAggregatePatternB:
         # Mean of (10*2, 20*2, 30*2) = mean of (20, 40, 60) = 40
         assert result["test_feature_dist_mean"][0] == 40
 
+    def test_pattern_b_uses_agg_feature_column_when_name_is_aliased(self):
+        """Pattern B should resolve feature source from agg id, not output alias."""
+        data = pl.LazyFrame(
+            {
+                "exchange_id": [1, 1, 1],
+                "symbol_id": [12345, 12345, 12345],
+                "bucket_ts": [60_000_000, 60_000_000, 60_000_000],
+                "bid_px_int": [50000, 50010, 50020],
+                "ask_px_int": [50005, 50015, 50025],
+            }
+        )
+
+        config = AggregateConfig(
+            by=["exchange_id", "symbol_id", "bucket_ts"],
+            aggregations=[
+                AggregationSpec(
+                    name="spread_alias",
+                    source_column="bid_px_int",
+                    agg="spread_distribution",
+                ),
+            ],
+            mode="tick_then_bar",
+            research_mode="HFT",
+        )
+
+        result = aggregate(data, config).collect()
+        assert "spread_alias_mean" in result.columns
+
 
 class TestAggregateSemanticValidation:
     """Test semantic type policy enforcement."""

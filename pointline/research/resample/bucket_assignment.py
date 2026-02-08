@@ -110,6 +110,19 @@ def assign_to_buckets(
         strategy="backward",
     )
 
+    # Enforce strict half-open interval [bucket_start, bucket_ts):
+    # rows after the final boundary (or malformed joins) are left unassigned.
+    bucketed = bucketed.with_columns(
+        [
+            pl.when(
+                pl.col("bucket_ts").is_not_null() & (pl.col("ts_local_us") < pl.col("bucket_ts"))
+            )
+            .then(pl.col("bucket_ts"))
+            .otherwise(None)
+            .alias("bucket_ts")
+        ]
+    )
+
     return bucketed
 
 

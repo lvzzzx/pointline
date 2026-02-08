@@ -1,6 +1,6 @@
 """Research API for the Pointline data lake.
 
-This package provides two layers for querying data:
+This package provides three layers:
 
 1. Core API (explicit symbol resolution):
    - research.load_trades(symbol_id=..., start_ts_us=..., end_ts_us=...)
@@ -10,6 +10,10 @@ This package provides two layers for querying data:
    - research.query.trades(exchange=..., symbol=..., start=..., end=...)
    - Best for: exploration, prototyping, quick checks
    - Optional: decoded=True for float outputs at the edge
+
+3. Pipeline API (contract-first v2 execution):
+   - research.pipeline(request: dict) -> dict
+   - Best for: production research workflows with strict PIT/gate controls
 
 Example - Core API (explicit):
     >>> from pointline import research, registry
@@ -58,6 +62,10 @@ Example - Query API (decoded):
 # Import everything from core module to maintain backward compatibility
 # Import query module (not individual functions, so users access via query.*)
 from pointline.research import features, query
+from pointline.research.contracts import (
+    validate_quant_research_input_v2,
+    validate_quant_research_output_v2,
+)
 from pointline.research.core import (
     _apply_filters,
     _derive_date_bounds_from_ts,
@@ -85,6 +93,7 @@ from pointline.research.discovery import (
     list_tables,
     summarize_symbol,
 )
+from pointline.research.pipeline import compile_request, pipeline
 
 __all__ = [
     # Core API functions
@@ -106,6 +115,11 @@ __all__ = [
     "summarize_symbol",
     # Query module (convenience layer)
     "query",
+    # Pipeline API
+    "pipeline",
+    "compile_request",
+    "validate_quant_research_input_v2",
+    "validate_quant_research_output_v2",
     # Feature engineering utilities
     "features",
     # Internal functions (exposed for testing/advanced use)

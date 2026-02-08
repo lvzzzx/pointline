@@ -51,6 +51,8 @@ class AggregationMetadata:
     required_columns: list[str]
     pit_policy: dict[str, str]
     determinism: dict[str, list[str]]
+    impl_ref: str = ""
+    version: str = "2.0"
 
     # CORRECTED: Separate callables, not single impl
     aggregate_raw: AggregateRawCallable | None = None  # Pattern A only
@@ -70,6 +72,11 @@ class AggregationMetadata:
                 raise ValueError(f"{self.name}: feature_then_aggregate requires compute_features")
             if self.aggregate_raw is not None:
                 raise ValueError(f"{self.name}: feature_then_aggregate cannot have aggregate_raw")
+
+    @property
+    def determinism_policy(self) -> dict[str, list[str]]:
+        """Alias for contract naming consistency."""
+        return self.determinism
 
 
 class AggregationRegistry:
@@ -132,6 +139,8 @@ class AggregationRegistry:
                 required_columns=required_columns or [],
                 pit_policy=pit_policy or {"feature_direction": "backward_only"},
                 determinism={"required_sort": ["exchange_id", "symbol_id", "ts_local_us"]},
+                impl_ref=f"{func.__module__}.{func.__name__}",
+                version="2.0",
                 aggregate_raw=func,
                 compute_features=None,
             )
@@ -184,6 +193,8 @@ class AggregationRegistry:
                 required_columns=required_columns,
                 pit_policy=pit_policy or {"feature_direction": "backward_only"},
                 determinism={"required_sort": ["exchange_id", "symbol_id", "ts_local_us"]},
+                impl_ref=f"{func.__module__}.{func.__name__}",
+                version="2.0",
                 aggregate_raw=None,
                 compute_features=func,
             )

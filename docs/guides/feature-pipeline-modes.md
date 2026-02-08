@@ -2,19 +2,14 @@
 
 This guide defines when to use each feature-construction mode and provides PIT-safe templates.
 
-## Status: Current vs Target
+## Status: Current
 
-Current first-class implementation in this repo:
-- `event_joined` via feature spine + PIT alignment (`pointline.research.features`).
-- Built-in rolling families are primarily row-window based (`window_rows` configs).
-
-Target design (planned, not first-class yet):
-- `tick_then_bar` and `bar_then_feature` as standardized APIs with shared contract semantics.
-- First-class `research.resample(...)` and `research.aggregate(...)`.
-
-Use this interpretation:
-- Templates marked **Current** are aligned with today’s supported framework.
-- Templates marked **Advanced/Manual** are valid patterns but not yet a standardized API surface.
+Current first-class production path:
+- `research.pipeline(request)` with mode-first execution:
+  - `event_joined`
+  - `tick_then_bar`
+  - `bar_then_feature`
+- Strict PIT and determinism gates are evaluated in every run.
 
 ## Modes
 
@@ -98,7 +93,7 @@ Use for:
 
 ---
 
-## Canonical Template 2: `tick_then_bar` (micro -> aggregate) - Advanced/Manual
+## Canonical Template 2: `tick_then_bar` (micro -> aggregate)
 
 ```python
 import polars as pl
@@ -130,11 +125,10 @@ bars = (
 
 Critical caution:
 - define bucket boundaries once (`closed`, `label`) and keep consistent across train/test.
-- this is currently a manual pattern; there is no first-class `research.aggregate(...)` API yet
 
 ---
 
-## Canonical Template 3: `bar_then_feature` (resample -> feature) - Advanced/Manual
+## Canonical Template 3: `bar_then_feature` (resample -> feature)
 
 ```python
 import polars as pl
@@ -166,7 +160,6 @@ features = quote_bars.with_columns([
 ```
 
 Use for: scalable baseline modeling, regime studies, robust MFT experiments.
-Note: currently manual/pattern-based; standardized first-class resample API is planned.
 
 ---
 
