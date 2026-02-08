@@ -145,3 +145,13 @@ def validate_quant_research_input_v2(payload: dict[str, Any]) -> None:
 def validate_quant_research_output_v2(payload: dict[str, Any]) -> None:
     """Validate Quant Research output payload v2."""
     validate_against_schema(payload, "quant_research_output.v2.json")
+
+
+def validate_quant_research_workflow_input_v2(payload: dict[str, Any]) -> None:
+    """Validate Quant Research workflow input payload v2."""
+    validate_against_schema(payload, "quant_research_workflow_input.v2.json")
+
+
+def validate_quant_research_workflow_output_v2(payload: dict[str, Any]) -> None:
+    """Validate Quant Research workflow output payload v2."""
+    validate_against_schema(payload, "quant_research_workflow_output.v2.json")
