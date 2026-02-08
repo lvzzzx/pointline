@@ -200,6 +200,16 @@ def _validate_semantic_type(agg: str, semantic_type: str) -> None:
     Raises:
         ValueError: If aggregation not allowed for semantic type
     """
+    builtin_aggs = {"sum", "mean", "std", "min", "max", "last", "first", "count", "nunique"}
+    if agg in AggregationRegistry._registry and agg not in builtin_aggs:
+        registered = AggregationRegistry.get(agg).semantic_type
+        if semantic_type != registered:
+            raise ValueError(
+                f"Aggregation {agg} semantic_type mismatch: "
+                f"requested={semantic_type}, registered={registered}"
+            )
+        return
+
     policy = SEMANTIC_POLICIES.get(semantic_type, {})
 
     if agg in policy.get("forbidden_aggs", []):

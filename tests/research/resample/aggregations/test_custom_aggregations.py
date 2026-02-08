@@ -281,6 +281,87 @@ class TestDerivativeAggregations:
         # Mean: (0.0001 + 0.0002 + 0.00015) / 3 = 0.00015
         assert abs(result["funding_mean"][0] - 0.00015) < 0.0000001
 
+    def test_funding_close_computation(self):
+        """Test funding close uses last snapshot in bar."""
+        from pointline.research.resample.aggregations.derivatives import funding_close
+
+        data = pl.DataFrame(
+            {
+                "bucket_ts": [60_000_000] * 3,
+                "funding_rate": [0.0001, 0.0002, 0.00015],
+            }
+        )
+
+        result = data.group_by("bucket_ts").agg([funding_close("funding_rate").alias("funding")])
+        assert result["funding"][0] == 0.00015
+
+    def test_funding_step_computation(self):
+        """Test funding step computes close - open inside bar."""
+        from pointline.research.resample.aggregations.derivatives import funding_step
+
+        data = pl.DataFrame(
+            {
+                "bucket_ts": [60_000_000] * 3,
+                "funding_rate": [0.0001, 0.0002, 0.00015],
+            }
+        )
+
+        result = data.group_by("bucket_ts").agg(
+            [funding_step("funding_rate").alias("funding_step")]
+        )
+        assert result["funding_step"][0] == pytest.approx(0.00005, abs=1e-12)
+
+    def test_funding_carry_8h_per_hour_computation(self):
+        """Test funding carry normalized to hourly under 8h convention."""
+        from pointline.research.resample.aggregations.derivatives import funding_carry_8h_per_hour
+
+        data = pl.DataFrame(
+            {
+                "bucket_ts": [60_000_000] * 3,
+                "funding_rate": [0.0001, 0.0002, 0.00016],
+            }
+        )
+
+        result = data.group_by("bucket_ts").agg(
+            [funding_carry_8h_per_hour("funding_rate").alias("carry_h")]
+        )
+        assert result["carry_h"][0] == 0.00016 / 8.0
+
+    def test_funding_surprise_computation(self):
+        """Test funding surprise at bar close versus predicted close."""
+        from pointline.research.resample.aggregations.derivatives import funding_surprise
+
+        data = pl.DataFrame(
+            {
+                "bucket_ts": [60_000_000] * 3,
+                "funding_rate": [0.0001, 0.0002, 0.00015],
+                "predicted_funding_rate": [0.00011, 0.00018, 0.00014],
+            }
+        )
+
+        result = data.group_by("bucket_ts").agg(
+            [funding_surprise("funding_rate").alias("funding_surprise")]
+        )
+        assert result["funding_surprise"][0] == pytest.approx(0.00001, abs=1e-12)
+
+    def test_funding_pressure_computation(self):
+        """Test funding pressure scales funding step by OI turnover pressure."""
+        from pointline.research.resample.aggregations.derivatives import funding_pressure
+
+        data = pl.DataFrame(
+            {
+                "bucket_ts": [60_000_000] * 3,
+                "funding_rate": [0.0001, 0.0002, 0.00015],
+                "open_interest": [1_000_000.0, 1_005_000.0, 1_008_000.0],
+            }
+        )
+
+        result = data.group_by("bucket_ts").agg(
+            [funding_pressure("funding_rate").alias("funding_pressure")]
+        )
+        expected = (0.00015 - 0.0001) * ((1_008_000.0 - 1_000_000.0) / 1_008_000.0)
+        assert result["funding_pressure"][0] == pytest.approx(expected, abs=1e-12)
+
     def test_oi_change_computation(self):
         """Test OI change aggregation.
 
@@ -329,6 +410,21 @@ class TestDerivativeAggregations:
         meta = AggregationRegistry.get("oi_change")
         assert meta.stage == "aggregate_then_feature"
         assert meta.semantic_type == "state_variable"
+
+    def test_funding_feature_registrations(self):
+        """Test new funding-focused derivative features are registered."""
+        for name in [
+            "funding_close",
+            "funding_step",
+            "funding_carry_8h_per_hour",
+            "funding_surprise",
+            "funding_pressure",
+        ]:
+            assert name in AggregationRegistry._registry
+            meta = AggregationRegistry.get(name)
+            assert meta.stage == "aggregate_then_feature"
+            assert "MFT" in meta.mode_allowlist
+            assert "LFT" in meta.mode_allowlist
 
 
 class TestCustomAggregationsModeValidation:

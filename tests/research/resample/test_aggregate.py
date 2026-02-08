@@ -445,6 +445,62 @@ class TestAggregateSemanticValidation:
         result = aggregate(data, config).collect()
         assert result["avg_price"][0] == 105
 
+    def test_custom_semantic_validation_matches_registered_type(self):
+        """Custom aggregations should accept matching semantic_type."""
+        data = pl.LazyFrame(
+            {
+                "exchange_id": [1, 1],
+                "symbol_id": [12345, 12345],
+                "bucket_ts": [60_000_000, 60_000_000],
+                "funding_rate": [0.0001, 0.0002],
+            }
+        )
+
+        config = AggregateConfig(
+            by=["exchange_id", "symbol_id", "bucket_ts"],
+            aggregations=[
+                AggregationSpec(
+                    name="funding_step",
+                    source_column="funding_rate",
+                    agg="funding_step",
+                    semantic_type="state_variable",
+                ),
+            ],
+            mode="bar_then_feature",
+            research_mode="MFT",
+        )
+
+        result = aggregate(data, config).collect()
+        assert "funding_step" in result.columns
+
+    def test_custom_semantic_validation_rejects_mismatched_type(self):
+        """Custom aggregations should reject mismatched semantic_type."""
+        data = pl.LazyFrame(
+            {
+                "exchange_id": [1, 1],
+                "symbol_id": [12345, 12345],
+                "bucket_ts": [60_000_000, 60_000_000],
+                "funding_rate": [0.0001, 0.0002],
+            }
+        )
+
+        config = AggregateConfig(
+            by=["exchange_id", "symbol_id", "bucket_ts"],
+            aggregations=[
+                AggregationSpec(
+                    name="funding_step",
+                    source_column="funding_rate",
+                    agg="funding_step",
+                    semantic_type="price",
+                ),
+            ],
+            mode="bar_then_feature",
+            research_mode="MFT",
+        )
+
+        with pytest.raises(ValueError, match="semantic_type mismatch"):
+            aggregate(data, config)
+
 
 class TestAggregateSpinePreservation:
     """Test spine preservation via left join."""

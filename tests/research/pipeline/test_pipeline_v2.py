@@ -307,6 +307,59 @@ def test_pipeline_tick_then_bar_custom_rollup_ofi_imbalance():
     assert "ofi_stats_ofi_imbalance" in output["results"]["columns"]
 
 
+def test_pipeline_bar_then_feature_derivatives_funding_features():
+    request = _base_request("bar_then_feature")
+    request["sources"][0]["name"] = "derivative_ticker"
+    request["sources"][0]["inline_rows"] = [
+        {
+            "ts_local_us": 10_000_000,
+            "exchange_id": 1,
+            "symbol_id": 12345,
+            "funding_rate": 0.00010,
+            "predicted_funding_rate": 0.00011,
+            "open_interest": 1_000_000.0,
+            "file_id": 1,
+            "file_line_number": 1,
+        },
+        {
+            "ts_local_us": 20_000_000,
+            "exchange_id": 1,
+            "symbol_id": 12345,
+            "funding_rate": 0.00020,
+            "predicted_funding_rate": 0.00018,
+            "open_interest": 1_005_000.0,
+            "file_id": 1,
+            "file_line_number": 2,
+        },
+        {
+            "ts_local_us": 30_000_000,
+            "exchange_id": 1,
+            "symbol_id": 12345,
+            "funding_rate": 0.00015,
+            "predicted_funding_rate": 0.00014,
+            "open_interest": 1_008_000.0,
+            "file_id": 1,
+            "file_line_number": 3,
+        },
+    ]
+    request["operators"] = [
+        _operator_contract("funding_close", source_column="funding_rate"),
+        _operator_contract("funding_step", source_column="funding_rate"),
+        _operator_contract("funding_carry_8h_per_hour", source_column="funding_rate"),
+        _operator_contract("funding_surprise", source_column="funding_rate"),
+        _operator_contract("funding_pressure", source_column="funding_rate"),
+    ]
+    request["labels"] = []
+
+    output = pipeline(request)
+    cols = output["results"]["columns"]
+    assert "funding_close" in cols
+    assert "funding_step" in cols
+    assert "funding_carry_8h_per_hour" in cols
+    assert "funding_surprise" in cols
+    assert "funding_pressure" in cols
+
+
 def test_pipeline_tick_then_bar_rejects_unknown_custom_rollup():
     request = _base_request("tick_then_bar")
     request["sources"][0]["name"] = "quotes"

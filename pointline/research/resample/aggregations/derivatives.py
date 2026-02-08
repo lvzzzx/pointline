@@ -1,7 +1,7 @@
 """Derivative aggregations for futures/perpetuals research.
 
 This module implements derivative-specific metrics:
-- Funding rate aggregation
+- Funding rate state and delta features
 - Open interest change
 
 CORRECTED: Uses actual derivative_ticker schema (float columns, not int).
@@ -38,6 +38,74 @@ def funding_rate_mean(source_col: str) -> pl.Expr:
         Mean = 0.00015 (1.5 bps per funding period)
     """
     return pl.col(source_col).mean()
+
+
+@AggregationRegistry.register_aggregate_raw(
+    name="funding_close",
+    semantic_type="state_variable",
+    mode_allowlist=["MFT", "LFT"],
+    required_columns=["funding_rate"],
+)
+def funding_close(source_col: str) -> pl.Expr:
+    """Funding snapshot at bar close (as-of last).
+
+    This is typically a more meaningful baseline than intra-bar mean for
+    state-style funding feeds.
+    """
+    return pl.col(source_col).last()
+
+
+@AggregationRegistry.register_aggregate_raw(
+    name="funding_step",
+    semantic_type="state_variable",
+    mode_allowlist=["MFT", "LFT"],
+    required_columns=["funding_rate"],
+)
+def funding_step(source_col: str) -> pl.Expr:
+    """Funding step inside bar: close - open."""
+    return pl.col(source_col).last() - pl.col(source_col).first()
+
+
+@AggregationRegistry.register_aggregate_raw(
+    name="funding_carry_8h_per_hour",
+    semantic_type="state_variable",
+    mode_allowlist=["MFT", "LFT"],
+    required_columns=["funding_rate"],
+)
+def funding_carry_8h_per_hour(source_col: str) -> pl.Expr:
+    """Funding carry normalized to per-hour under an 8h settlement convention."""
+    return pl.col(source_col).last() / pl.lit(8.0)
+
+
+@AggregationRegistry.register_aggregate_raw(
+    name="funding_surprise",
+    semantic_type="state_variable",
+    mode_allowlist=["MFT", "LFT"],
+    required_columns=["funding_rate", "predicted_funding_rate"],
+)
+def funding_surprise(source_col: str) -> pl.Expr:
+    """Funding surprise at close: funding_close - predicted_funding_rate_close."""
+    return pl.col(source_col).last() - pl.col("predicted_funding_rate").last()
+
+
+@AggregationRegistry.register_aggregate_raw(
+    name="funding_pressure",
+    semantic_type="state_variable",
+    mode_allowlist=["MFT", "LFT"],
+    required_columns=["funding_rate", "open_interest"],
+)
+def funding_pressure(source_col: str) -> pl.Expr:
+    """Funding step scaled by OI turnover pressure.
+
+    Formula:
+        (funding_close - funding_open) * ((oi_close - oi_open) / max(abs(oi_close), eps))
+    """
+    eps = pl.lit(1e-12)
+    funding_delta = pl.col(source_col).last() - pl.col(source_col).first()
+    oi_delta = pl.col("open_interest").last() - pl.col("open_interest").first()
+    oi_close_abs = pl.col("open_interest").last().abs()
+    denom = pl.max_horizontal(oi_close_abs, eps)
+    return funding_delta * (oi_delta / denom)
 
 
 @AggregationRegistry.register_aggregate_raw(
