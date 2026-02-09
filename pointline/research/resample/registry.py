@@ -253,7 +253,7 @@ class AggregationRegistry:
         """
         if profile not in cls._profiles:
             raise ValueError(
-                f"Profile {profile} not found. " f"Available profiles: {list(cls._profiles.keys())}"
+                f"Profile {profile} not found. Available profiles: {list(cls._profiles.keys())}"
             )
         return cls._profiles[profile]
 

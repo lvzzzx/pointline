@@ -221,7 +221,7 @@ def _validate_semantic_type(agg: str, semantic_type: str) -> None:
     allowed = policy.get("allowed_aggs", [])
     if allowed and agg not in allowed:
         raise ValueError(
-            f"Aggregation {agg} not in allowlist for {semantic_type}. " f"Allowed: {allowed}"
+            f"Aggregation {agg} not in allowlist for {semantic_type}. Allowed: {allowed}"
         )
 
 

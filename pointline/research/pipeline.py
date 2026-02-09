@@ -196,9 +196,7 @@ def execute_compiled_with_sources(
     reproducibility_evidence = (
         "Output hash matched deterministic rerun"
         if reproducibility_passed
-        else (
-            "Output hash mismatch on deterministic rerun: " f"{output_hash} != {rerun_output_hash}"
-        )
+        else (f"Output hash mismatch on deterministic rerun: {output_hash} != {rerun_output_hash}")
     )
 
     return frame, _ExecutionArtifacts(
