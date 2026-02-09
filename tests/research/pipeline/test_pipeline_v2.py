@@ -119,7 +119,7 @@ def _context_contract(
         "name": name or plugin,
         "plugin": plugin,
         "required_columns": ["oi_last"],
-        "params": params or {"oi_col": "oi_last", "lookback_bars": 20},
+        "params": params or {"oi_col": "oi_last", "base_notional": 100_000.0, "lookback_bars": 20},
         "mode_allowlist": ["MFT", "LFT"],
         "pit_policy": {"feature_direction": "backward_only"},
         "determinism_policy": {"required_sort": ["exchange_id", "symbol_id", "ts_local_us"]},
@@ -151,7 +151,9 @@ def test_compile_request_hash_changes_when_context_risk_changes():
     request_a = _base_request("bar_then_feature")
     request_b = _base_request("bar_then_feature")
     request_b["context_risk"] = [
-        _context_contract(params={"oi_col": "oi_last", "lookback_bars": 96})
+        _context_contract(
+            params={"oi_col": "oi_last", "base_notional": 100_000.0, "lookback_bars": 96}
+        )
     ]
 
     compiled_a = compile_request(deepcopy(request_a))
@@ -751,6 +753,84 @@ def test_input_contract_rejects_invalid_context_plugin_identifier():
 
     with pytest.raises(SchemaValidationError):
         validate_quant_research_input_v2(request)
+
+
+def test_compile_request_rejects_context_plugin_disallowed_for_mode():
+    request = _base_request("tick_then_bar")
+    request["sources"][0]["name"] = "quotes"
+    request["sources"][0]["inline_rows"] = [
+        {
+            "ts_local_us": 10_000_000,
+            "exchange_id": 1,
+            "symbol_id": 12345,
+            "bid_px_int": 50000,
+            "ask_px_int": 50005,
+            "file_id": 1,
+            "file_line_number": 1,
+        }
+    ]
+    request["operators"] = [
+        _operator_contract(
+            "spread_distribution",
+            source_column="bid_px_int",
+            name="spread_stats",
+        )
+    ]
+    request["labels"] = []
+    request["context_risk"] = [_context_contract()]
+
+    with pytest.raises(ValueError, match="not allowed in HFT"):
+        compile_request(request)
+
+
+def test_pipeline_applies_context_risk_after_aggregation():
+    request = _base_request("bar_then_feature")
+    request["sources"][0]["inline_rows"] = [
+        {
+            "ts_local_us": 10_000_000,
+            "exchange_id": 1,
+            "symbol_id": 12345,
+            "oi_raw": 100.0,
+            "mark_px": 10.0,
+            "file_id": 1,
+            "file_line_number": 10,
+        },
+        {
+            "ts_local_us": 70_000_000,
+            "exchange_id": 1,
+            "symbol_id": 12345,
+            "oi_raw": 120.0,
+            "mark_px": 12.0,
+            "file_id": 1,
+            "file_line_number": 11,
+        },
+    ]
+    request["operators"] = [
+        _operator_contract("last", source_column="oi_raw", name="oi_last"),
+        _operator_contract("last", source_column="mark_px", name="mark_px_last"),
+    ]
+    request["labels"] = []
+    request["context_risk"] = [
+        _context_contract(
+            name="oi_cap",
+            params={
+                "oi_col": "oi_last",
+                "price_col": "mark_px_last",
+                "base_notional": 1_000.0,
+                "lookback_bars": 2,
+                "min_ratio": 0.9,
+            },
+        )
+    ]
+
+    output = pipeline(request)
+    columns = set(output["results"]["columns"])
+    assert "oi_cap_oi_notional" in columns
+    assert "oi_cap_oi_level_ratio" in columns
+    assert "oi_cap_capacity_ok" in columns
+    assert "oi_cap_capacity_mult" in columns
+    assert "oi_cap_max_trade_notional" in columns
+    assert output["decision"]["status"] in {"go", "revise"}
 
 
 def test_pit_gate_fails_when_events_arrive_after_last_boundary():

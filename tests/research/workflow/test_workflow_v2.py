@@ -6,6 +6,7 @@ import importlib
 import json
 from copy import deepcopy
 
+import polars as pl
 import pytest
 
 from pointline.research import (
@@ -14,6 +15,7 @@ from pointline.research import (
     validate_quant_research_workflow_output_v2,
     workflow,
 )
+from pointline.research.context import ContextRegistry
 from pointline.research.contracts import SchemaValidationError
 from pointline.research.resample import AggregationRegistry
 from pointline.research.workflow import WorkflowError
@@ -69,7 +71,7 @@ def _context_contract(
         "name": name or plugin,
         "plugin": plugin,
         "required_columns": ["oi_last"],
-        "params": params or {"oi_col": "oi_last", "lookback_bars": 20},
+        "params": params or {"oi_col": "oi_last", "base_notional": 100_000.0, "lookback_bars": 20},
         "mode_allowlist": ["MFT", "LFT"],
         "pit_policy": {"feature_direction": "backward_only"},
         "determinism_policy": {"required_sort": ["exchange_id", "symbol_id", "ts_local_us"]},
@@ -350,7 +352,9 @@ def test_compile_workflow_hash_changes_when_context_risk_changes():
     request_a = _base_workflow_request()
     request_b = _base_workflow_request()
     request_b["context_risk"] = [
-        _context_contract(params={"oi_col": "oi_last", "lookback_bars": 96})
+        _context_contract(
+            params={"oi_col": "oi_last", "base_notional": 100_000.0, "lookback_bars": 96}
+        )
     ]
 
     compiled_a = compile_workflow_request(deepcopy(request_a))
@@ -370,6 +374,59 @@ def test_workflow_schema_rejects_invalid_context_plugin_identifier():
     request["stages"][0]["context_risk"] = [_context_contract(plugin="OI-Capacity")]
     with pytest.raises(SchemaValidationError):
         validate_quant_research_workflow_input_v2(request)
+
+
+def test_workflow_applies_stage_context_risk_plugin():
+    request = _base_workflow_request()
+    request["stages"][1]["operators"] = [
+        _operator_contract("last", source_column="spread_stats_mean", name="oi_last")
+    ]
+    request["stages"][1]["context_risk"] = [
+        _context_contract(
+            name="stage_cap",
+            params={"oi_col": "oi_last", "base_notional": 10_000.0, "lookback_bars": 2},
+        )
+    ]
+
+    output = workflow(request)
+    stage2 = next(item for item in output["stage_runs"] if item["stage_id"] == "s2")
+    assert "stage_cap_oi_level_ratio" in stage2["columns"]
+    assert "stage_cap_capacity_ok" in stage2["columns"]
+    assert "stage_cap_capacity_mult" in stage2["columns"]
+    assert "stage_cap_max_trade_notional" in stage2["columns"]
+
+
+def test_workflow_global_context_risk_is_merged_into_stage_requests():
+    @ContextRegistry.register_context(
+        name="workflow_tag",
+        required_columns=["exchange_id", "symbol_id", "ts_local_us"],
+        mode_allowlist=["HFT", "MFT", "LFT"],
+    )
+    def workflow_tag(lf: pl.LazyFrame, spec) -> pl.LazyFrame:
+        return lf.with_columns([pl.lit(1).alias(f"{spec.name}_flag")])
+
+    request = _base_workflow_request()
+    request["context_risk"] = [
+        {
+            "name": "wf_tag",
+            "plugin": "workflow_tag",
+            "required_columns": ["exchange_id", "symbol_id", "ts_local_us"],
+            "params": {},
+            "mode_allowlist": ["HFT", "MFT", "LFT"],
+            "pit_policy": {"feature_direction": "backward_only"},
+            "determinism_policy": {"required_sort": ["exchange_id", "symbol_id", "ts_local_us"]},
+            "impl_ref": "tests.research.workflow.test_workflow_v2.workflow_tag",
+            "version": "2.0",
+        }
+    ]
+    request["stages"][0]["context_risk"] = []
+    request["stages"][1]["context_risk"] = []
+    request["stages"][2]["context_risk"] = []
+
+    output = workflow(request)
+    for stage_id in ["s1", "s2", "s3"]:
+        stage_run = next(item for item in output["stage_runs"] if item["stage_id"] == stage_id)
+        assert "wf_tag_flag" in stage_run["columns"]
 
 
 def test_stage_config_hash_changes_when_artifact_ref_changes():

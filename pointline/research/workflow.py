@@ -398,6 +398,8 @@ def _resolve_stage_sources(
 def _build_stage_request(
     workflow_compiled: dict[str, Any], stage: dict[str, Any]
 ) -> dict[str, Any]:
+    workflow_context = deepcopy(workflow_compiled.get("context_risk", []))
+    stage_context = deepcopy(stage.get("context_risk", []))
     return {
         "schema_version": "2.0",
         "request_id": f"{workflow_compiled['request_id']}:{stage['stage_id']}",
@@ -413,7 +415,7 @@ def _build_stage_request(
         ],
         "spine": deepcopy(stage["spine"]),
         "operators": deepcopy(stage["operators"]),
-        "context_risk": deepcopy(stage.get("context_risk", [])),
+        "context_risk": workflow_context + stage_context,
         "labels": deepcopy(stage["labels"]),
         "evaluation": deepcopy(stage["evaluation"]),
         "constraints": deepcopy(stage["constraints"]),
@@ -529,6 +531,7 @@ def _emit_stage_artifacts(
                 "timeline": stage_compiled["timeline"],
                 "spine": stage_compiled["spine"],
                 "operators": stage_compiled["operators"],
+                "context_risk": stage_compiled.get("context_risk", []),
                 "constraints": stage_compiled["constraints"],
                 "config_hash": stage_compiled["config_hash"],
             },

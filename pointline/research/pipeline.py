@@ -18,6 +18,7 @@ from typing import Any
 import polars as pl
 
 from pointline.research import core as research_core
+from pointline.research.context import ContextRegistry, apply_context_plugins
 from pointline.research.contracts import (
     validate_quant_research_input_v2,
     validate_quant_research_output_v2,
@@ -122,6 +123,7 @@ def compile_request(request: dict[str, Any]) -> dict[str, Any]:
     for op in compiled["operators"]:
         normalized_ops.append(_normalize_operator(op))
     compiled["operators"] = normalized_ops
+    compiled["context_risk"] = _normalize_context_specs(compiled)
 
     compiled["run_id"] = f"run-{uuid.uuid4().hex[:12]}"
     compiled["config_hash"] = _stable_hash(
@@ -170,11 +172,21 @@ def execute_compiled_with_sources(
     probe_checks = probe_checks or []
 
     result, pit_violations, unassigned = _execute_mode(compiled, sources)
+    result = apply_context_plugins(
+        result,
+        compiled.get("context_risk"),
+        research_mode=_research_mode_from_mode(compiled["mode"]),
+    )
     result = _apply_labels(result, compiled.get("labels", []))
     frame = result.collect()
 
     # Mandatory reproducibility rerun check on identical compiled inputs.
     rerun_result, _, _ = _execute_mode(compiled, sources)
+    rerun_result = apply_context_plugins(
+        rerun_result,
+        compiled.get("context_risk"),
+        research_mode=_research_mode_from_mode(compiled["mode"]),
+    )
     rerun_result = _apply_labels(rerun_result, compiled.get("labels", []))
     rerun_frame = rerun_result.collect()
 
@@ -361,6 +373,7 @@ def emit_artifacts(
         "timeline": compiled["timeline"],
         "spine": compiled["spine"],
         "operators": compiled["operators"],
+        "context_risk": compiled["context_risk"],
         "constraints": compiled["constraints"],
         "config_hash": compiled["config_hash"],
     }
@@ -672,6 +685,35 @@ def _normalize_operator(operator: dict[str, Any]) -> dict[str, Any]:
         )
 
     return normalized
+
+
+def _normalize_context_specs(compiled: dict[str, Any]) -> list[dict[str, Any]]:
+    normalized_specs: list[dict[str, Any]] = []
+    research_mode = _research_mode_from_mode(compiled["mode"])
+
+    for raw_spec in compiled.get("context_risk", []):
+        spec = deepcopy(raw_spec)
+        plugin_name = spec["plugin"]
+
+        if not ContextRegistry.exists(plugin_name):
+            raise PipelineError(f"Context plugin not registered: {plugin_name}")
+
+        ContextRegistry.validate_for_mode(plugin_name, research_mode)
+        ContextRegistry.validate_params(plugin_name, spec.get("params"))
+
+        meta = ContextRegistry.get(plugin_name)
+        spec.setdefault("name", plugin_name)
+        spec.setdefault("required_columns", list(meta.required_columns))
+        spec["params"] = ContextRegistry.normalize_params(plugin_name, spec.get("params"))
+        spec.setdefault("mode_allowlist", list(meta.mode_allowlist))
+        spec.setdefault("pit_policy", dict(meta.pit_policy))
+        spec.setdefault("determinism_policy", dict(meta.determinism_policy))
+        spec.setdefault("impl_ref", meta.impl_ref)
+        spec.setdefault("version", meta.version)
+
+        normalized_specs.append(spec)
+
+    return normalized_specs
 
 
 def _count_pit_violations(bucketed: pl.LazyFrame) -> int:
