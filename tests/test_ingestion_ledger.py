@@ -129,3 +129,43 @@ def test_skip_logic_modified_file(manifest_repo):
 
     fid_mod = manifest_repo.resolve_file_id(meta_mod)
     assert fid_mod != fid
+
+
+def test_filter_pending_without_sha_uses_metadata_fallback(manifest_repo):
+    """Discovery without SHA256 should still skip already-successful files."""
+    meta = BronzeFileMetadata(
+        vendor="tardis",
+        data_type="quotes",
+        date=date(2024, 1, 3),
+        bronze_file_path="path/to/no-sha",
+        file_size_bytes=123,
+        last_modified_ts=3000,
+        sha256="e" * 64,
+    )
+
+    file_id = manifest_repo.resolve_file_id(meta)
+    manifest_repo.update_status(file_id, "success", meta, IngestionResult(1, 1, 1))
+
+    # Simulate fast discovery flow where checksum isn't computed yet.
+    discovered = BronzeFileMetadata(
+        vendor="tardis",
+        data_type="quotes",
+        date=date(2024, 1, 3),
+        bronze_file_path="path/to/no-sha",
+        file_size_bytes=123,
+        last_modified_ts=3000,
+        sha256="",
+    )
+    assert manifest_repo.filter_pending([discovered]) == []
+
+    # If file stats changed, it should be treated as pending.
+    changed = BronzeFileMetadata(
+        vendor="tardis",
+        data_type="quotes",
+        date=date(2024, 1, 3),
+        bronze_file_path="path/to/no-sha",
+        file_size_bytes=124,
+        last_modified_ts=3000,
+        sha256="",
+    )
+    assert len(manifest_repo.filter_pending([changed])) == 1

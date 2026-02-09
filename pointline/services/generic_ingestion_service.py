@@ -115,11 +115,19 @@ class GenericIngestionService(BaseService):
             logger.warning("write: skipping empty DataFrame")
             return
 
-        # Use append for immutable event data
+        # Prefer lineage-key upsert to make retries idempotent if a crash happens
+        # after Silver write but before manifest status update.
+        lineage_keys = ["file_id", "file_line_number"]
+        if all(col in result.columns for col in lineage_keys) and hasattr(self.repo, "merge"):
+            self.repo.merge(result, keys=lineage_keys)
+            return
+
+        # Fallback for repositories/tables without lineage columns.
         if hasattr(self.repo, "append"):
             self.repo.append(result)
-        else:
-            raise NotImplementedError("Repository must support append() for event data")
+            return
+
+        raise NotImplementedError("Repository must support merge() or append() for event data")
 
     def ingest_file(
         self,

@@ -405,6 +405,7 @@ def test_trades_service_write():
     """Test TradesIngestionService.write() method."""
     repo = Mock(spec=BaseDeltaRepository)
     repo.append = Mock()
+    repo.merge = Mock()
     dim_repo = Mock(spec=BaseDeltaRepository)
     manifest_repo = Mock()
 
@@ -432,7 +433,7 @@ def test_trades_service_write():
 
     service.write(df)
 
-    repo.append.assert_called_once()
+    repo.merge.assert_called_once_with(df, keys=["file_id", "file_line_number"])
 
 
 def test_trades_service_ingest_file_quarantine():
@@ -534,6 +535,7 @@ def test_trades_service_ingest_file_success():
     """Test successful file ingestion."""
     repo = Mock(spec=BaseDeltaRepository)
     repo.append = Mock()
+    repo.merge = Mock()
 
     dim_repo = Mock(spec=BaseDeltaRepository)
     dim_symbol = _sample_dim_symbol()
@@ -585,8 +587,8 @@ def test_trades_service_ingest_file_success():
         assert result.ts_local_min_us > 0
         assert result.ts_local_max_us > 0
 
-        # Verify append was called
-        repo.append.assert_called_once()
+        # Verify idempotent lineage-key merge was used
+        repo.merge.assert_called_once()
 
     finally:
         temp_path.unlink(missing_ok=True)

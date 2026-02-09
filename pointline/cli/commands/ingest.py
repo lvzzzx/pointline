@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import argparse
 import gc
+from dataclasses import replace
 from pathlib import Path
 
 import polars as pl
 
 from pointline.cli.ingestion_factory import create_ingestion_service
-from pointline.cli.utils import print_files, sorted_files
+from pointline.cli.utils import compute_sha256, print_files, sorted_files
 from pointline.config import BRONZE_ROOT, get_table_path
 from pointline.io.delta_manifest_repo import DeltaManifestRepository
 from pointline.io.local_source import LocalBronzeSource
@@ -62,10 +63,10 @@ def cmd_ingest_run(args: argparse.Namespace) -> int:
     else:
         bronze_root = Path(args.bronze_root)
 
-    # Ingestion needs checksums for manifest tracking
+    # Discover first without checksums (fast), then hash only files we will ingest.
     source = LocalBronzeSource(
         bronze_root,
-        compute_checksums=True,  # Need SHA256 for manifest
+        compute_checksums=False,
     )
     manifest_repo = DeltaManifestRepository(get_table_path("ingest_manifest"))
 
@@ -80,6 +81,15 @@ def cmd_ingest_run(args: argparse.Namespace) -> int:
     if not files:
         print("No files to ingest.")
         return 0
+
+    # Resolve SHA256 only for files that survived filtering. This avoids hashing
+    # every discovered file during large backfills.
+    hashed_files = []
+    for file_meta in files:
+        bronze_path = bronze_root / file_meta.bronze_file_path
+        sha256 = compute_sha256(bronze_path)
+        hashed_files.append(replace(file_meta, sha256=sha256))
+    files = hashed_files
 
     if args.retry_quarantined:
         manifest_df = manifest_repo.read_all()
