@@ -97,9 +97,9 @@ class TestBucketAssignmentWindowMap:
             bucket_ts = bucketed["bucket_ts"][i]
 
             # CRITICAL: data timestamp must be < bar timestamp
-            assert (
-                data_ts < bucket_ts
-            ), f"PIT violation at row {i}: data {data_ts} >= bar {bucket_ts}"
+            assert data_ts < bucket_ts, (
+                f"PIT violation at row {i}: data {data_ts} >= bar {bucket_ts}"
+            )
 
         # Verify specific assignments
         assert bucketed["bucket_ts"][0] == 100_000_000  # 50ms → 100ms
@@ -136,9 +136,9 @@ class TestBucketAssignmentWindowMap:
 
         # Data at 60ms should go to bar at 120ms (next boundary)
         # Bar at 60ms contains [0, 60), not including 60
-        assert (
-            bucketed["bucket_ts"][0] == 120_000_000
-        ), "Boundary data should go to next bar (half-open interval)"
+        assert bucketed["bucket_ts"][0] == 120_000_000, (
+            "Boundary data should go to next bar (half-open interval)"
+        )
 
     def test_bucket_assignment_deterministic_sort(self):
         """Test deterministic sort enforcement with tie-breakers.
