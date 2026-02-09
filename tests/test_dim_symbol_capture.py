@@ -1,106 +1,52 @@
 from __future__ import annotations
 
 import argparse
-import gzip
-import json
-from pathlib import Path
-
-import polars as pl
 
 from pointline.cli.commands import dim_symbol as dim_symbol_cmd
 from pointline.cli.parser import build_parser
-from pointline.io.protocols import BronzeFileMetadata
+from pointline.services.api_snapshot_service import (
+    ApiCaptureResult,
+    ApiReplayFileResult,
+    ApiReplaySummary,
+)
 
 
-def test_capture_dim_symbol_api_response_writes_jsonl_gz(tmp_path):
-    rows = [{"id": "A", "tick": 0.1}, {"id": "B", "tick": 0.2}]
-    out_path = dim_symbol_cmd._capture_dim_symbol_api_response(
-        vendor="tardis",
-        exchange="binance-futures",
-        records=rows,
-        source_name="instruments",
-        capture_root=str(tmp_path),
-        snapshot_ts_us=1_700_000_000_000_000,
+def _ok_summary(vendor: str, bronze_file_path: str = "type=dim_symbol_metadata/f.jsonl.gz"):
+    return ApiReplaySummary(
+        vendor=vendor,
+        dataset="dim_symbol",
+        discovered_files=1,
+        processed_files=1,
+        success_count=1,
+        failed_count=0,
+        file_results=[
+            ApiReplayFileResult(
+                bronze_file_path=bronze_file_path,
+                status="success",
+                row_count=3,
+                error_message=None,
+            )
+        ],
     )
 
-    assert out_path.exists()
-    assert "type=dim_symbol_metadata" in str(out_path)
-    assert "exchange=binance-futures" in str(out_path)
 
-    with gzip.open(out_path, "rt", encoding="utf-8") as handle:
-        decoded = [json.loads(line) for line in handle if line.strip()]
-
-    assert decoded == rows
-
-
-def test_symbol_sync_tushare_uses_service_with_table_path(monkeypatch, tmp_path):
-    class FakeTushareClient:
-        def __init__(self, token=None):
-            self.token = token
-
-        def get_szse_stocks(self, include_delisted=False):
-            return pl.DataFrame({"symbol": ["000001"], "exchange": ["SZSE"]})
-
-    def fake_build_updates(_df):
-        return pl.DataFrame(
-            {
-                "exchange_id": [30],
-                "exchange_symbol": ["000001"],
-                "base_asset": ["000001"],
-                "quote_asset": ["CNY"],
-                "asset_type": [1],
-                "tick_size": [0.01],
-                "lot_size": [100.0],
-                "price_increment": [0.01],
-                "amount_increment": [100.0],
-                "contract_size": [1.0],
-                "valid_from_ts": [1_700_000_000_000_000],
-            }
-        )
-
-    repo_paths: list[Path] = []
-    updates_seen: list[pl.DataFrame] = []
-
-    class FakeRepo:
-        def __init__(self, table_path):
-            repo_paths.append(Path(table_path))
-
-    class FakeService:
-        def __init__(self, repo):
-            self.repo = repo
-
-        def update(self, updates):
-            updates_seen.append(updates)
-
-        def rebuild(self, updates):
-            updates_seen.append(updates)
-
-    import pointline.io.vendors.tushare as tushare_pkg
-    import pointline.io.vendors.tushare.stock_basic_cn as stock_basic_module
-
-    monkeypatch.setattr(tushare_pkg, "TushareClient", FakeTushareClient)
-    monkeypatch.setattr(
-        stock_basic_module, "build_dim_symbol_updates_from_stock_basic_cn", fake_build_updates
+def _failed_summary(vendor: str, bronze_file_path: str = "type=dim_symbol_metadata/f.jsonl.gz"):
+    return ApiReplaySummary(
+        vendor=vendor,
+        dataset="dim_symbol",
+        discovered_files=1,
+        processed_files=1,
+        success_count=0,
+        failed_count=1,
+        file_results=[
+            ApiReplayFileResult(
+                bronze_file_path=bronze_file_path,
+                status="failed",
+                row_count=0,
+                error_message="bad capture",
+            )
+        ],
     )
-    monkeypatch.setattr(dim_symbol_cmd, "BaseDeltaRepository", FakeRepo)
-    monkeypatch.setattr(dim_symbol_cmd, "DimSymbolService", FakeService)
-
-    args = argparse.Namespace(
-        exchange="szse",
-        include_delisted=False,
-        token="x",
-        table_path=str(tmp_path / "custom_dim_symbol"),
-        rebuild=False,
-        capture_api_response=False,
-        capture_only=False,
-        capture_root=None,
-    )
-
-    code = dim_symbol_cmd.cmd_dim_symbol_sync_tushare(args)
-    assert code == 0
-    assert repo_paths == [tmp_path / "custom_dim_symbol"]
-    assert len(updates_seen) == 1
-    assert updates_seen[0].height == 1
 
 
 def test_symbol_sync_file_source_rejects_capture_flags(tmp_path):
@@ -122,7 +68,7 @@ def test_symbol_sync_file_source_rejects_capture_flags(tmp_path):
     assert dim_symbol_cmd.cmd_dim_symbol_sync(args) == 2
 
 
-def test_symbol_sync_parser_accepts_capture_flags():
+def test_symbol_sync_parser_accepts_capture_flags_and_ingest_metadata_flags():
     parser = build_parser()
     args = parser.parse_args(
         [
@@ -153,10 +99,7 @@ def test_symbol_sync_parser_accepts_capture_flags():
     assert args_tushare.capture_only is True
     assert args_tushare.rebuild is True
 
-
-def test_symbol_ingest_metadata_parser_accepts_flags():
-    parser = build_parser()
-    args = parser.parse_args(
+    args_ingest = parser.parse_args(
         [
             "symbol",
             "ingest-metadata",
@@ -174,132 +117,165 @@ def test_symbol_ingest_metadata_parser_accepts_flags():
             "--force",
         ]
     )
-    assert args.vendor == "tardis"
-    assert args.exchange == "binance-futures"
-    assert args.rebuild is True
-    assert args.force is True
+    assert args_ingest.vendor == "tardis"
+    assert args_ingest.exchange == "binance-futures"
+    assert args_ingest.rebuild is True
+    assert args_ingest.force is True
 
 
-def test_symbol_ingest_metadata_success(monkeypatch, tmp_path):
-    meta = BronzeFileMetadata(
-        vendor="tardis",
-        data_type="dim_symbol_metadata",
-        bronze_file_path="type=dim_symbol_metadata/exchange=binance/date=2024-05-01/snapshot_ts=1/f.jsonl.gz",
-        file_size_bytes=10,
-        last_modified_ts=1,
-        sha256="a" * 64,
-        date=None,
-    )
+def test_cmd_dim_symbol_sync_api_capture_only(monkeypatch, tmp_path):
+    class FakeSnapshotService:
+        def __init__(self):
+            self.capture_calls = []
+            self.replay_calls = []
 
-    class FakeManifestRepo:
-        def __init__(self, _path):
-            self.updated = []
+        def capture(self, **kwargs):
+            self.capture_calls.append(kwargs)
+            out = tmp_path / "bronze" / "type=dim_symbol_metadata" / "f.jsonl.gz"
+            out.parent.mkdir(parents=True, exist_ok=True)
+            out.write_text("", encoding="utf-8")
+            return ApiCaptureResult(
+                vendor="tardis",
+                dataset="dim_symbol",
+                bronze_root=tmp_path / "bronze",
+                path=out,
+                snapshot_ts_us=1,
+                row_count=0,
+            )
 
-        def filter_pending(self, candidates):
-            return candidates
+        def replay(self, **kwargs):
+            self.replay_calls.append(kwargs)
+            return _ok_summary("tardis")
 
-        def resolve_file_id(self, _meta):
-            return 1
-
-        def update_status(self, file_id, status, _meta, result):
-            self.updated.append((file_id, status, result.row_count))
-
-    updates_seen: list[pl.DataFrame] = []
-
-    class FakeRepo:
-        def __init__(self, _path):
-            pass
-
-    class FakeService:
-        def __init__(self, _repo):
-            pass
-
-        def update(self, updates):
-            updates_seen.append(updates)
-
-        def rebuild(self, updates):
-            updates_seen.append(updates)
-
-    fake_manifest = FakeManifestRepo(tmp_path / "manifest")
-    monkeypatch.setattr(dim_symbol_cmd, "_discover_metadata_files", lambda **kwargs: [meta])
-    monkeypatch.setattr(dim_symbol_cmd, "DeltaManifestRepository", lambda _p: fake_manifest)
-    monkeypatch.setattr(dim_symbol_cmd, "BaseDeltaRepository", FakeRepo)
-    monkeypatch.setattr(dim_symbol_cmd, "DimSymbolService", FakeService)
-    monkeypatch.setattr(
-        dim_symbol_cmd,
-        "_build_updates_from_captured_metadata",
-        lambda **kwargs: pl.DataFrame({"valid_from_ts": [100], "exchange_symbol": ["BTCUSDT"]}),
-    )
+    fake_service = FakeSnapshotService()
+    monkeypatch.setattr(dim_symbol_cmd, "ApiSnapshotService", lambda: fake_service)
 
     args = argparse.Namespace(
-        vendor="tardis",
-        bronze_root=str(tmp_path),
-        glob="**/*.jsonl.gz",
-        exchange=None,
-        manifest_path=str(tmp_path / "manifest"),
+        source="api",
+        exchange="binance-futures",
+        symbol=None,
+        filter=None,
+        api_key="k",
+        effective_ts="now",
         table_path=str(tmp_path / "dim_symbol"),
         rebuild=False,
-        force=False,
-        effective_ts=None,
+        capture_api_response=False,
+        capture_only=True,
+        capture_root=str(tmp_path / "bronze"),
     )
 
-    code = dim_symbol_cmd.cmd_dim_symbol_ingest_metadata(args)
+    code = dim_symbol_cmd.cmd_dim_symbol_sync(args)
     assert code == 0
-    assert len(updates_seen) == 1
-    assert fake_manifest.updated == [(1, "success", 1)]
+    assert len(fake_service.capture_calls) == 1
+    assert len(fake_service.replay_calls) == 0
 
 
-def test_symbol_ingest_metadata_failure(monkeypatch, tmp_path):
-    meta = BronzeFileMetadata(
-        vendor="tushare",
-        data_type="dim_symbol_metadata",
-        bronze_file_path="type=dim_symbol_metadata/exchange=szse/date=2024-05-01/snapshot_ts=1/f.jsonl.gz",
-        file_size_bytes=10,
-        last_modified_ts=1,
-        sha256="b" * 64,
-        date=None,
-    )
+def test_cmd_dim_symbol_sync_api_replays_from_capture(monkeypatch, tmp_path):
+    class FakeSnapshotService:
+        def __init__(self):
+            self.capture_calls = []
+            self.replay_calls = []
 
-    class FakeManifestRepo:
-        def __init__(self, _path):
-            self.updated = []
+        def capture(self, **kwargs):
+            self.capture_calls.append(kwargs)
+            out = tmp_path / "bronze" / "type=dim_symbol_metadata" / "f.jsonl.gz"
+            out.parent.mkdir(parents=True, exist_ok=True)
+            out.write_text("", encoding="utf-8")
+            return ApiCaptureResult(
+                vendor="tardis",
+                dataset="dim_symbol",
+                bronze_root=tmp_path / "bronze",
+                path=out,
+                snapshot_ts_us=1,
+                row_count=1,
+            )
 
-        def filter_pending(self, candidates):
-            return candidates
+        def replay(self, **kwargs):
+            self.replay_calls.append(kwargs)
+            return _ok_summary("tardis")
 
-        def resolve_file_id(self, _meta):
-            return 2
-
-        def update_status(self, file_id, status, _meta, result):
-            self.updated.append((file_id, status, result.error_message))
-
-    class FakeRepo:
-        def __init__(self, _path):
-            pass
-
-    class FakeService:
-        def __init__(self, _repo):
-            pass
-
-        def update(self, updates):
-            return None
-
-        def rebuild(self, updates):
-            return None
-
-    fake_manifest = FakeManifestRepo(tmp_path / "manifest")
-    monkeypatch.setattr(dim_symbol_cmd, "_discover_metadata_files", lambda **kwargs: [meta])
-    monkeypatch.setattr(dim_symbol_cmd, "DeltaManifestRepository", lambda _p: fake_manifest)
-    monkeypatch.setattr(dim_symbol_cmd, "BaseDeltaRepository", FakeRepo)
-    monkeypatch.setattr(dim_symbol_cmd, "DimSymbolService", FakeService)
-
-    def _raise(**kwargs):
-        raise ValueError("bad capture")
-
-    monkeypatch.setattr(dim_symbol_cmd, "_build_updates_from_captured_metadata", _raise)
+    fake_service = FakeSnapshotService()
+    monkeypatch.setattr(dim_symbol_cmd, "ApiSnapshotService", lambda: fake_service)
 
     args = argparse.Namespace(
-        vendor="tushare",
+        source="api",
+        exchange="binance-futures",
+        symbol="BTCUSDT",
+        filter='{"foo":"bar"}',
+        api_key="k",
+        effective_ts="1700000000000000",
+        table_path=str(tmp_path / "dim_symbol"),
+        rebuild=True,
+        capture_api_response=False,
+        capture_only=False,
+        capture_root=str(tmp_path / "bronze"),
+    )
+
+    code = dim_symbol_cmd.cmd_dim_symbol_sync(args)
+    assert code == 0
+    assert len(fake_service.capture_calls) == 1
+    assert len(fake_service.replay_calls) == 1
+    assert fake_service.replay_calls[0]["rebuild"] is True
+
+
+def test_cmd_dim_symbol_sync_tushare_capture_and_replay(monkeypatch, tmp_path):
+    class FakeSnapshotService:
+        def __init__(self):
+            self.capture_calls = []
+            self.replay_calls = []
+
+        def capture(self, **kwargs):
+            self.capture_calls.append(kwargs)
+            out = tmp_path / "bronze" / "type=dim_symbol_metadata" / "f.jsonl.gz"
+            out.parent.mkdir(parents=True, exist_ok=True)
+            out.write_text("", encoding="utf-8")
+            return ApiCaptureResult(
+                vendor="tushare",
+                dataset="dim_symbol",
+                bronze_root=tmp_path / "bronze",
+                path=out,
+                snapshot_ts_us=1,
+                row_count=1,
+            )
+
+        def replay(self, **kwargs):
+            self.replay_calls.append(kwargs)
+            return _ok_summary("tushare")
+
+    fake_service = FakeSnapshotService()
+    monkeypatch.setattr(dim_symbol_cmd, "ApiSnapshotService", lambda: fake_service)
+
+    args = argparse.Namespace(
+        exchange="szse",
+        include_delisted=False,
+        token="x",
+        table_path=str(tmp_path / "custom_dim_symbol"),
+        rebuild=False,
+        capture_api_response=False,
+        capture_only=False,
+        capture_root=str(tmp_path / "bronze"),
+    )
+
+    code = dim_symbol_cmd.cmd_dim_symbol_sync_tushare(args)
+    assert code == 0
+    assert len(fake_service.capture_calls) == 1
+    assert len(fake_service.replay_calls) == 1
+
+
+def test_cmd_dim_symbol_ingest_metadata_success_and_failure(monkeypatch, tmp_path):
+    class FakeSnapshotService:
+        def __init__(self):
+            self.calls = 0
+
+        def replay(self, **kwargs):
+            self.calls += 1
+            return _ok_summary("tardis") if self.calls == 1 else _failed_summary("tardis")
+
+    fake_service = FakeSnapshotService()
+    monkeypatch.setattr(dim_symbol_cmd, "ApiSnapshotService", lambda: fake_service)
+
+    args = argparse.Namespace(
+        vendor="tardis",
         bronze_root=str(tmp_path),
         glob="**/*.jsonl.gz",
         exchange=None,
@@ -310,6 +286,76 @@ def test_symbol_ingest_metadata_failure(monkeypatch, tmp_path):
         effective_ts=None,
     )
 
-    code = dim_symbol_cmd.cmd_dim_symbol_ingest_metadata(args)
-    assert code == 1
-    assert fake_manifest.updated == [(2, "failed", "bad capture")]
+    code_1 = dim_symbol_cmd.cmd_dim_symbol_ingest_metadata(args)
+    code_2 = dim_symbol_cmd.cmd_dim_symbol_ingest_metadata(args)
+    assert code_1 == 0
+    assert code_2 == 1
+
+
+def test_parser_accepts_bronze_api_capture_and_replay_flags():
+    parser = build_parser()
+
+    args_capture = parser.parse_args(
+        [
+            "bronze",
+            "api-capture",
+            "--vendor",
+            "tardis",
+            "--dataset",
+            "dim_symbol",
+            "--exchange",
+            "binance-futures",
+            "--capture-only",
+        ]
+    )
+    assert args_capture.vendor == "tardis"
+    assert args_capture.dataset == "dim_symbol"
+    assert args_capture.capture_only is True
+
+    args_replay = parser.parse_args(
+        [
+            "bronze",
+            "api-replay",
+            "--vendor",
+            "coingecko",
+            "--dataset",
+            "dim_asset_stats",
+            "--force",
+        ]
+    )
+    assert args_replay.vendor == "coingecko"
+    assert args_replay.dataset == "dim_asset_stats"
+    assert args_replay.force is True
+
+
+def test_parser_accepts_dim_asset_stats_capture_flags():
+    parser = build_parser()
+
+    args_sync = parser.parse_args(
+        [
+            "silver",
+            "dim-asset-stats",
+            "sync",
+            "--date",
+            "2026-01-01",
+            "--capture-only",
+            "--capture-root",
+            "/tmp/coingecko",
+        ]
+    )
+    assert args_sync.capture_only is True
+    assert args_sync.capture_root == "/tmp/coingecko"
+
+    args_backfill = parser.parse_args(
+        [
+            "silver",
+            "dim-asset-stats",
+            "backfill",
+            "--start-date",
+            "2026-01-01",
+            "--end-date",
+            "2026-01-02",
+            "--capture-only",
+        ]
+    )
+    assert args_backfill.capture_only is True

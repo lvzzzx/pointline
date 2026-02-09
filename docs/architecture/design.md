@@ -45,14 +45,16 @@ Lineage requirements:
 ## 3) Lake Layout
 
 ### Bronze
-Raw vendor files are stored exactly as downloaded.
+Raw vendor files and API snapshots are stored as immutable artifacts.
 
 Layout:
 - `<LAKE_ROOT>/bronze/<vendor>/exchange=<exchange>/type=<data_type>/date=<date>/symbol=<symbol>/...`
+- `<LAKE_ROOT>/bronze/<vendor>/type=<dataset>_metadata/[exchange=<exchange>/]date=<date>/snapshot_ts=<ts>/...jsonl.gz`
 
 Notes:
 - vendor republish events are stored as new immutable files
 - checksums are tracked in `silver.ingest_manifest`
+- API snapshot envelopes include vendor, dataset, partitions, sanitized request context, and raw record payload
 
 ### Silver
 Typed, normalized Delta tables used by ingestion and research.
@@ -111,7 +113,7 @@ Fallback for poor metadata quality:
 Stages:
 1. Discover Bronze files.
 2. Filter already-successful files via manifest.
-3. Parse + normalize into Silver schema.
+3. Parse + normalize into Silver schema (or build updates from API snapshot envelopes).
 4. Attach lineage (`file_id`, `file_line_number`).
 5. Validate table invariants.
 6. Write Silver partition(s).
@@ -145,6 +147,7 @@ Required operational behavior:
 
 Use local commands only:
 - ingest: `pointline bronze ingest ...`
+- api snapshots: `pointline bronze api-capture ...`, `pointline bronze api-replay ...`
 - maintenance: `pointline delta optimize ...`, `pointline delta vacuum ...`
 - checks: `pointline dq run --table all`, `pointline dq summary`
 

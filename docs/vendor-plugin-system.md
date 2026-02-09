@@ -1,6 +1,6 @@
 # Vendor Plugin System
 
-**Last Updated:** 2026-02-03
+**Last Updated:** 2026-02-09
 **Status:** Production Ready
 
 ## Overview
@@ -12,6 +12,7 @@ The vendor plugin system provides a unified, extensible architecture for integra
 - **Runtime Dispatch:** Services are vendor-agnostic, plugins are vendor-specific
 - **Capability-Based:** Vendors declare what they support (download, parsers, prehooks)
 - **Auto-Discovery:** Plugins register automatically on import
+- **Replayability:** API responses should be capturable as Bronze metadata files and replayed via manifest semantics
 
 ## Architecture
 
@@ -79,6 +80,7 @@ class VendorPlugin(Protocol):
     supports_parsers: bool       # Can parse data files?
     supports_download: bool      # Can download data from API?
     supports_prehooks: bool      # Needs preprocessing (e.g., unzip)?
+    supports_api_snapshots: bool # Can capture/replay API metadata snapshots?
 
     # Methods
     def get_parsers(self) -> dict[str, Callable[[pl.DataFrame], pl.DataFrame]]:
@@ -87,6 +89,10 @@ class VendorPlugin(Protocol):
 
     def get_download_client(self) -> Any:
         """Return download client (e.g., TardisClient)"""
+        ...
+
+    def get_api_snapshot_specs(self) -> dict[str, ApiSnapshotSpec]:
+        """Return dataset contracts for API snapshot capture/replay"""
         ...
 
     def run_prehook(self, bronze_root: Path) -> None:
@@ -279,37 +285,51 @@ parsed_df = parse_orders(raw_csv_df)
 
 ---
 
-### Type 3: API-Only Vendors (CoinGecko, Tushare)
+### Type 3: API Snapshot Vendors (Tushare, Tardis metadata endpoints, CoinGecko)
 
-**Assumption:** We fetch metadata from APIs directly to dimension tables. No Bronze layer, no Silver layer—API responses go straight to dimension tables.
+**Assumption:** API responses are first-class Bronze artifacts. Capture to Bronze metadata files first, then ingest with manifest replay semantics into dimension tables.
 
 #### Workflow Diagram
 
 ```
 ┌──────────────────┐
 │   Vendor API     │
-│   (CoinGecko,    │
-│    Tushare)      │
+│   (Tushare,      │
+│    Tardis meta)  │
 └────────┬─────────┘
-         │ Direct API calls
-         │ (no file downloads)
+         │ capture raw response
          ↓
-┌──────────────────────────────┐
-│  Dimension Tables             │
-│  - dim_symbol                 │
-│  - dim_asset_stats            │
-│  (no Bronze, no Silver)       │
-└──────────────────────────────┘
+┌──────────────────────────────────────────────┐
+│  Bronze Metadata Layer                        │
+│  bronze/<vendor>/type=dim_symbol_metadata/   │
+│  exchange=<exchange>/date=<date>/            │
+│  snapshot_ts=<ts>/*.jsonl.gz                 │
+└──────────────────┬───────────────────────────┘
+                   │ manifest-driven replay
+                   │ (pending-only by default)
+                   ↓
+┌──────────────────────────────────────────────┐
+│  Dimension Tables                             │
+│  - dim_symbol                                 │
+│  (SCD2 history via update/rebuild)            │
+└──────────────────────────────────────────────┘
 ```
 
 #### CLI Commands
 
 ```bash
-# CoinGecko: Fetch market data → dim_asset_stats
-pointline dim-asset-stats sync --provider coingecko
+# Step 1: Capture Tardis symbol metadata to Bronze only
+pointline symbol sync \
+  --source api \
+  --exchange binance-futures \
+  --capture-only
 
-# Tushare: Fetch Chinese stock info → dim_symbol
-pointline dim-symbol sync-tushare --exchange szse --date 2024-09-30
+# Step 2: Replay captured metadata to dim_symbol (with manifest semantics)
+pointline symbol ingest-metadata --vendor tardis --exchange binance-futures
+
+# Tushare follows the same pattern
+pointline symbol sync-tushare --exchange szse --capture-only
+pointline symbol ingest-metadata --vendor tushare --exchange szse
 ```
 
 #### Code Example
@@ -335,6 +355,11 @@ market_data = client.get_market_chart("bitcoin", vs_currency="usd", days=30)
 # No parsers available (raises NotImplementedError)
 # coingecko.get_parsers()  # ❌ Error!
 ```
+
+**Implementation status (2026-02-09):**
+- `dim_symbol` follows capture + replay for Tardis and Tushare.
+- `dim_asset_stats` follows the same capture + replay contract for CoinGecko.
+- Generic orchestration is available via `pointline bronze api-capture` and `pointline bronze api-replay`.
 
 ---
 
@@ -664,6 +689,8 @@ pointline ingest run --table trades --exchange my_exchange --date 2024-05-01
 **Example Hive Structure:**
 ```
 bronze/{vendor}/exchange={exchange}/type={data_type}/date={date}/symbol={symbol}/*.csv.gz
+# API metadata snapshots:
+# bronze/{vendor}/type=dim_symbol_metadata/exchange={exchange}/date={date}/snapshot_ts={ts}/*.jsonl.gz
 ```
 
 ### 3. Prehook Implementation
@@ -689,7 +716,7 @@ Choose capability flags carefully:
 | We download from API | ✅ | ❌ | ✅ |
 | External delivers Hive files | ❌ | ❌ | ✅ |
 | External delivers archives | ❌ | ✅ | ✅ |
-| API-only (no files) | ✅ | ❌ | ❌ |
+| API metadata snapshot + replay | ✅ | ❌ | ❌ |
 
 ---
 
@@ -747,6 +774,11 @@ Error: No parser registered for vendor=my_vendor, data_type=trades
 ---
 
 ## Changelog
+
+### 2026-02-09: API Capture/Replay Alignment
+- Updated API vendor architecture from direct-write to Bronze metadata capture + manifest replay.
+- Added canonical API snapshot workflows for both `dim_symbol` and `dim_asset_stats`.
+- Added generic CLI entrypoints: `bronze api-capture` and `bronze api-replay`.
 
 ### 2026-02-03: Initial Release
 - Vendor plugin protocol defined

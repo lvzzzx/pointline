@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import os
 
+from pointline.cli.commands.api_snapshot import cmd_bronze_api_capture, cmd_bronze_api_replay
 from pointline.cli.commands.bronze_reorganize import cmd_bronze_reorganize
 from pointline.cli.commands.config import cmd_config_set, cmd_config_show
 from pointline.cli.commands.delta import cmd_delta_optimize, cmd_delta_vacuum
@@ -291,6 +292,161 @@ def build_parser() -> argparse.ArgumentParser:
     )
     bronze_download.add_argument("--http-proxy", default=None, help="HTTP proxy URL (optional)")
     bronze_download.set_defaults(func=cmd_download)
+
+    bronze_api_capture = bronze_sub.add_parser(
+        "api-capture",
+        help="Capture API metadata to bronze and optionally replay immediately",
+    )
+    bronze_api_capture.add_argument(
+        "--vendor",
+        required=True,
+        choices=["tardis", "tushare", "coingecko"],
+        help="Vendor namespace",
+    )
+    bronze_api_capture.add_argument(
+        "--dataset",
+        required=True,
+        choices=["dim_symbol", "dim_asset_stats"],
+        help="API dataset contract to capture",
+    )
+    bronze_api_capture.add_argument(
+        "--capture-root",
+        default=None,
+        help="Optional root path for capture output (default: LAKE_ROOT/bronze/<vendor>)",
+    )
+    bronze_api_capture.add_argument(
+        "--capture-only",
+        action="store_true",
+        help="Capture API snapshot and exit without replay",
+    )
+    bronze_api_capture.add_argument(
+        "--manifest-path",
+        default=str(get_table_path("ingest_manifest")),
+        help="Path to ingest_manifest (default: LAKE_ROOT/silver/ingest_manifest)",
+    )
+    bronze_api_capture.add_argument(
+        "--table-path",
+        default=None,
+        help="Override target table path for replay",
+    )
+    bronze_api_capture.add_argument(
+        "--force",
+        action="store_true",
+        help="Reserved for compatibility (capture command always replays captured file when enabled)",
+    )
+    bronze_api_capture.add_argument(
+        "--rebuild",
+        action="store_true",
+        help="Use rebuild mode when replaying dim_symbol captures",
+    )
+    bronze_api_capture.add_argument(
+        "--effective-ts",
+        default=None,
+        help="Fallback Unix timestamp in microseconds for dim_symbol records missing availableSince",
+    )
+    bronze_api_capture.add_argument("--exchange", default=None, help="Exchange filter/partition")
+    bronze_api_capture.add_argument("--symbol", default=None, help="Instrument symbol (tardis)")
+    bronze_api_capture.add_argument(
+        "--filter",
+        default=None,
+        help="JSON filter payload for Tardis instruments endpoint",
+    )
+    bronze_api_capture.add_argument(
+        "--api-key",
+        default="",
+        help="Vendor API key (Tardis/CoinGecko as applicable)",
+    )
+    bronze_api_capture.add_argument(
+        "--token",
+        default="",
+        help="Tushare API token",
+    )
+    bronze_api_capture.add_argument(
+        "--include-delisted",
+        action="store_true",
+        help="Include delisted records for Tushare dim_symbol capture",
+    )
+    bronze_api_capture.add_argument(
+        "--mode",
+        choices=["daily", "range"],
+        default="daily",
+        help="Capture mode for dim_asset_stats (coingecko)",
+    )
+    bronze_api_capture.add_argument("--date", default=None, help="Target date for daily capture")
+    bronze_api_capture.add_argument(
+        "--start-date",
+        default=None,
+        help="Start date for range capture (YYYY-MM-DD)",
+    )
+    bronze_api_capture.add_argument(
+        "--end-date",
+        default=None,
+        help="End date for range capture (YYYY-MM-DD)",
+    )
+    bronze_api_capture.add_argument(
+        "--base-assets",
+        default=None,
+        help="Comma-separated base assets (e.g., BTC,ETH,SOL)",
+    )
+    bronze_api_capture.set_defaults(func=cmd_bronze_api_capture)
+
+    bronze_api_replay = bronze_sub.add_parser(
+        "api-replay",
+        help="Replay captured API metadata snapshots using manifest semantics",
+    )
+    bronze_api_replay.add_argument(
+        "--vendor",
+        required=True,
+        choices=["tardis", "tushare", "coingecko"],
+        help="Vendor namespace",
+    )
+    bronze_api_replay.add_argument(
+        "--dataset",
+        required=True,
+        choices=["dim_symbol", "dim_asset_stats"],
+        help="API dataset contract to replay",
+    )
+    bronze_api_replay.add_argument(
+        "--bronze-root",
+        default=None,
+        help="Captured metadata root (default: LAKE_ROOT/bronze/<vendor>)",
+    )
+    bronze_api_replay.add_argument(
+        "--glob",
+        default=None,
+        help="Optional file glob override under metadata root",
+    )
+    bronze_api_replay.add_argument(
+        "--exchange",
+        default=None,
+        help="Optional exchange partition filter",
+    )
+    bronze_api_replay.add_argument(
+        "--manifest-path",
+        default=str(get_table_path("ingest_manifest")),
+        help="Path to ingest_manifest (default: LAKE_ROOT/silver/ingest_manifest)",
+    )
+    bronze_api_replay.add_argument(
+        "--table-path",
+        default=None,
+        help="Override target table path for replay",
+    )
+    bronze_api_replay.add_argument(
+        "--force",
+        action="store_true",
+        help="Process files even if already marked success in ingest_manifest",
+    )
+    bronze_api_replay.add_argument(
+        "--rebuild",
+        action="store_true",
+        help="Use rebuild mode when replaying dim_symbol captures",
+    )
+    bronze_api_replay.add_argument(
+        "--effective-ts",
+        default=None,
+        help="Fallback Unix timestamp in microseconds for dim_symbol records missing availableSince",
+    )
+    bronze_api_replay.set_defaults(func=cmd_bronze_api_replay)
 
     bronze_reorganize = bronze_sub.add_parser(
         "reorganize", help="Reorganize vendor archives into Hive-partitioned bronze layout"
@@ -583,6 +739,16 @@ def build_parser() -> argparse.ArgumentParser:
         default="coingecko",
         help="Data source provider (default: coingecko)",
     )
+    silver_dim_asset_stats_sync.add_argument(
+        "--capture-only",
+        action="store_true",
+        help="Capture API response and exit without replay",
+    )
+    silver_dim_asset_stats_sync.add_argument(
+        "--capture-root",
+        default=None,
+        help="Optional root path for capture output (default: LAKE_ROOT/bronze/coingecko)",
+    )
     silver_dim_asset_stats_sync.set_defaults(func=cmd_dim_asset_stats_sync)
 
     silver_dim_asset_stats_backfill = silver_dim_asset_stats_sub.add_parser(
@@ -620,6 +786,16 @@ def build_parser() -> argparse.ArgumentParser:
         choices=["coingecko", "coinmarketcap"],
         default="coingecko",
         help="Data source provider (default: coingecko)",
+    )
+    silver_dim_asset_stats_backfill.add_argument(
+        "--capture-only",
+        action="store_true",
+        help="Capture API response and exit without replay",
+    )
+    silver_dim_asset_stats_backfill.add_argument(
+        "--capture-root",
+        default=None,
+        help="Optional root path for capture output (default: LAKE_ROOT/bronze/coingecko)",
     )
     silver_dim_asset_stats_backfill.set_defaults(func=cmd_dim_asset_stats_backfill)
 

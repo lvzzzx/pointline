@@ -13,7 +13,14 @@ from typing import Any
 import polars as pl
 
 from pointline.config import normalize_exchange
-from pointline.io.protocols import BronzeFileMetadata, BronzeLayoutSpec
+from pointline.io.protocols import (
+    ApiCaptureRequest,
+    ApiReplayOptions,
+    ApiSnapshotSpec,
+    BronzeFileMetadata,
+    BronzeLayoutSpec,
+)
+from pointline.io.vendors.tardis.mapper import build_updates_from_instruments
 
 
 class TardisVendor:
@@ -31,6 +38,7 @@ class TardisVendor:
     supports_parsers = True
     supports_download = True
     supports_prehooks = False
+    supports_api_snapshots = True
 
     def get_bronze_layout_spec(self) -> BronzeLayoutSpec:
         """Get bronze layout specification for Tardis.
@@ -115,6 +123,56 @@ class TardisVendor:
             "book_snapshot_25": parse_tardis_book_snapshots_csv,
             "derivative_ticker": parse_tardis_derivative_ticker_csv,
         }
+
+    def get_api_snapshot_specs(self) -> dict[str, ApiSnapshotSpec]:
+        return {
+            "dim_symbol": ApiSnapshotSpec(
+                dataset="dim_symbol",
+                data_type="dim_symbol_metadata",
+                target_table="dim_symbol",
+                partition_keys=("exchange",),
+                default_glob="type=dim_symbol_metadata/**/*.jsonl.gz",
+            )
+        }
+
+    def capture_api_snapshot(
+        self, dataset: str, request: ApiCaptureRequest
+    ) -> list[dict[str, Any]]:
+        if dataset != "dim_symbol":
+            raise ValueError(f"{self.name} does not support API snapshot dataset '{dataset}'")
+
+        exchange = request.params.get("exchange")
+        if not exchange:
+            raise ValueError("exchange is required for tardis dim_symbol capture")
+
+        api_key = str(request.params.get("api_key", ""))
+        symbol = request.params.get("symbol")
+        filter_payload = request.params.get("filter_payload")
+
+        from pointline.io.vendors.tardis.client import TardisClient
+
+        client = TardisClient(api_key=api_key)
+        return client.fetch_instruments(exchange, symbol=symbol, filter_payload=filter_payload)
+
+    def build_updates_from_snapshot(
+        self,
+        dataset: str,
+        records: list[dict[str, Any]],
+        options: ApiReplayOptions,
+    ) -> pl.DataFrame:
+        if dataset != "dim_symbol":
+            raise ValueError(f"{self.name} does not support API snapshot dataset '{dataset}'")
+
+        exchange = (options.partitions or {}).get("exchange")
+        if not exchange:
+            raise ValueError("exchange partition is required to replay tardis dim_symbol metadata")
+
+        return build_updates_from_instruments(
+            records,
+            exchange=exchange,
+            effective_ts=options.effective_ts_us,
+            rebuild=options.rebuild,
+        )
 
     def read_and_parse(self, path: Path, meta: BronzeFileMetadata) -> pl.DataFrame:
         """Read bronze file and return parsed DataFrame with metadata columns."""

@@ -14,7 +14,13 @@ from typing import TYPE_CHECKING, Any, Protocol
 import polars as pl
 
 if TYPE_CHECKING:
-    from pointline.io.protocols import BronzeFileMetadata, BronzeLayoutSpec
+    from pointline.io.protocols import (
+        ApiCaptureRequest,
+        ApiReplayOptions,
+        ApiSnapshotSpec,
+        BronzeFileMetadata,
+        BronzeLayoutSpec,
+    )
 
 
 class VendorPlugin(Protocol):
@@ -58,6 +64,9 @@ class VendorPlugin(Protocol):
     supports_prehooks: bool
     """Whether this vendor requires preprocessing before ingestion"""
 
+    supports_api_snapshots: bool
+    """Whether this vendor can capture/replay API metadata snapshots."""
+
     def get_bronze_layout_spec(self) -> BronzeLayoutSpec:
         """Get the bronze layout specification for this vendor.
 
@@ -83,6 +92,25 @@ class VendorPlugin(Protocol):
             Dictionary mapping data_type to parser function.
             Example: {"trades": parse_tardis_trades_csv, "quotes": parse_tardis_quotes_csv}
         """
+        ...
+
+    def get_api_snapshot_specs(self) -> dict[str, ApiSnapshotSpec]:
+        """Get API snapshot dataset specs by dataset name."""
+        ...
+
+    def capture_api_snapshot(
+        self, dataset: str, request: ApiCaptureRequest
+    ) -> list[dict[str, Any]]:
+        """Capture raw API records for a dataset."""
+        ...
+
+    def build_updates_from_snapshot(
+        self,
+        dataset: str,
+        records: list[dict[str, Any]],
+        options: ApiReplayOptions,
+    ) -> pl.DataFrame:
+        """Build table updates from captured snapshot records."""
         ...
 
     def read_and_parse(self, path: Path, meta: BronzeFileMetadata) -> pl.DataFrame:
