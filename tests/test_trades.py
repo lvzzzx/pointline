@@ -492,6 +492,44 @@ def test_trades_service_ingest_file_quarantine():
         bronze_path.unlink(missing_ok=True)
 
 
+def test_check_quarantine_uses_exchange_local_trading_day():
+    """Coverage checks should use exchange-local day boundaries, not UTC boundaries."""
+    service = create_ingestion_service("trades", manifest_repo=Mock())
+
+    dim_symbol = pl.DataFrame(
+        {
+            "symbol_id": [9001],
+            "exchange_id": [30],  # szse
+            "exchange": ["szse"],
+            "exchange_symbol": ["000001"],
+            "base_asset": ["000001"],
+            "quote_asset": ["CNY"],
+            "asset_type": [0],
+            "tick_size": [0.01],
+            "lot_size": [100.0],
+            "price_increment": [0.01],
+            "amount_increment": [100.0],
+            "contract_size": [1.0],
+            # 2024-05-01 in Asia/Shanghai => [2024-04-30T16:00:00Z, 2024-05-01T16:00:00Z)
+            "valid_from_ts": [1714492800000000],
+            "valid_until_ts": [1714579200000000],
+            "is_current": [True],
+        },
+        schema=DIM_SYMBOL_SCHEMA,
+    )
+
+    is_valid, error = service._check_quarantine(
+        dim_symbol=dim_symbol,
+        exchange_id=30,
+        exchange_symbol="000001",
+        trading_date=date(2024, 5, 1),
+        exchange="szse",
+    )
+
+    assert is_valid is True
+    assert error == ""
+
+
 def test_trades_service_ingest_file_success():
     """Test successful file ingestion."""
     repo = Mock(spec=BaseDeltaRepository)

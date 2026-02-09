@@ -82,14 +82,14 @@ Scans physical storage (Local, S3, etc.) to find candidate files. Does not know 
 @dataclass
 class BronzeFileMetadata:
     vendor: str
-    exchange: str
     data_type: str
-    symbol: str
-    date: date
     bronze_file_path: str
     file_size_bytes: int
     last_modified_ts: int
     sha256: str
+    date: date | None = None
+    interval: str | None = None
+    extra: dict[str, Any] | None = None
 
 class BronzeSource(Protocol):
     def list_files(self, glob_pattern: str) -> Iterator[BronzeFileMetadata]:

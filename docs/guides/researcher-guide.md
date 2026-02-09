@@ -103,7 +103,7 @@ Example:
 | quotes | `${LAKE_ROOT}/silver/quotes` | `exchange`, `date` | `ts_local_us`, `symbol_id`, `bid_px_int`, `ask_px_int` |
 | book_snapshot_25 | `${LAKE_ROOT}/silver/book_snapshot_25` | `exchange`, `date` | `ts_local_us`, `symbol_id`, `bids_px_int`, `asks_px_int` |
 | dim_symbol | `${LAKE_ROOT}/silver/dim_symbol` | none | `symbol_id`, `exchange_id`, `exchange_symbol`, validity range |
-| ingest_manifest | `${LAKE_ROOT}/silver/ingest_manifest` | none | `vendor`, `exchange`, `data_type`, `date`, `status` |
+| ingest_manifest | `${LAKE_ROOT}/silver/ingest_manifest` | none | `vendor`, `data_type`, `date`, `status`, `bronze_file_name` |
 
 **For complete schema definitions, see [Schema Reference](../reference/schemas.md).**
 
