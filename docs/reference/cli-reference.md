@@ -199,6 +199,9 @@ pointline symbol sync --source <api|file> [options]
 - `--effective-ts`: Unix timestamp in microseconds (default: now)
 - `--table-path`: Path to dim_symbol table (default: auto-detected)
 - `--rebuild`: Perform full history rebuild
+- `--capture-api-response`: Capture raw API response to bronze metadata before transform
+- `--capture-only`: Capture API response and exit without writing dim_symbol
+- `--capture-root`: Optional root path for capture output (default: LAKE_ROOT/bronze/tardis)
 
 **Examples:**
 
@@ -232,6 +235,15 @@ pointline symbol sync \
   --rebuild
 ```
 
+**Capture raw API metadata only:**
+```bash
+pointline symbol sync \
+  --source api \
+  --exchange binance-futures \
+  --api-key YOUR_KEY \
+  --capture-only
+```
+
 ---
 
 ### `pointline symbol sync-tushare`
@@ -248,6 +260,10 @@ pointline symbol sync-tushare --exchange <szse|sse|all> [options]
 - `--include-delisted`: Include delisted stocks
 - `--token`: Tushare API token (or set `TUSHARE_TOKEN` env var)
 - `--table-path`: Path to dim_symbol table
+- `--rebuild`: Perform full history rebuild
+- `--capture-api-response`: Capture raw API response to bronze metadata before transform
+- `--capture-only`: Capture API response and exit without writing dim_symbol
+- `--capture-root`: Optional root path for capture output (default: LAKE_ROOT/bronze/tushare)
 
 **Example:**
 ```bash
@@ -260,6 +276,12 @@ pointline symbol sync-tushare \
 pointline symbol sync-tushare \
   --exchange all \
   --include-delisted \
+  --token YOUR_TOKEN
+
+# Capture Tushare response only
+pointline symbol sync-tushare \
+  --exchange szse \
+  --capture-only \
   --token YOUR_TOKEN
 ```
 
@@ -282,6 +304,41 @@ pointline symbol sync-from-stock-basic-cn [options]
 **Example:**
 ```bash
 pointline symbol sync-from-stock-basic-cn
+```
+
+---
+
+### `pointline symbol ingest-metadata`
+
+Ingest captured `dim_symbol` metadata snapshots (from API capture files) using manifest replay semantics.
+
+**Usage:**
+```bash
+pointline symbol ingest-metadata --vendor <tardis|tushare> [options]
+```
+
+**Options:**
+- `--vendor`: Metadata vendor namespace (required)
+- `--bronze-root`: Captured metadata root (default: `LAKE_ROOT/bronze/<vendor>`)
+- `--glob`: File glob under metadata root (default: `type=dim_symbol_metadata/**/*.jsonl.gz`)
+- `--exchange`: Optional exchange partition filter
+- `--manifest-path`: Path to ingest_manifest (default: auto-detected)
+- `--table-path`: Path to dim_symbol table (default: auto-detected)
+- `--rebuild`: Apply file updates via history rebuild mode
+- `--force`: Process files even if already marked success in manifest
+- `--effective-ts`: Fallback timestamp for records missing source effective time
+
+**Example:**
+```bash
+# Replay captured Tardis metadata into dim_symbol
+pointline symbol ingest-metadata \
+  --vendor tardis \
+  --exchange binance-futures
+
+# Replay all captured Tushare metadata with rebuild mode
+pointline symbol ingest-metadata \
+  --vendor tushare \
+  --rebuild
 ```
 
 ---

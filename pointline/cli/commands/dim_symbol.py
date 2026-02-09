@@ -3,16 +3,165 @@
 from __future__ import annotations
 
 import argparse
+import gzip
 import json
 import os
+import re
+import time
+from datetime import date
 from pathlib import Path
+from typing import Any
 
 import polars as pl
 
-from pointline.cli.utils import parse_effective_ts, read_updates
+from pointline.cli.utils import compute_sha256, parse_effective_ts, read_updates
+from pointline.config import get_bronze_root
 from pointline.io.base_repository import BaseDeltaRepository
+from pointline.io.delta_manifest_repo import DeltaManifestRepository
+from pointline.io.protocols import BronzeFileMetadata, IngestionResult
 from pointline.io.vendors.tardis import TardisClient, build_updates_from_instruments
 from pointline.services.dim_symbol_service import DimSymbolService
+
+
+def _sanitize_component(value: str) -> str:
+    clean = re.sub(r"[^A-Za-z0-9._-]+", "_", value.strip())
+    return clean or "unknown"
+
+
+def _capture_dim_symbol_api_response(
+    *,
+    vendor: str,
+    exchange: str,
+    records: list[dict[str, Any]],
+    source_name: str,
+    capture_root: str | None = None,
+    snapshot_ts_us: int | None = None,
+) -> Path:
+    if snapshot_ts_us is None:
+        snapshot_ts_us = int(time.time() * 1_000_000)
+    snapshot_date = time.strftime("%Y-%m-%d", time.gmtime(snapshot_ts_us / 1_000_000))
+
+    root = Path(capture_root).expanduser() if capture_root else get_bronze_root(vendor)
+    exchange_token = _sanitize_component(exchange.lower())
+    source_token = _sanitize_component(source_name)
+    out_dir = (
+        root
+        / "type=dim_symbol_metadata"
+        / f"exchange={exchange_token}"
+        / f"date={snapshot_date}"
+        / f"snapshot_ts={snapshot_ts_us}"
+    )
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out_path = out_dir / f"{vendor}_{source_token}_{exchange_token}_{snapshot_ts_us}.jsonl.gz"
+
+    with gzip.open(out_path, "wt", encoding="utf-8") as handle:
+        for record in records:
+            handle.write(json.dumps(record, sort_keys=True, separators=(",", ":")))
+            handle.write("\n")
+
+    return out_path
+
+
+def _extract_partition_value(relative_path: str, key: str) -> str | None:
+    token = f"{key}="
+    for part in Path(relative_path).parts:
+        if part.startswith(token):
+            value = part.split("=", 1)[1].strip()
+            return value or None
+    return None
+
+
+def _load_captured_jsonl(path: Path) -> list[dict[str, Any]]:
+    opener = gzip.open if path.suffix == ".gz" else open
+    rows: list[dict[str, Any]] = []
+    with opener(path, "rt", encoding="utf-8") as handle:  # type: ignore[arg-type]
+        for line in handle:
+            payload = line.strip()
+            if not payload:
+                continue
+            rows.append(json.loads(payload))
+    return rows
+
+
+def _discover_metadata_files(
+    *,
+    vendor: str,
+    bronze_root: Path,
+    glob_pattern: str,
+    exchange_filter: str | None = None,
+) -> list[BronzeFileMetadata]:
+    results: list[BronzeFileMetadata] = []
+    exchange_filter_norm = exchange_filter.lower() if exchange_filter else None
+
+    for path in bronze_root.glob(glob_pattern):
+        if not path.is_file():
+            continue
+
+        rel = path.relative_to(bronze_root)
+        rel_str = str(rel)
+        exchange = _extract_partition_value(rel_str, "exchange")
+        if exchange_filter_norm and (exchange or "").lower() != exchange_filter_norm:
+            continue
+
+        date_value: date | None = None
+        date_raw = _extract_partition_value(rel_str, "date")
+        if date_raw:
+            try:
+                date_value = date.fromisoformat(date_raw)
+            except ValueError:
+                date_value = None
+
+        data_type = _extract_partition_value(rel_str, "type") or "dim_symbol_metadata"
+        stat = path.stat()
+        results.append(
+            BronzeFileMetadata(
+                vendor=vendor,
+                data_type=data_type,
+                bronze_file_path=rel_str,
+                file_size_bytes=stat.st_size,
+                last_modified_ts=int(stat.st_mtime * 1_000_000),
+                sha256=compute_sha256(path),
+                date=date_value,
+            )
+        )
+
+    return sorted(results, key=lambda meta: (meta.date or date.min, meta.bronze_file_path))
+
+
+def _build_updates_from_captured_metadata(
+    *,
+    vendor: str,
+    meta: BronzeFileMetadata,
+    bronze_root: Path,
+    rebuild: bool,
+    effective_ts_us: int | None,
+) -> pl.DataFrame:
+    file_path = bronze_root / meta.bronze_file_path
+    records = _load_captured_jsonl(file_path)
+    if not records:
+        return pl.DataFrame()
+
+    if vendor == "tardis":
+        exchange = _extract_partition_value(meta.bronze_file_path, "exchange")
+        if not exchange:
+            raise ValueError(
+                f"Captured metadata path missing exchange partition: {meta.bronze_file_path}"
+            )
+        return build_updates_from_instruments(
+            records,
+            exchange=exchange,
+            effective_ts=effective_ts_us,
+            rebuild=rebuild,
+        )
+
+    if vendor == "tushare":
+        from pointline.io.vendors.tushare.stock_basic_cn import (
+            build_dim_symbol_updates_from_stock_basic_cn,
+        )
+
+        return build_dim_symbol_updates_from_stock_basic_cn(pl.DataFrame(records))
+
+    raise ValueError(f"Unsupported vendor for metadata ingest: {vendor}")
 
 
 def cmd_dim_symbol_upsert(args: argparse.Namespace) -> int:
@@ -26,6 +175,8 @@ def cmd_dim_symbol_upsert(args: argparse.Namespace) -> int:
 
 def cmd_dim_symbol_sync(args: argparse.Namespace) -> int:
     """Sync dim_symbol updates from a source."""
+    capture_requested = args.capture_api_response or args.capture_only
+
     if args.source == "api":
         if not args.exchange:
             print("Error: --exchange is required when --source=api")
@@ -46,6 +197,19 @@ def cmd_dim_symbol_sync(args: argparse.Namespace) -> int:
             symbol=args.symbol,
             filter_payload=filter_payload,
         )
+
+        if capture_requested:
+            capture_path = _capture_dim_symbol_api_response(
+                vendor="tardis",
+                exchange=args.exchange,
+                records=instruments,
+                source_name="instruments",
+                capture_root=args.capture_root,
+            )
+            print(f"Captured Tardis dim_symbol metadata: {capture_path}")
+            if args.capture_only:
+                return 0
+
         updates = build_updates_from_instruments(
             instruments,
             exchange=args.exchange,
@@ -53,6 +217,10 @@ def cmd_dim_symbol_sync(args: argparse.Namespace) -> int:
             rebuild=args.rebuild,
         )
     else:
+        if capture_requested:
+            print("Error: --capture-api-response/--capture-only only supported with --source=api")
+            return 2
+
         source_path = Path(args.source)
         if not source_path.exists():
             print(f"Error: source {source_path} not found")
@@ -74,13 +242,106 @@ def cmd_dim_symbol_sync(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_dim_symbol_ingest_metadata(args: argparse.Namespace) -> int:
+    """Ingest captured dim_symbol metadata files via manifest semantics."""
+    bronze_root = (
+        Path(args.bronze_root).expanduser() if args.bronze_root else get_bronze_root(args.vendor)
+    )
+    if not bronze_root.exists():
+        print(f"Error: metadata root not found: {bronze_root}")
+        return 2
+
+    files = _discover_metadata_files(
+        vendor=args.vendor,
+        bronze_root=bronze_root,
+        glob_pattern=args.glob,
+        exchange_filter=args.exchange,
+    )
+    if not files:
+        print("No captured metadata files found.")
+        return 0
+
+    manifest_repo = DeltaManifestRepository(Path(args.manifest_path))
+    if not args.force:
+        files = manifest_repo.filter_pending(files)
+    if not files:
+        print("No metadata files to ingest.")
+        return 0
+
+    effective_ts_us = parse_effective_ts(args.effective_ts) if args.effective_ts else None
+    repo = BaseDeltaRepository(Path(args.table_path))
+    service = DimSymbolService(repo)
+
+    print(f"Ingesting {len(files)} metadata file(s) for vendor={args.vendor}...")
+    success_count = 0
+    failed_count = 0
+
+    for meta in files:
+        file_id = manifest_repo.resolve_file_id(meta)
+        try:
+            updates = _build_updates_from_captured_metadata(
+                vendor=args.vendor,
+                meta=meta,
+                bronze_root=bronze_root,
+                rebuild=args.rebuild,
+                effective_ts_us=effective_ts_us,
+            )
+
+            if updates.is_empty():
+                result = IngestionResult(
+                    row_count=0,
+                    ts_local_min_us=0,
+                    ts_local_max_us=0,
+                    error_message=None,
+                )
+                status = "success"
+                success_count += 1
+                print(f"✓ {meta.bronze_file_path}: 0 updates (empty capture)")
+            else:
+                if args.rebuild:
+                    service.rebuild(updates)
+                else:
+                    service.update(updates)
+                min_ts = (
+                    int(updates["valid_from_ts"].min()) if "valid_from_ts" in updates.columns else 0
+                )
+                max_ts = (
+                    int(updates["valid_from_ts"].max()) if "valid_from_ts" in updates.columns else 0
+                )
+                result = IngestionResult(
+                    row_count=updates.height,
+                    ts_local_min_us=min_ts,
+                    ts_local_max_us=max_ts,
+                    error_message=None,
+                )
+                status = "success"
+                success_count += 1
+                print(f"✓ {meta.bronze_file_path}: {updates.height} updates")
+        except Exception as exc:
+            status = "failed"
+            failed_count += 1
+            result = IngestionResult(
+                row_count=0,
+                ts_local_min_us=0,
+                ts_local_max_us=0,
+                error_message=str(exc),
+            )
+            print(f"✗ {meta.bronze_file_path}: {exc}")
+
+        manifest_repo.update_status(file_id, status, meta, result)
+
+    print(f"\nSummary: {success_count} succeeded, {failed_count} failed")
+    return 0 if failed_count == 0 else 1
+
+
 def cmd_dim_symbol_sync_tushare(args: argparse.Namespace) -> int:
     """Sync Chinese stock symbols from Tushare to dim_symbol."""
-    from pointline.dim_symbol import read_dim_symbol_table, scd2_bootstrap, scd2_upsert
     from pointline.io.vendors.tushare import TushareClient
     from pointline.io.vendors.tushare.stock_basic_cn import (
         build_dim_symbol_updates_from_stock_basic_cn,
     )
+
+    capture_requested = args.capture_api_response or args.capture_only
 
     try:
         # Initialize Tushare client
@@ -113,6 +374,18 @@ def cmd_dim_symbol_sync_tushare(args: argparse.Namespace) -> int:
 
     print(f"Fetched {len(df)} stocks from Tushare")
 
+    if capture_requested:
+        capture_path = _capture_dim_symbol_api_response(
+            vendor="tushare",
+            exchange=args.exchange,
+            records=df.to_dicts(),
+            source_name="stock_basic",
+            capture_root=args.capture_root,
+        )
+        print(f"Captured Tushare dim_symbol metadata: {capture_path}")
+        if args.capture_only:
+            return 0
+
     print("Transforming to dim_symbol schema...")
     updates = build_dim_symbol_updates_from_stock_basic_cn(df)
 
@@ -122,41 +395,17 @@ def cmd_dim_symbol_sync_tushare(args: argparse.Namespace) -> int:
 
     print(f"Transformed {len(updates)} symbols")
 
-    # Load or initialize dim_symbol
     repo = BaseDeltaRepository(Path(args.table_path))
+    service = DimSymbolService(repo)
 
-    try:
-        print("Loading existing dim_symbol...")
-        current_dim = read_dim_symbol_table()
-        print(f"Found {len(current_dim)} existing symbols")
+    if args.rebuild:
+        print(f"Rebuilding history for {updates.select('exchange_symbol').n_unique()} symbols...")
+        service.rebuild(updates)
+    else:
+        print("Applying incremental updates...")
+        service.update(updates)
 
-        # Upsert
-        print("Upserting symbols...")
-        updated_dim = scd2_upsert(current_dim, updates)
-
-    except Exception as e:
-        # dim_symbol doesn't exist yet, bootstrap
-        print(f"dim_symbol table not found ({e}), bootstrapping...")
-        updated_dim = scd2_bootstrap(updates)
-
-    # Write back
-    print("Writing to Delta Lake...")
-    repo.write_full(updated_dim)
-
-    print(f"✓ Successfully synced {len(updates)} symbols to dim_symbol")
-    print(f"  Total symbols in dim_symbol: {len(updated_dim)}")
-
-    # Show summary by exchange
-    summary = (
-        updated_dim.filter(pl.col("is_current"))
-        .groupby("exchange")
-        .agg(pl.count().alias("count"))
-        .sort("exchange")
-    )
-
-    print("\nCurrent symbols by exchange:")
-    for row in summary.iter_rows(named=True):
-        print(f"  {row['exchange']}: {row['count']}")
+    print("Sync complete.")
 
     return 0
 

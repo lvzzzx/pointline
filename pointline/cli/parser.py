@@ -13,6 +13,7 @@ from pointline.cli.commands.dim_asset_stats import (
     cmd_dim_asset_stats_sync,
 )
 from pointline.cli.commands.dim_symbol import (
+    cmd_dim_symbol_ingest_metadata,
     cmd_dim_symbol_sync,
     cmd_dim_symbol_sync_from_stock_basic_cn,
     cmd_dim_symbol_sync_tushare,
@@ -96,6 +97,21 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Perform a full history rebuild for the symbols in the source",
     )
+    symbol_sync.add_argument(
+        "--capture-api-response",
+        action="store_true",
+        help="Capture raw API response to bronze metadata before transformation (api source only)",
+    )
+    symbol_sync.add_argument(
+        "--capture-only",
+        action="store_true",
+        help="Capture API response and exit without writing dim_symbol (api source only)",
+    )
+    symbol_sync.add_argument(
+        "--capture-root",
+        default=None,
+        help="Optional root path for captured metadata (default: LAKE_ROOT/bronze/<vendor>)",
+    )
     symbol_sync.set_defaults(func=cmd_dim_symbol_sync)
 
     symbol_sync_tushare = symbol_sub.add_parser(
@@ -122,7 +138,79 @@ def build_parser() -> argparse.ArgumentParser:
         default=str(get_table_path("dim_symbol")),
         help="Path to the dim_symbol Delta table",
     )
+    symbol_sync_tushare.add_argument(
+        "--rebuild",
+        action="store_true",
+        help="Perform a full history rebuild for the symbols in the source",
+    )
+    symbol_sync_tushare.add_argument(
+        "--capture-api-response",
+        action="store_true",
+        help="Capture raw API response to bronze metadata before transformation",
+    )
+    symbol_sync_tushare.add_argument(
+        "--capture-only",
+        action="store_true",
+        help="Capture API response and exit without writing dim_symbol",
+    )
+    symbol_sync_tushare.add_argument(
+        "--capture-root",
+        default=None,
+        help="Optional root path for captured metadata (default: LAKE_ROOT/bronze/tushare)",
+    )
     symbol_sync_tushare.set_defaults(func=cmd_dim_symbol_sync_tushare)
+
+    symbol_ingest_metadata = symbol_sub.add_parser(
+        "ingest-metadata",
+        help="Ingest captured dim_symbol metadata files using manifest replay semantics",
+    )
+    symbol_ingest_metadata.add_argument(
+        "--vendor",
+        required=True,
+        choices=["tardis", "tushare"],
+        help="Metadata vendor namespace to ingest",
+    )
+    symbol_ingest_metadata.add_argument(
+        "--bronze-root",
+        default=None,
+        help="Captured metadata root (default: LAKE_ROOT/bronze/<vendor>)",
+    )
+    symbol_ingest_metadata.add_argument(
+        "--glob",
+        default="type=dim_symbol_metadata/**/*.jsonl.gz",
+        help="Glob pattern under metadata root (default: type=dim_symbol_metadata/**/*.jsonl.gz)",
+    )
+    symbol_ingest_metadata.add_argument(
+        "--exchange",
+        default=None,
+        help="Optional exchange partition filter",
+    )
+    symbol_ingest_metadata.add_argument(
+        "--manifest-path",
+        default=str(get_table_path("ingest_manifest")),
+        help="Path to ingest_manifest (default: LAKE_ROOT/silver/ingest_manifest)",
+    )
+    symbol_ingest_metadata.add_argument(
+        "--table-path",
+        default=str(get_table_path("dim_symbol")),
+        help="Path to the dim_symbol Delta table",
+    )
+    symbol_ingest_metadata.add_argument(
+        "--rebuild",
+        action="store_true",
+        help="Perform a full history rebuild for symbols in each metadata file",
+    )
+    symbol_ingest_metadata.add_argument(
+        "--force",
+        action="store_true",
+        help="Process files even if already marked success in ingest_manifest",
+    )
+    symbol_ingest_metadata.add_argument(
+        "--effective-ts",
+        default=None,
+        help="Fallback Unix timestamp in microseconds for records missing availableSince",
+    )
+    symbol_ingest_metadata.set_defaults(func=cmd_dim_symbol_ingest_metadata)
 
     symbol_sync_stock_basic = symbol_sub.add_parser(
         "sync-from-stock-basic-cn",
