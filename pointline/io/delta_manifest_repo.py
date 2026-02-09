@@ -166,7 +166,11 @@ class DeltaManifestRepository(BaseDeltaRepository):
     def filter_pending(self, candidates: list[BronzeFileMetadata]) -> list[BronzeFileMetadata]:
         """Returns only files that need processing (efficient batch anti-join).
 
-        Uses new manifest key: (vendor, data_type, bronze_file_name, sha256)
+        Uses strict manifest key when SHA256 is present:
+        (vendor, data_type, bronze_file_name, sha256).
+
+        For candidates with missing SHA256 (e.g., fast discovery), falls back to
+        (vendor, data_type, bronze_file_name, file_size_bytes, last_modified_ts).
         """
         if not candidates:
             return []
@@ -179,34 +183,52 @@ class DeltaManifestRepository(BaseDeltaRepository):
         if manifest_df.is_empty():
             return candidates
 
-        # Convert candidates to DataFrame for anti-join with new key
-        cand_df = pl.DataFrame(
-            [
-                {
-                    "vendor": c.vendor,
-                    "data_type": c.data_type,
-                    "bronze_file_name": c.bronze_file_path,
-                    "sha256": c.sha256,
-                    "_idx": idx,  # Preserve order for mapping back
-                }
-                for idx, c in enumerate(candidates)
-            ]
+        success_manifest = manifest_df.filter(pl.col("status") == "success")
+        if success_manifest.is_empty():
+            return candidates
+
+        strict_success_keys = set(
+            success_manifest.select(
+                ["vendor", "data_type", "bronze_file_name", "sha256"]
+            ).iter_rows()
+        )
+        fallback_success_keys = set(
+            success_manifest.select(
+                [
+                    "vendor",
+                    "data_type",
+                    "bronze_file_name",
+                    "file_size_bytes",
+                    "last_modified_ts",
+                ]
+            ).iter_rows()
         )
 
-        # Filter criteria: Status must be 'success'
-        # We want to keep candidates that do NOT have a matching 'success' record
-        success_manifest = manifest_df.filter(pl.col("status") == "success")
+        pending: list[BronzeFileMetadata] = []
+        for candidate in candidates:
+            if candidate.sha256:
+                strict_key = (
+                    candidate.vendor,
+                    candidate.data_type,
+                    candidate.bronze_file_path,
+                    candidate.sha256,
+                )
+                if strict_key in strict_success_keys:
+                    continue
+            else:
+                fallback_key = (
+                    candidate.vendor,
+                    candidate.data_type,
+                    candidate.bronze_file_path,
+                    candidate.file_size_bytes,
+                    candidate.last_modified_ts,
+                )
+                if fallback_key in fallback_success_keys:
+                    continue
 
-        # Join keys (new composite key)
-        join_keys = ["vendor", "data_type", "bronze_file_name", "sha256"]
+            pending.append(candidate)
 
-        # Anti-join: Keep candidates that don't match strict success criteria
-        pending_df = cand_df.join(success_manifest, on=join_keys, how="anti")
-
-        # Convert back to objects using preserved indices
-        pending_indices = set(pending_df["_idx"].to_list())
-
-        return [c for idx, c in enumerate(candidates) if idx in pending_indices]
+        return pending
 
     def update_status(
         self,

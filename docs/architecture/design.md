@@ -353,16 +353,15 @@ idempotent, provides auditability, and enables fast skip logic.
 **Table:** `silver.ingest_manifest` (small, unpartitioned Delta table)
 
 **Primary key (logical):**
-`(vendor, exchange, data_type, symbol, date, bronze_file_name)`
+`(vendor, data_type, bronze_file_name, sha256)`
 *Note: `file_id` is the surrogate key for joins from Silver tables.*
 
 **Schema:** See [Schema Reference - ingest_manifest](../schemas.md#12-silveringest_manifest) for complete column definitions.
 
 **Ingestion decision (skip logic):**
 1. For each Bronze file, compute `file_size_bytes` and `last_modified_ts`.
-2. Lookup by `(vendor, exchange, data_type, symbol, date, bronze_file_name)`.
-3. If a row exists with `status=success` **and** matching `file_size_bytes` + `last_modified_ts`
-   (or `sha256` if used), **skip** ingestion.
+2. Lookup by `(vendor, data_type, bronze_file_name, sha256)`.
+3. If a row exists with `status=success`, **skip** ingestion.
 4. Otherwise, ingest and write/overwrite a manifest row with updated stats.
 
 **Lineage guarantees:**

@@ -12,10 +12,11 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import polars as pl
 
-from pointline.config import get_bronze_root, get_exchange_id
+from pointline.config import get_bronze_root, get_exchange_id, get_exchange_timezone
 from pointline.dim_symbol import check_coverage
 from pointline.io.protocols import (
     BronzeFileMetadata,
@@ -114,11 +115,19 @@ class GenericIngestionService(BaseService):
             logger.warning("write: skipping empty DataFrame")
             return
 
-        # Use append for immutable event data
+        # Prefer lineage-key upsert to make retries idempotent if a crash happens
+        # after Silver write but before manifest status update.
+        lineage_keys = ["file_id", "file_line_number"]
+        if all(col in result.columns for col in lineage_keys) and hasattr(self.repo, "merge"):
+            self.repo.merge(result, keys=lineage_keys)
+            return
+
+        # Fallback for repositories/tables without lineage columns.
         if hasattr(self.repo, "append"):
             self.repo.append(result)
-        else:
-            raise NotImplementedError("Repository must support append() for event data")
+            return
+
+        raise NotImplementedError("Repository must support merge() or append() for event data")
 
     def ingest_file(
         self,
@@ -251,26 +260,30 @@ class GenericIngestionService(BaseService):
             dim_symbol = self.dim_symbol_repo.read_all()
 
             # 5. Quarantine check per (exchange_id, exchange_symbol, date)
-            unique_pairs = df.select(["exchange_id", "exchange_symbol", "date"]).unique()
-            quarantined_pairs: list[tuple[int, str, date]] = []
+            unique_pairs = df.select(
+                ["exchange", "exchange_id", "exchange_symbol", "date"]
+            ).unique()
+            quarantined_pairs: list[tuple[str, int, str, date]] = []
             original_row_count = df.height
 
             for row in unique_pairs.iter_rows(named=True):
                 exchange_id = row["exchange_id"]
+                exchange = row["exchange"]
                 symbol = row["exchange_symbol"]
                 trading_date = row["date"]
                 is_valid, error_msg = self._check_quarantine(
-                    dim_symbol, exchange_id, symbol, trading_date
+                    dim_symbol, exchange_id, symbol, trading_date, exchange=exchange
                 )
                 if not is_valid:
                     logger.warning(
-                        "Symbol quarantined: exchange_id=%s, symbol=%s, date=%s, reason=%s",
+                        "Symbol quarantined: exchange=%s, exchange_id=%s, symbol=%s, date=%s, reason=%s",
+                        exchange,
                         exchange_id,
                         symbol,
                         trading_date,
                         error_msg,
                     )
-                    quarantined_pairs.append((exchange_id, symbol, trading_date))
+                    quarantined_pairs.append((exchange, exchange_id, symbol, trading_date))
                     df = df.filter(
                         ~(
                             (pl.col("exchange_id") == exchange_id)
@@ -375,6 +388,7 @@ class GenericIngestionService(BaseService):
         exchange_id: int,
         exchange_symbol: str,
         trading_date: date,
+        exchange: str | None = None,
     ) -> tuple[bool, str]:
         """Check if file should be quarantined based on symbol metadata coverage.
 
@@ -383,21 +397,41 @@ class GenericIngestionService(BaseService):
             exchange_id: Resolved exchange ID
             exchange_symbol: Normalized symbol for dim_symbol matching
             trading_date: Trading date for coverage check
+            exchange: Exchange name for timezone resolution (optional)
 
         Returns:
             (is_valid, error_message) tuple
         """
-        # Calculate UTC day boundaries
-        day_start = datetime.combine(trading_date, datetime.min.time(), tzinfo=timezone.utc)
-        day_start_us = int(day_start.timestamp() * 1_000_000)
+        # Calculate day boundaries using exchange-local trading date.
+        # This keeps quarantine checks aligned with the partitioning/date semantics.
+        exchange_name = exchange
+        if exchange_name is None:
+            # Fallback for direct unit tests/callers that only provide exchange_id.
+            exchange_name = next(
+                (
+                    val
+                    for val in dim_symbol.filter(pl.col("exchange_id") == exchange_id)
+                    .select("exchange")
+                    .drop_nulls()
+                    .unique()
+                    .get_column("exchange")
+                    .to_list()
+                ),
+                "UTC",
+            )
 
-        # Next day start (exclusive end)
-        day_end = datetime.combine(
+        tz_name = get_exchange_timezone(str(exchange_name), strict=True)
+        tz = ZoneInfo(tz_name)
+
+        day_start_local = datetime.combine(trading_date, datetime.min.time(), tzinfo=tz)
+        day_start_us = int(day_start_local.astimezone(timezone.utc).timestamp() * 1_000_000)
+
+        day_end_local = datetime.combine(
             trading_date + timedelta(days=1),
             datetime.min.time(),
-            tzinfo=timezone.utc,
+            tzinfo=tz,
         )
-        day_end_us = int(day_end.timestamp() * 1_000_000)
+        day_end_us = int(day_end_local.astimezone(timezone.utc).timestamp() * 1_000_000)
 
         # Check coverage using normalized symbol
         has_coverage = check_coverage(

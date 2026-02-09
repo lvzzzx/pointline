@@ -68,16 +68,15 @@ The switch to `pl.concat_list` eliminated the performance bottleneck.
 
 ### Optimization Strategies
 
-#### 1. Parallel File Processing
-The CLI supports parallel processing of multiple files:
+#### 1. File Processing Model
+Current ingestion processes files sequentially:
 ```bash
-# Process multiple files concurrently (default: 5 concurrent downloads)
-pointline ingest run --data-type book_snapshot_25 --concurrency 5
+# Process one file at a time from the discovered set
+pointline bronze ingest --data-type book_snapshot_25
 ```
 
-For 10 files processed in parallel (5 concurrent):
-- Sequential: ~30-50 seconds total
-- Parallel (5 concurrent): ~10-15 seconds total
+For N files, wall-clock time is approximately the sum of per-file ingest time.
+If higher throughput is needed, run multiple CLI processes on non-overlapping globs.
 
 #### 2. Lazy Evaluation (Future Enhancement)
 Consider using Polars lazy evaluation for the entire pipeline:
@@ -106,17 +105,17 @@ All three data types now use fully vectorized operations and have similar perfor
 
 1. **For Development/Testing:**
    - Current performance is excellent for single files
-   - Processing 10 files takes ~10-15 seconds with parallel processing
+   - End-to-end time scales roughly linearly with file count in one process
 
 2. **For Production:**
-   - Use parallel processing for multiple files (default concurrency: 5)
+   - Use partitioned globs and multiple workers if parallelism is required
    - Monitor processing times - should be ~1-2 seconds per file
    - If processing times exceed expectations, check system resources
 
 3. **For Large-Scale Ingestion:**
    - Current implementation handles typical files efficiently
    - For very large files (>2M rows), consider chunked processing
-   - Monitor memory usage if processing many files in parallel
+   - Monitor memory usage when running multiple ingestion workers
 
 ### Monitoring
 

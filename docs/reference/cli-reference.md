@@ -377,11 +377,11 @@ pointline bronze reorganize \
 
 ### `pointline bronze discover`
 
-Discover bronze files ready for ingestion (replaced by `pointline ingest discover`).
+Discover bronze files ready for ingestion.
 
 **Usage:**
 ```bash
-pointline ingest discover [--pending-only]
+pointline bronze discover [options]
 ```
 
 See [Ingestion](#ingestion-silver-layer) section.
@@ -390,13 +390,13 @@ See [Ingestion](#ingestion-silver-layer) section.
 
 ## Ingestion (Silver Layer)
 
-### `pointline ingest discover`
+### `pointline bronze discover`
 
 Discover bronze files and show ingestion status.
 
 **Usage:**
 ```bash
-pointline ingest discover [options]
+pointline bronze discover [options]
 ```
 
 **Options:**
@@ -411,19 +411,19 @@ pointline ingest discover [options]
 **Examples:**
 ```bash
 # Show all discovered files
-pointline ingest discover
+pointline bronze discover
 
 # Show only pending (not yet ingested)
-pointline ingest discover --pending-only
+pointline bronze discover --pending-only
 
 # Discover Quant360 files
-pointline ingest discover --vendor quant360 --pending-only
+pointline bronze discover --vendor quant360 --pending-only
 
 # Filter by data type
-pointline ingest discover --data-type trades --pending-only
+pointline bronze discover --data-type trades --pending-only
 
 # Limit output
-pointline ingest discover --pending-only --limit 10
+pointline bronze discover --pending-only --limit 10
 ```
 
 **Sample output:**
@@ -438,48 +438,49 @@ Pending files:
 
 ---
 
-### `pointline ingest run`
+### `pointline bronze ingest`
 
-Run ETL ingestion for a specific table/exchange/date.
+Run Bronze -> Silver ingestion for discovered files.
 
 **Usage:**
 ```bash
-pointline ingest run --table <name> --exchange <name> --date <date> [options]
+pointline bronze ingest [options]
 ```
 
 **Options:**
-- `--table`: Target table (e.g., trades, quotes, book_snapshot_25) (required)
-- `--exchange`: Exchange name (e.g., binance-futures) (required)
-- `--date`: Date YYYY-MM-DD (required)
-- `--bronze-root`: Bronze root path (default: auto-detected)
-- `--vendor`: Vendor name (default: auto-detect)
-- `--table-path`: Path to silver table (default: auto-detected)
-- `--manifest-path`: Path to ingest_manifest (default: auto-detected)
-- `--force`: Force re-ingestion even if already completed
+- `--bronze-root`: Bronze root path (default: LAKE_ROOT/bronze)
+- `--vendor`: Vendor name (optional, constructs bronze-root as LAKE_ROOT/bronze/{vendor})
+- `--glob`: Glob pattern for bronze files (default: `**/*.csv.gz`)
+- `--data-type`: Filter by data type (e.g., trades, quotes, book_snapshot_25)
+- `--force`: Re-ingest files even if already marked success
+- `--retry-quarantined`: Retry only quarantined files
+- `--validate`: Run sampled post-ingest validation
+- `--validate-sample-size`: Sample size for post-ingest validation (default: 2000)
+- `--validate-seed`: Random seed for sampled validation (default: 0)
 
 **Examples:**
 
 **Basic ingestion:**
 ```bash
-# Ingest trades for 2024-05-01
-pointline ingest run \
-  --table trades \
-  --exchange binance-futures \
-  --date 2024-05-01
+# Ingest all pending trades files for one date
+pointline bronze ingest \
+  --vendor tardis \
+  --data-type trades \
+  --glob "exchange=binance-futures/type=trades/date=2024-05-01/**/*.csv.gz"
 
-# Ingest quotes
-pointline ingest run \
-  --table quotes \
-  --exchange binance-futures \
-  --date 2024-05-01
+# Ingest quotes for one date
+pointline bronze ingest \
+  --vendor tardis \
+  --data-type quotes \
+  --glob "exchange=binance-futures/type=quotes/date=2024-05-01/**/*.csv.gz"
 ```
 
 **Force re-ingestion:**
 ```bash
-pointline ingest run \
-  --table trades \
-  --exchange binance-futures \
-  --date 2024-05-01 \
+pointline bronze ingest \
+  --vendor tardis \
+  --data-type trades \
+  --glob "exchange=binance-futures/type=trades/date=2024-05-01/**/*.csv.gz" \
   --force
 ```
 
@@ -487,7 +488,10 @@ pointline ingest run \
 ```bash
 # Use a loop
 for date in 2024-05-{01..31}; do
-  pointline ingest run --table trades --exchange binance-futures --date $date
+  pointline bronze ingest \
+    --vendor tardis \
+    --data-type trades \
+    --glob "exchange=binance-futures/type=trades/date=$date/**/*.csv.gz"
 done
 ```
 
@@ -509,7 +513,7 @@ pointline manifest show [options]
 - `--vendor`: Filter by vendor
 - `--exchange`: Filter by exchange
 - `--data-type`: Filter by data type
-- `--status`: Filter by status (pending, completed, failed, quarantined)
+- `--status`: Filter by status (`pending`, `success`, `failed`, `quarantined`)
 
 **Examples:**
 ```bash
@@ -524,22 +528,18 @@ pointline manifest show --status failed
 pointline manifest show --exchange binance-futures
 
 # Combined filters
-pointline manifest show --exchange binance-futures --status completed
+pointline manifest show --data-type trades --status success
 ```
 
 **Sample output:**
 ```
-Manifest Summary:
-  Total entries: 500
-  Completed: 450
-  Pending: 47
-  Failed: 3
-  Quarantined: 0
+manifest status counts:
+  failed: 3
+  pending: 47
+  quarantined: 0
+  success: 450
 
-Recent entries:
-  vendor=tardis, exchange=binance-futures, type=trades, date=2024-05-01, symbol=BTCUSDT → completed
-  vendor=tardis, exchange=binance-futures, type=trades, date=2024-05-02, symbol=BTCUSDT → pending
-  ...
+total rows: 500
 ```
 
 ---
@@ -877,11 +877,11 @@ pointline bronze download \
   --api-key $TARDIS_API_KEY
 
 # 2. Discover pending files
-pointline ingest discover --pending-only
+pointline bronze discover --pending-only
 
 # 3. Ingest to silver
-pointline ingest run --table trades --exchange binance-futures --date 2024-05-01
-pointline ingest run --table quotes --exchange binance-futures --date 2024-05-01
+pointline bronze ingest --vendor tardis --data-type trades --glob "exchange=binance-futures/type=trades/date=2024-05-01/**/*.csv.gz"
+pointline bronze ingest --vendor tardis --data-type quotes --glob "exchange=binance-futures/type=quotes/date=2024-05-01/**/*.csv.gz"
 
 # 4. Validate
 pointline validate trades --exchange binance-futures --date 2024-05-01
@@ -905,11 +905,11 @@ pointline bronze reorganize \
   --vendor quant360
 
 # 2. Discover files
-pointline ingest discover --vendor quant360 --pending-only
+pointline bronze discover --vendor quant360 --pending-only
 
 # 3. Ingest L3 data
-pointline ingest run --table l3_orders --exchange szse --date 2024-09-30
-pointline ingest run --table l3_ticks --exchange szse --date 2024-09-30
+pointline bronze ingest --vendor quant360 --data-type l3_orders --glob "exchange=szse/type=l3_orders/date=2024-09-30/**/*.csv.gz"
+pointline bronze ingest --vendor quant360 --data-type l3_ticks --glob "exchange=szse/type=l3_ticks/date=2024-09-30/**/*.csv.gz"
 
 # 4. Validate
 pointline validate l3_orders --exchange szse --date 2024-09-30
@@ -934,7 +934,7 @@ pointline bronze reorganize --dry-run ...
 ### 3. Check pending files before ingestion
 
 ```bash
-pointline ingest discover --pending-only
+pointline bronze discover --pending-only
 ```
 
 ### 4. Monitor manifest status

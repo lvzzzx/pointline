@@ -118,8 +118,8 @@ pointline data coverage --exchange binance-futures --symbol BTCUSDT
 
 **Data Management:**
 ```bash
-pointline ingest discover --pending-only
-pointline ingest run --table trades --exchange binance-futures --date 2024-05-01
+pointline bronze discover --pending-only
+pointline bronze ingest --vendor tardis --data-type trades --glob "exchange=binance-futures/type=trades/date=2024-05-01/**/*.csv.gz"
 pointline manifest show
 ```
 

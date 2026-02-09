@@ -3,4 +3,4 @@ version = 1
 name = "pointline"
 
 [setup]
-script = "uv sync &&  source .venv/bin/activate"
+script = "uv sync --extra dev &&  source .venv/bin/activate"
