@@ -208,6 +208,62 @@ features = features.with_columns([
 
 **Output**: Parquet file with ~40 features (fast + slow + cross-timeframe)
 
+### 10. Cross-Exchange Arbitrage Guide ⭐ NEW
+**File**: `docs/guides/cross-exchange-arbitrage-mft.md`
+
+Complete guide for building cross-exchange arbitrage features:
+
+**Topics Covered**:
+- Types of arbitrage (spatial, futures, triangular, funding)
+- Transaction cost modeling (fees, slippage, withdrawal)
+- 6 feature engineering patterns with IC benchmarks
+- Dual-exchange aggregation implementation
+- Latency requirements and production considerations
+
+**Feature Patterns**:
+1. **Price Spread** (IC = 0.05): Mean reversion signal
+2. **Momentum Divergence** (IC = 0.08): Lead-lag prediction
+3. **Flow Divergence** (IC = 0.06): Sentiment differences
+4. **Volume Imbalance** (IC = 0.04): Smart order routing
+5. **Spread Convergence** (IC = 0.04): Execution timing
+6. **Arbitrage Opportunity**: Transaction cost adjusted profit
+
+**Key Insight**: Lead-lag trading (IC = 0.08) more profitable than pure arbitrage (1-5% opportunity rate)
+
+### 11. Cross-Exchange Working Example ⭐ NEW
+**File**: `examples/crypto_cross_exchange_arbitrage_example.py`
+
+Demonstrates dual-exchange aggregation - monitoring same symbol across exchanges:
+
+```python
+# Build spines for both exchanges
+spine_a = build_spine(symbol_id_a, config)  # Exchange A (Binance)
+spine_b = build_spine(symbol_id_b, config)  # Exchange B (Bybit)
+
+# Assign trades from each exchange
+trades_a_bucketed = assign_to_buckets(trades_a, spine_a)
+trades_b_bucketed = assign_to_buckets(trades_b, spine_b)
+
+# Aggregate features from each exchange
+features_a = trades_a_bucketed.group_by("bucket_start").agg([...])
+features_b = trades_b_bucketed.group_by("bucket_start").agg([...])
+
+# As-of join (PIT correct)
+features = features_a.join_asof(features_b, on="bucket_start", strategy="backward")
+
+# Cross-exchange features
+features = features.with_columns([
+    # Price spread (bps)
+    (((pl.col("a_close") - pl.col("b_close")) / avg_price) * 10000).alias("spread_bps"),
+    # Arbitrage opportunity
+    (pl.col("spread_bps").abs() > 14.0).alias("arb_opportunity"),
+    # Lead-lag
+    (pl.col("a_ret") - pl.col("b_ret")).alias("momentum_divergence"),
+])
+```
+
+**Output**: Parquet file with ~30 features (exchange A + B + cross-exchange)
+
 ---
 
 ## Quick Start Guide
@@ -335,16 +391,20 @@ class MyCustomAggregation(AggregationSpec):
   - Implementation: `docs/guides/multitimeframe-features-mft.md`
   - Example: `examples/crypto_mft_multitimeframe_example.py`
   - IC improvement: 50-100% gain over single-timeframe
+- [x] **Implement cross-exchange arbitrage signals** ✅ COMPLETE
+  - Implementation: `docs/guides/cross-exchange-arbitrage-mft.md`
+  - Example: `examples/crypto_cross_exchange_arbitrage_example.py`
+  - IC: 0.08 for lead-lag, 0.05 for spread mean reversion
 - [ ] Add liquidation flow detection (aggressive unwinds)
   - **Blocker**: No liquidations table available yet
   - **Workaround**: Build proxy detector using aggressive trade flow
   - **Alternative**: Wait for liquidations data ingestion
-- [ ] Implement cross-exchange arbitrage signals
-  - Requires multi-exchange spine builder
-  - Would leverage existing dual-spine pattern
 - [ ] Add adaptive timeframes (volatility-based)
   - Build on multi-timeframe foundation
   - Adjust thresholds based on realized volatility
+- [ ] Implement triangular arbitrage (3-way currency)
+  - Extend cross-exchange pattern to 3+ currencies
+  - Detect circular arbitrage opportunities
 
 ### Engineering
 - [ ] Implement observability (execution tracing)
@@ -366,7 +426,8 @@ class MyCustomAggregation(AggregationSpec):
 - `docs/architecture/research-framework-deep-review.md` - Architecture deep dive
 - `docs/guides/volume-bar-features-crypto-mft.md` - Practical guide (trade features)
 - `docs/guides/funding-rate-features-mft.md` - Funding rate guide ⭐
-- `docs/guides/multitimeframe-features-mft.md` - Multi-timeframe guide ⭐ NEW
+- `docs/guides/multitimeframe-features-mft.md` - Multi-timeframe guide ⭐
+- `docs/guides/cross-exchange-arbitrage-mft.md` - Cross-exchange arbitrage guide ⭐ NEW
 - `docs/guides/volume-bar-quick-reference.md` - Quick reference cheat sheet
 - `docs/guides/researcher-guide.md` - General researcher guide
 - `docs/architecture/north-star-research-architecture.md` - Design principles
@@ -377,7 +438,8 @@ class MyCustomAggregation(AggregationSpec):
 - `pointline/research/resample/aggregations/derivatives.py` - Funding/OI aggregations (14 functions)
 - `examples/crypto_mft_volume_bars_example.py` - Trade features example
 - `examples/crypto_mft_funding_features_example.py` - Funding features example ⭐
-- `examples/crypto_mft_multitimeframe_example.py` - Multi-timeframe example ⭐ NEW
+- `examples/crypto_mft_multitimeframe_example.py` - Multi-timeframe example ⭐
+- `examples/crypto_cross_exchange_arbitrage_example.py` - Cross-exchange example ⭐ NEW
 - `examples/query_api_example.py` - Query API basics
 
 ### Tests
