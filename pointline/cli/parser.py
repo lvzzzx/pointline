@@ -322,6 +322,22 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Skip vendor-specific prehooks (e.g., archive reorganization)",
     )
+    bronze_ingest.add_argument(
+        "--optimize-after-ingest",
+        action="store_true",
+        help="Run delta optimize for touched exchange/date partitions after successful ingestion",
+    )
+    bronze_ingest.add_argument(
+        "--optimize-zorder",
+        default=None,
+        help="Comma-separated columns to Z-order during post-ingest optimize",
+    )
+    bronze_ingest.add_argument(
+        "--optimize-target-file-size",
+        type=int,
+        default=None,
+        help="Target file size in bytes for post-ingest optimize (optional)",
+    )
     bronze_ingest.set_defaults(func=cmd_ingest_run)
 
     # --- Silver ---

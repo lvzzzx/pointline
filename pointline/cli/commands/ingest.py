@@ -5,16 +5,115 @@ from __future__ import annotations
 import argparse
 import gc
 from dataclasses import replace
+from datetime import date
 from pathlib import Path
 
 import polars as pl
 
-from pointline.cli.ingestion_factory import create_ingestion_service
+from pointline.cli.ingestion_factory import TABLE_PARTITIONS, create_ingestion_service
 from pointline.cli.utils import compute_sha256, print_files, sorted_files
 from pointline.config import BRONZE_ROOT, get_table_path
+from pointline.io.base_repository import BaseDeltaRepository
 from pointline.io.delta_manifest_repo import DeltaManifestRepository
 from pointline.io.local_source import LocalBronzeSource
-from pointline.io.protocols import IngestionResult
+from pointline.io.protocols import BronzeFileMetadata, IngestionResult
+
+TABLE_NAME_BY_DATA_TYPE = {
+    "trades": "trades",
+    "quotes": "quotes",
+    "book_snapshot_25": "book_snapshot_25",
+    "derivative_ticker": "derivative_ticker",
+    "l3_orders": "szse_l3_orders",
+    "l3_ticks": "szse_l3_ticks",
+}
+
+
+def _extract_partition_value(bronze_file_path: str, key: str) -> str | None:
+    token = f"{key}="
+    for part in Path(bronze_file_path).parts:
+        if part.startswith(token):
+            value = part.split("=", 1)[1].strip()
+            return value or None
+    return None
+
+
+def _resolve_target_table_name(meta: BronzeFileMetadata) -> str | None:
+    if meta.data_type == "klines":
+        if not meta.interval:
+            return None
+        return f"kline_{meta.interval}"
+    return TABLE_NAME_BY_DATA_TYPE.get(meta.data_type)
+
+
+def _extract_partition_filters(meta: BronzeFileMetadata) -> dict[str, object] | None:
+    exchange = _extract_partition_value(meta.bronze_file_path, "exchange")
+
+    partition_date = meta.date
+    if partition_date is None:
+        raw_date = _extract_partition_value(meta.bronze_file_path, "date")
+        if raw_date:
+            try:
+                partition_date = date.fromisoformat(raw_date)
+            except ValueError:
+                partition_date = None
+
+    if exchange is None or partition_date is None:
+        return None
+
+    return {"exchange": exchange, "date": partition_date}
+
+
+def _run_post_ingest_optimize(
+    touched_partitions: dict[str, set[tuple[str, date]]],
+    *,
+    target_file_size: int | None = None,
+    zorder: str | None = None,
+) -> int:
+    if not touched_partitions:
+        print("Post-ingest optimize: no touched partitions to optimize.")
+        return 0
+
+    print("\nPost-ingest optimize:")
+    z_order_cols = [s.strip() for s in zorder.split(",") if s.strip()] if zorder else None
+    optimize_failures = 0
+
+    for table_name in sorted(touched_partitions.keys()):
+        repo = BaseDeltaRepository(
+            get_table_path(table_name),
+            partition_by=TABLE_PARTITIONS.get(table_name),
+        )
+        touched = sorted(
+            touched_partitions[table_name],
+            key=lambda item: (item[0], item[1].isoformat()),
+        )
+        for exchange, partition_date in touched:
+            filters = {"exchange": exchange, "date": partition_date}
+            try:
+                metrics = repo.optimize_partition(
+                    filters=filters,
+                    target_file_size=target_file_size,
+                    z_order=z_order_cols,
+                )
+                considered = metrics.get("totalConsideredFiles", 0) if metrics else 0
+                if considered == 0:
+                    print(
+                        f"- {table_name} exchange={exchange} date={partition_date}: nothing to optimize"
+                    )
+                    continue
+
+                print(
+                    f"- {table_name} exchange={exchange} date={partition_date}: "
+                    f"removed={metrics.get('numFilesRemoved')}, "
+                    f"added={metrics.get('numFilesAdded')}, "
+                    f"considered={metrics.get('totalConsideredFiles')}"
+                )
+            except Exception as exc:
+                optimize_failures += 1
+                print(
+                    f"- {table_name} exchange={exchange} date={partition_date}: optimize failed: {exc}"
+                )
+
+    return optimize_failures
 
 
 def cmd_ingest_discover(args: argparse.Namespace) -> int:
@@ -109,6 +208,7 @@ def cmd_ingest_run(args: argparse.Namespace) -> int:
     success_count = 0
     failed_count = 0
     quarantined_count = 0
+    touched_partitions: dict[str, set[tuple[str, date]]] = {}
 
     # Group files by (data_type, interval) for klines, or just data_type for others
     files_by_key: dict[tuple, list] = {}
@@ -171,6 +271,15 @@ def cmd_ingest_run(args: argparse.Namespace) -> int:
             else:
                 status = "success"
                 success_count += 1
+                table_name = _resolve_target_table_name(file_meta)
+                partition_filters = _extract_partition_filters(file_meta)
+                if table_name in TABLE_PARTITIONS and partition_filters is not None:
+                    exchange = partition_filters.get("exchange")
+                    partition_date = partition_filters.get("date")
+                    if isinstance(exchange, str) and isinstance(partition_date, date):
+                        touched_partitions.setdefault(table_name, set()).add(
+                            (exchange, partition_date)
+                        )
 
             manifest_repo.update_status(file_id, status, file_meta, result)
 
@@ -189,4 +298,15 @@ def cmd_ingest_run(args: argparse.Namespace) -> int:
         f"{quarantined_count} quarantined"
     )
     print(summary)
-    return 0 if failed_count == 0 else 1
+
+    optimize_failures = 0
+    if args.optimize_after_ingest and success_count > 0:
+        optimize_failures = _run_post_ingest_optimize(
+            touched_partitions,
+            target_file_size=args.optimize_target_file_size,
+            zorder=args.optimize_zorder,
+        )
+        if optimize_failures > 0:
+            print(f"Post-ingest optimize completed with {optimize_failures} failure(s).")
+
+    return 0 if failed_count == 0 and optimize_failures == 0 else 1

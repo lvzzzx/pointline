@@ -457,6 +457,9 @@ pointline bronze ingest [options]
 - `--validate`: Run sampled post-ingest validation
 - `--validate-sample-size`: Sample size for post-ingest validation (default: 2000)
 - `--validate-seed`: Random seed for sampled validation (default: 0)
+- `--optimize-after-ingest`: Run `delta optimize` on touched partitions after successful ingestion
+- `--optimize-zorder`: Optional comma-separated Z-order columns for post-ingest optimize
+- `--optimize-target-file-size`: Optional target file size in bytes for post-ingest optimize
 
 **Examples:**
 
@@ -493,6 +496,16 @@ for date in 2024-05-{01..31}; do
     --data-type trades \
     --glob "exchange=binance-futures/type=trades/date=$date/**/*.csv.gz"
 done
+```
+
+**Ingest + optimize touched partitions:**
+```bash
+pointline bronze ingest \
+  --vendor tardis \
+  --data-type trades \
+  --glob "exchange=binance-futures/type=trades/date=2024-05-01/**/*.csv.gz" \
+  --optimize-after-ingest \
+  --optimize-zorder "symbol_id,ts_local_us"
 ```
 
 ---

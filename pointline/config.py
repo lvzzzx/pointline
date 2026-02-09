@@ -132,12 +132,11 @@ STORAGE_OPTIONS = {
 
 # Exchange Registry
 # Maps exchange names (as used by Tardis API) to internal exchange_id (u16)
-# IDs should be stable - do not reassign existing IDs
-# NOTE: Existing IDs (1-3) are preserved for backward compatibility
+# IDs should be stable within the active local deployment.
 EXCHANGE_MAP = {
-    # Major Spot Exchanges (preserving existing IDs)
+    # Major Spot Exchanges
     "binance": 1,
-    "binance-futures": 2,  # Preserved from original
+    "binance-futures": 2,
     "coinbase": 3,
     # Additional Spot Exchanges
     "kraken": 4,

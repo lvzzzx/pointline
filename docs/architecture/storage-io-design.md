@@ -1,128 +1,109 @@
-# Storage-IO Architecture (Delta Lake + Polars)
+# Storage-IO Architecture (Local Delta + Polars)
 
-This document defines a storage-agnostic architecture for table logic and a Delta‑RS IO layer. It keeps `pointline/dim_symbol.py` pure and establishes a repeatable pattern for adding new tables.
+This document defines the storage architecture for Pointline on one local machine.
 
-## Goals
-- Keep domain logic testable without storage dependencies.
-- Isolate Delta‑RS specifics in a single IO layer.
-- Make new tables easy to add with minimal boilerplate.
+Constraints:
+- local filesystem only
+- Delta Lake via `delta-rs`
+- no backward compatibility requirement
 
-## Layered Design
+---
 
-### 1) Domain (Pure Table Logic)
-**Location:** `pointline/<table>.py`
-- Owns schema, validation, and transformations.
-- Operates on `polars.DataFrame` only.
-- No file paths or Delta imports.
+## 1) Layering Model
 
-Example: `pointline/dim_symbol.py` provides SCD2 rules and schema validation.
+### Domain layer
+Location: `pointline/tables/*` and pure transformation modules.
 
-### 2) Service (Orchestration)
-**Location:** `pointline/services/<table>_service.py`
-- Calls domain functions in the correct order.
-- Chooses read/write strategy (overwrite vs merge).
-- Contains no storage details beyond the repo interface.
+Rules:
+- pure Polars logic
+- schema/validation/transformation only
+- no filesystem paths
+- no Delta write/read side effects
 
-### 3) IO Adapter (Storage)
-**Location:** `pointline/io/delta_<table>_repo.py`
-- Reads/writes using Delta‑RS.
-- Owns table path and physical layout.
-- Exposes a small interface to services.
+### Service layer
+Location: `pointline/services/*`
 
-## Interfaces
+Rules:
+- orchestrates ingestion/update flows
+- owns sequencing (read -> transform -> validate -> write)
+- depends on repository interfaces, not storage internals
 
-### Repository Protocol (Storage‑Agnostic)
-**Location:** `pointline/io/protocols.py`
-- Define what a table repository must implement.
-- Reused by all tables.
+### IO layer
+Location: `pointline/io/*`
 
-```python
-from typing import Protocol
-import polars as pl
+Rules:
+- owns Delta read/write/merge/maintenance calls
+- owns physical layout and partition details
+- converts Polars <-> Arrow as needed
 
-class TableRepository(Protocol):
-    def read_all(self) -> pl.DataFrame: ...
-    def write_full(self, df: pl.DataFrame) -> None: ...
-    def merge(self, df: pl.DataFrame, keys: list[str]) -> None: ...
-```
+---
 
-## Data Flow Example (dim_symbol)
+## 2) Repository Interfaces
 
-1. `DimSymbolService.update(updates)`
-2. `repo.read_all()`
-3. `scd2_upsert(current, updates)` in `pointline/dim_symbol.py`
-4. `repo.write_full(updated)` (deterministic rebuild) or `repo.merge(...)`
+Core repository protocol should stay small and explicit:
+- `read_all()`
+- `write_full(df)`
+- `append(df)`
+- `merge(df, keys)`
+- maintenance operations (`optimize_partition`, `vacuum`) where applicable
 
-## Delta‑RS IO Behavior
-- **Overwrite** is preferred for deterministic rebuilds.
-- **Merge** is optional for incremental updates.
-- IO layer converts between Polars and Arrow and handles Delta‑RS calls.
+Ingestion-specific protocols:
+- `BronzeSource`: discover local files
+- `IngestionManifestRepository`: resolve `file_id`, pending filtering, status updates
 
-## Adding a New Table
-For a new table (e.g., `trades`):
-1. Create `pointline/trades.py` with schema + validation.
-2. Create `pointline/services/trades_service.py` with read → transform → write.
-3. Create `pointline/io/delta_trades_repo.py` with Delta‑RS read/write.
-4. Register table paths in `pointline/config.py`.
+---
 
-This keeps the pattern consistent and the domain layer reusable.
+## 3) Local Path Contract
 
-## Configuration
-**Location:** `pointline/config.py`
-- Central place for table paths and storage settings.
-- Example: `TABLE_PATHS = {"dim_symbol": "/lake/silver/dim_symbol"}`
+All table paths resolve from `LAKE_ROOT` (config/env).
 
-## Ingestion & Manifest Interfaces
-For the ingestion pipeline (Bronze → Silver), we separate **scanning** files from **tracking** their state.
+Avoid hardcoded `/lake/...` assumptions in runtime logic. Use path helpers from:
+- `/Users/zjx/.codex/worktrees/62ef/pointline/pointline/config.py`
 
-### 1. BronzeSource (Scanner)
-Scans physical storage (Local, S3, etc.) to find candidate files. Does not know about ingestion state.
+Recommended structure:
+- `<LAKE_ROOT>/bronze/...`
+- `<LAKE_ROOT>/silver/...`
 
-```python
-@dataclass
-class BronzeFileMetadata:
-    vendor: str
-    data_type: str
-    bronze_file_path: str
-    file_size_bytes: int
-    last_modified_ts: int
-    sha256: str
-    date: date | None = None
-    interval: str | None = None
-    extra: dict[str, Any] | None = None
+---
 
-class BronzeSource(Protocol):
-    def list_files(self, glob_pattern: str) -> Iterator[BronzeFileMetadata]:
-        """Scans storage for files matching the pattern."""
-        ...
-```
+## 4) Write Semantics
 
-### 2. IngestionManifestRepository (State Ledger)
-Manages the `silver.ingest_manifest` table. Handles skip logic and `file_id` assignment.
+Preferred defaults:
+- overwrite for deterministic table rebuilds
+- append for event ingestion
+- native Delta merge for keyed upserts
 
-```python
-class IngestionManifestRepository(Protocol):
-    def resolve_file_id(self, meta: BronzeFileMetadata) -> int:
-        """Gets existing ID or mints a new one for a file."""
-        ...
+Manifest-specific requirement:
+- preserve immutable discovery metadata (for example `created_at_us`) when updating status rows
 
-    def filter_pending(self, candidates: list[BronzeFileMetadata]) -> list[BronzeFileMetadata]:
-        """Returns only files that need processing (efficient batch anti-join)."""
-        ...
+---
 
-    def update_status(self, file_id: int, status: str, meta: BronzeFileMetadata, result=None) -> None:
-        """Records success/failure."""
-        ...
-```
+## 5) Partition and File Management
 
-### Workflow
-1. **Discover**: `source.list_files(...)` → `all_files`
-2. **Filter**: `manifest.filter_pending(all_files)` → `todo_files`
-3. **Loop**:
-   - `file_id = manifest.resolve_file_id(file)`
-   - `transform_and_write(file, file_id)`
-   - `manifest.update_status(...)`
+Default partitioning:
+- `exchange`, `date` for high-volume event tables
 
-## Non‑Goals
-- No storage logic in domain modules.
-- No cross‑table orchestration (each service handles one table).
+Maintenance:
+- optimize compaction and optional z-ordering for hot partitions
+- vacuum under explicit retention policy
+
+On localhost, these remain explicit operational steps; no distributed scheduler is assumed.
+
+---
+
+## 6) Failure and Recovery Semantics
+
+Required behavior:
+- ingest status is durably recorded per file
+- failed/quarantined files can be retried without losing lineage
+- successful files are skipped by manifest identity key
+
+Because this is a clean-break architecture, failed historical formats are not migrated automatically.
+
+---
+
+## 7) Non-Goals
+
+- cloud object store abstractions in core flow
+- multi-engine execution backends
+- compatibility shims for older table contracts
