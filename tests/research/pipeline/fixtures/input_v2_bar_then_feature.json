@@ -1,0 +1,64 @@
+{
+  "schema_version": "2.0",
+  "request_id": "fixture-bar-001",
+  "mode": "bar_then_feature",
+  "timeline": {"time_col": "ts_local_us", "timezone": "UTC"},
+  "sources": [
+    {
+      "name": "trades",
+      "inline_rows": [
+        {
+          "ts_local_us": 10000000,
+          "exchange_id": 1,
+          "symbol_id": 12345,
+          "qty_int": 100,
+          "px_int": 50000,
+          "side": 0,
+          "file_id": 1,
+          "file_line_number": 1
+        },
+        {
+          "ts_local_us": 70000000,
+          "exchange_id": 1,
+          "symbol_id": 12345,
+          "qty_int": 200,
+          "px_int": 50010,
+          "side": 1,
+          "file_id": 1,
+          "file_line_number": 2
+        }
+      ]
+    }
+  ],
+  "spine": {"type": "clock", "step_ms": 60000, "start_ts_us": 0, "end_ts_us": 120000000},
+  "operators": [
+    {
+      "name": "volume",
+      "output_name": "volume",
+      "stage": "aggregate_then_feature",
+      "source_column": "qty_int",
+      "agg": "sum",
+      "required_columns": [],
+      "mode_allowlist": ["HFT", "MFT", "LFT"],
+      "pit_policy": {"feature_direction": "backward_only"},
+      "determinism_policy": {"required_sort": ["exchange_id", "symbol_id", "ts_local_us"], "stateful": false},
+      "impl_ref": "pointline.research.resample.builtins.agg_sum",
+      "version": "2.0"
+    }
+  ],
+  "labels": [
+    {
+      "name": "future_volume_1",
+      "source_column": "volume",
+      "direction": "forward",
+      "horizon_bars": 1
+    }
+  ],
+  "evaluation": {"metrics": ["row_count"], "split_method": "fixed"},
+  "constraints": {
+    "pit_timeline": "ts_local_us",
+    "forbid_lookahead": true,
+    "cost_model": {"fees_bps": 1.0, "slippage_bps": 2.0}
+  },
+  "artifacts": {"include_artifacts": false}
+}

@@ -1,0 +1,204 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://pointline.dev/schemas/quant_research_output.v2.json",
+  "title": "QuantResearchOutputV2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "request_id",
+    "run",
+    "resolved_plan",
+    "data_feasibility",
+    "quality_gates",
+    "results",
+    "decision",
+    "artifacts"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "2.0"
+    },
+    "request_id": {
+      "type": "string",
+      "minLength": 3
+    },
+    "run": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["run_id", "started_at", "completed_at", "status", "mode"],
+      "properties": {
+        "run_id": { "type": "string", "minLength": 3 },
+        "started_at": { "type": "string", "format": "date-time" },
+        "completed_at": { "type": "string", "format": "date-time" },
+        "status": { "type": "string", "enum": ["success", "partial", "failed"] },
+        "mode": {
+          "type": "string",
+          "enum": ["event_joined", "tick_then_bar", "bar_then_feature"]
+        }
+      }
+    },
+    "resolved_plan": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode", "timeline", "spine", "operators", "config_hash"],
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": ["event_joined", "tick_then_bar", "bar_then_feature"]
+        },
+        "timeline": {
+          "type": "object"
+        },
+        "spine": {
+          "type": "object"
+        },
+        "operators": {
+          "type": "array",
+          "items": { "type": "object" }
+        },
+        "config_hash": {
+          "type": "string",
+          "minLength": 8
+        }
+      }
+    },
+    "data_feasibility": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["coverage_checks", "probe_checks"],
+      "properties": {
+        "coverage_checks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["source", "available"],
+            "properties": {
+              "source": { "type": "string" },
+              "available": { "type": "boolean" },
+              "reason": { "type": ["string", "null"] }
+            }
+          }
+        },
+        "probe_checks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["source", "row_count", "passed"],
+            "properties": {
+              "source": { "type": "string" },
+              "row_count": { "type": "integer", "minimum": 0 },
+              "passed": { "type": "boolean" }
+            }
+          }
+        }
+      }
+    },
+    "quality_gates": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "lookahead_check",
+        "pit_ordering_check",
+        "partition_safety_check",
+        "reproducibility_check",
+        "failed_gates"
+      ],
+      "properties": {
+        "lookahead_check": {
+          "type": "object",
+          "required": ["passed", "evidence"],
+          "properties": {
+            "passed": { "type": "boolean" },
+            "evidence": { "type": "string" }
+          }
+        },
+        "pit_ordering_check": {
+          "type": "object",
+          "required": ["passed", "violations", "timeline"],
+          "properties": {
+            "passed": { "type": "boolean" },
+            "violations": { "type": "integer", "minimum": 0 },
+            "timeline": { "type": "string" }
+          }
+        },
+        "partition_safety_check": {
+          "type": "object",
+          "required": ["passed", "violations"],
+          "properties": {
+            "passed": { "type": "boolean" },
+            "violations": { "type": "integer", "minimum": 0 }
+          }
+        },
+        "reproducibility_check": {
+          "type": "object",
+          "required": ["passed", "input_hash"],
+          "properties": {
+            "passed": { "type": "boolean" },
+            "input_hash": { "type": "string", "minLength": 8 }
+          }
+        },
+        "failed_gates": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "results": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["row_count", "columns", "metrics"],
+      "properties": {
+        "row_count": { "type": "integer", "minimum": 0 },
+        "columns": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "metrics": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name", "value"],
+            "properties": {
+              "name": { "type": "string" },
+              "value": { "type": "number" }
+            }
+          }
+        },
+        "preview": {
+          "type": "array",
+          "items": { "type": "object" }
+        }
+      }
+    },
+    "decision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "rationale", "next_actions"],
+      "properties": {
+        "status": { "type": "string", "enum": ["go", "revise", "reject"] },
+        "rationale": { "type": "string", "minLength": 1 },
+        "risks": { "type": "array", "items": { "type": "string" } },
+        "next_actions": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "artifacts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["config_hash", "paths"],
+      "properties": {
+        "config_hash": { "type": "string", "minLength": 8 },
+        "paths": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "gate_metrics": {
+          "type": "object"
+        }
+      }
+    }
+  }
+}

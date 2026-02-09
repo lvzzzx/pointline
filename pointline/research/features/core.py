@@ -4,22 +4,29 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Literal
 
 import polars as pl
 
 from pointline.dim_symbol import read_dim_symbol_table
 from pointline.research import core as research_core
+from pointline.research.spines import get_builder_by_config
+from pointline.research.spines.base import SpineBuilderConfig
 from pointline.types import TimestampInput
 
 
 @dataclass(frozen=True)
 class EventSpineConfig:
-    """Configuration for event spine construction."""
+    """Configuration for event spine construction.
 
-    mode: Literal["clock", "trades"] = "clock"
-    step_ms: int = 1000
-    max_rows: int = 5_000_000
+    Usage:
+        EventSpineConfig(builder_config=ClockSpineConfig(step_ms=1000))
+        EventSpineConfig(builder_config=VolumeBarConfig(volume_threshold=1000.0))
+
+    Args:
+        builder_config: Builder-specific configuration (required)
+    """
+
+    builder_config: SpineBuilderConfig
 
 
 def _ensure_symbol_ids(symbol_id: int | Iterable[int]) -> list[int]:
@@ -127,29 +134,49 @@ def build_event_spine(
     symbol_id: int | Iterable[int],
     start_ts_us: TimestampInput,
     end_ts_us: TimestampInput,
-    config: EventSpineConfig | None = None,
+    config: EventSpineConfig,
 ) -> pl.LazyFrame:
-    """Build an event spine with deterministic ordering."""
-    if config is None:
-        config = EventSpineConfig()
+    """Build an event spine with deterministic ordering.
 
-    if config.mode == "clock":
-        return build_clock_spine(
-            symbol_id=symbol_id,
-            start_ts_us=start_ts_us,
-            end_ts_us=end_ts_us,
-            step_ms=config.step_ms,
-            max_rows=config.max_rows,
+    This function delegates to registered spine builders for extensibility.
+
+    Args:
+        symbol_id: Single symbol_id or list of symbol_ids
+        start_ts_us: Start timestamp (microseconds, UTC, or TimestampInput)
+        end_ts_us: End timestamp (microseconds, UTC, or TimestampInput)
+        config: EventSpineConfig with builder_config
+
+    Returns:
+        LazyFrame with (ts_local_us, exchange_id, symbol_id)
+        sorted by (exchange_id, symbol_id, ts_local_us)
+
+    Example:
+        from pointline.research.features import EventSpineConfig, build_event_spine
+        from pointline.research.spines import VolumeBarConfig
+
+        config = EventSpineConfig(
+            builder_config=VolumeBarConfig(volume_threshold=1000.0)
         )
-
-    if config.mode == "trades":
-        return build_trades_spine(
-            symbol_id=symbol_id,
-            start_ts_us=start_ts_us,
-            end_ts_us=end_ts_us,
+        spine = build_event_spine(
+            symbol_id=12345,
+            start_ts_us="2024-05-01",
+            end_ts_us="2024-05-02",
+            config=config,
         )
+    """
+    # Normalize timestamps
+    start_us, end_us = _normalize_ts_inputs(start_ts_us, end_ts_us)
 
-    raise ValueError(f"Unsupported spine mode: {config.mode}")
+    # Get builder from config type
+    builder = get_builder_by_config(config.builder_config)
+
+    # Delegate to builder
+    return builder.build_spine(
+        symbol_id=symbol_id,
+        start_ts_us=start_us,
+        end_ts_us=end_us,
+        config=config.builder_config,
+    )
 
 
 def pit_align(

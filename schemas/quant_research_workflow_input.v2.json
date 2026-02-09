@@ -1,0 +1,510 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://pointline.dev/schemas/quant_research_workflow_input.v2.json",
+  "title": "QuantResearchWorkflowInputV2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "request_id",
+    "workflow_id",
+    "base_sources",
+    "stages",
+    "final_stage_id",
+    "constraints",
+    "artifacts"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "2.0"
+    },
+    "request_id": {
+      "type": "string",
+      "minLength": 3
+    },
+    "workflow_id": {
+      "type": "string",
+      "minLength": 3
+    },
+    "base_sources": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name"],
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "table": {
+            "type": "string"
+          },
+          "symbol_id": {
+            "oneOf": [
+              { "type": "integer" },
+              {
+                "type": "array",
+                "items": { "type": "integer" },
+                "minItems": 1
+              }
+            ]
+          },
+          "start_ts_us": {
+            "oneOf": [{ "type": "integer" }, { "type": "string" }]
+          },
+          "end_ts_us": {
+            "oneOf": [{ "type": "integer" }, { "type": "string" }]
+          },
+          "columns": {
+            "type": "array",
+            "items": { "type": "string", "minLength": 1 },
+            "uniqueItems": true
+          },
+          "inline_rows": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          }
+        },
+        "anyOf": [
+          { "required": ["table", "symbol_id", "start_ts_us", "end_ts_us"] },
+          { "required": ["inline_rows"] }
+        ]
+      }
+    },
+    "stages": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "stage_id",
+          "mode",
+          "timeline",
+          "spine",
+          "sources",
+          "operators",
+          "labels",
+          "evaluation",
+          "constraints",
+          "outputs"
+        ],
+        "properties": {
+          "stage_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "mode": {
+            "type": "string",
+            "enum": ["event_joined", "tick_then_bar", "bar_then_feature"]
+          },
+          "timeline": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["time_col", "timezone"],
+            "properties": {
+              "time_col": {
+                "type": "string",
+                "enum": ["ts_local_us", "ts_exch_us"],
+                "default": "ts_local_us"
+              },
+              "timezone": {
+                "type": "string",
+                "minLength": 1,
+                "default": "UTC"
+              }
+            }
+          },
+          "spine": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["type"],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": ["clock", "trades", "volume", "dollar"]
+              },
+              "step_ms": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "start_ts_us": {
+                "type": "integer"
+              },
+              "end_ts_us": {
+                "type": "integer"
+              },
+              "source": {
+                "type": "string"
+              },
+              "max_rows": {
+                "type": "integer",
+                "minimum": 1,
+                "default": 5000000
+              }
+            }
+          },
+          "sources": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["name", "ref"],
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "ref": {
+                  "type": "string",
+                  "pattern": "^(base:[A-Za-z0-9_.-]+|artifact:[A-Za-z0-9_.-]+:[A-Za-z0-9_.-]+)$"
+                },
+                "columns": {
+                  "type": "array",
+                  "items": { "type": "string", "minLength": 1 },
+                  "uniqueItems": true
+                }
+              }
+            }
+          },
+          "operators": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "name",
+                "stage",
+                "required_columns",
+                "mode_allowlist",
+                "pit_policy",
+                "determinism_policy",
+                "impl_ref",
+                "version"
+              ],
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "stage": {
+                  "type": "string",
+                  "enum": [
+                    "aggregate_then_feature",
+                    "feature_then_aggregate",
+                    "bar_feature",
+                    "event_feature"
+                  ]
+                },
+                "source": {
+                  "type": "string"
+                },
+                "source_column": {
+                  "type": "string"
+                },
+                "agg": {
+                  "type": "string"
+                },
+                "output_name": {
+                  "type": "string"
+                },
+                "feature_rollups": {
+                  "type": "array",
+                  "minItems": 1,
+                  "uniqueItems": true,
+                  "items": {
+                    "type": "string",
+                    "pattern": "^[a-z][a-z0-9_]{1,63}$"
+                  }
+                },
+                "feature_rollup_params": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": "object",
+                    "additionalProperties": true
+                  }
+                },
+                "required_columns": {
+                  "type": "array",
+                  "items": { "type": "string", "minLength": 1 },
+                  "uniqueItems": true
+                },
+                "mode_allowlist": {
+                  "type": "array",
+                  "items": { "type": "string", "enum": ["HFT", "MFT", "LFT"] },
+                  "minItems": 1,
+                  "uniqueItems": true
+                },
+                "pit_policy": {
+                  "type": "object",
+                  "additionalProperties": true
+                },
+                "determinism_policy": {
+                  "type": "object",
+                  "additionalProperties": true
+                },
+                "impl_ref": {
+                  "type": "string",
+                  "minLength": 3
+                },
+                "version": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "semantic_type": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "context_risk": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "name",
+                "plugin",
+                "required_columns",
+                "params",
+                "mode_allowlist",
+                "pit_policy",
+                "determinism_policy",
+                "version"
+              ],
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "plugin": {
+                  "type": "string",
+                  "pattern": "^[a-z][a-z0-9_]{1,63}$"
+                },
+                "required_columns": {
+                  "type": "array",
+                  "items": { "type": "string", "minLength": 1 },
+                  "uniqueItems": true
+                },
+                "params": {
+                  "type": "object",
+                  "additionalProperties": true
+                },
+                "mode_allowlist": {
+                  "type": "array",
+                  "items": { "type": "string", "enum": ["HFT", "MFT", "LFT"] },
+                  "minItems": 1,
+                  "uniqueItems": true
+                },
+                "pit_policy": {
+                  "type": "object",
+                  "additionalProperties": true
+                },
+                "determinism_policy": {
+                  "type": "object",
+                  "additionalProperties": true
+                },
+                "impl_ref": {
+                  "type": "string",
+                  "minLength": 3
+                },
+                "version": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            }
+          },
+          "labels": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["name", "source_column", "direction", "horizon_bars"],
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "source_column": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "direction": {
+                  "type": "string",
+                  "enum": ["forward", "backward"]
+                },
+                "horizon_bars": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "group_by": {
+                  "type": "array",
+                  "items": { "type": "string" }
+                }
+              }
+            }
+          },
+          "evaluation": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["metrics", "split_method"],
+            "properties": {
+              "metrics": {
+                "type": "array",
+                "minItems": 1,
+                "items": { "type": "string", "minLength": 1 },
+                "uniqueItems": true
+              },
+              "split_method": {
+                "type": "string",
+                "enum": ["fixed", "rolling", "walk_forward"]
+              }
+            }
+          },
+          "constraints": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["pit_timeline", "forbid_lookahead", "cost_model"],
+            "properties": {
+              "pit_timeline": {
+                "type": "string",
+                "enum": ["ts_local_us", "ts_exch_us"],
+                "default": "ts_local_us"
+              },
+              "forbid_lookahead": {
+                "type": "boolean",
+                "default": true
+              },
+              "cost_model": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["fees_bps", "slippage_bps"],
+                "properties": {
+                  "fees_bps": { "type": "number", "minimum": 0 },
+                  "slippage_bps": { "type": "number", "minimum": 0 },
+                  "funding_included": { "type": "boolean", "default": false }
+                }
+              }
+            }
+          },
+          "outputs": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["name"],
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "kind": {
+                  "type": "string",
+                  "enum": ["frame"],
+                  "default": "frame"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "context_risk": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "plugin",
+          "required_columns",
+          "params",
+          "mode_allowlist",
+          "pit_policy",
+          "determinism_policy",
+          "version"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "plugin": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]{1,63}$"
+          },
+          "required_columns": {
+            "type": "array",
+            "items": { "type": "string", "minLength": 1 },
+            "uniqueItems": true
+          },
+          "params": {
+            "type": "object",
+            "additionalProperties": true
+          },
+          "mode_allowlist": {
+            "type": "array",
+            "items": { "type": "string", "enum": ["HFT", "MFT", "LFT"] },
+            "minItems": 1,
+            "uniqueItems": true
+          },
+          "pit_policy": {
+            "type": "object",
+            "additionalProperties": true
+          },
+          "determinism_policy": {
+            "type": "object",
+            "additionalProperties": true
+          },
+          "impl_ref": {
+            "type": "string",
+            "minLength": 3
+          },
+          "version": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "final_stage_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "constraints": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["fail_fast"],
+      "properties": {
+        "fail_fast": {
+          "const": true
+        }
+      }
+    },
+    "artifacts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["include_artifacts"],
+      "properties": {
+        "include_artifacts": {
+          "type": "boolean",
+          "default": true
+        },
+        "output_dir": {
+          "type": "string"
+        },
+        "persist_stage_snapshots": {
+          "type": "boolean",
+          "default": false
+        }
+      }
+    }
+  }
+}
