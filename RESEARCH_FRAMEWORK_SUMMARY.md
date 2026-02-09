@@ -92,6 +92,69 @@ Runnable end-to-end example (11 steps):
 
 **Output**: Parquet file with ~20 features per volume bar
 
+### 5. Funding Rate Features Guide ⭐ NEW
+**File**: `docs/guides/funding-rate-features-mft.md`
+
+Complete guide for building funding rate features for crypto perpetual futures:
+
+**Topics Covered**:
+- Funding rate mechanics (perpetual futures basis)
+- Feature engineering patterns (carry, surprise, pressure)
+- Multi-source aggregation (trades + funding data)
+- Cross-feature engineering (flow × funding interaction)
+- IC benchmarks and regime considerations
+- Production considerations (settlement times, staleness)
+
+**Feature Patterns**:
+1. **Funding Carry**: Annualized funding rate (mean reversion signal)
+2. **Funding Surprise**: Actual vs predicted (shock detection)
+3. **Funding-OI Pressure**: Liquidation risk indicator
+4. **Flow-Funding Interaction**: Combined order flow + funding signal
+
+**IC Benchmarks** (Binance BTCUSDT-PERP):
+- `funding_surprise`: IC = 0.06 (p<0.001)
+- `flow_funding_interaction`: IC = 0.09 (p<0.001)
+- `funding_carry_annual`: IC = 0.03 (p<0.05)
+
+### 6. Funding Features Working Example ⭐ NEW
+**File**: `examples/crypto_mft_funding_features_example.py`
+
+Demonstrates multi-source aggregation - combining trades + funding data:
+
+```python
+# Key innovation: Join features from multiple sources
+trade_features = aggregate(assign_to_buckets(trades, spine))
+funding_features = aggregate(assign_to_buckets(funding, spine))
+features = trade_features.join(funding_features, on="bucket_start")
+
+# Derived features
+features = features.with_columns([
+    (pl.col("funding_close") * 365 * 3).alias("funding_carry_annual"),
+    (pl.col("flow_imbalance") * pl.col("funding_close")).alias("flow_funding_interaction"),
+])
+```
+
+**Output**: Parquet file with ~30 features (trades + funding + cross-features)
+
+### 7. Unit Tests for Crypto MFT Aggregations ⭐ NEW
+**File**: `tests/research/resample/aggregations/test_crypto_mft.py`
+
+Comprehensive test coverage for 9 crypto_mft aggregations:
+
+```python
+class TestFlowImbalance:
+    def test_flow_imbalance_balanced(self):
+        # Test: 300 buy, 200 sell → imbalance = 0.2
+        ...
+
+class TestSpreadBPS:
+    def test_spread_bps_computation(self):
+        # Test: bid=50000, ask=50005 → spread = 10 bps
+        ...
+```
+
+**Coverage**: 19 tests, all passing ✓
+
 ---
 
 ## Quick Start Guide
@@ -211,10 +274,18 @@ class MyCustomAggregation(AggregationSpec):
 ## Next Steps
 
 ### Research
-- [ ] Add funding rate delta features (perpetual futures)
+- [x] **Add funding rate delta features (perpetual futures)** ✅ COMPLETE
+  - Implementation: `docs/guides/funding-rate-features-mft.md`
+  - Example: `examples/crypto_mft_funding_features_example.py`
+  - Tests: `tests/research/resample/aggregations/test_crypto_mft.py`
 - [ ] Add liquidation flow detection (aggressive unwinds)
+  - **Blocker**: No liquidations table available yet
+  - **Workaround**: Build proxy detector using aggressive trade flow
 - [ ] Test multi-timeframe features (50 BTC + 500 BTC bars)
+  - Infrastructure ready (dual-spine support exists)
+  - Needs validation experiment
 - [ ] Implement cross-exchange arbitrage signals
+  - Requires multi-exchange spine builder
 
 ### Engineering
 - [ ] Implement observability (execution tracing)
@@ -234,19 +305,25 @@ class MyCustomAggregation(AggregationSpec):
 
 ### Documentation
 - `docs/architecture/research-framework-deep-review.md` - Architecture deep dive
-- `docs/guides/volume-bar-features-crypto-mft.md` - Practical guide
+- `docs/guides/volume-bar-features-crypto-mft.md` - Practical guide (trade features)
+- `docs/guides/funding-rate-features-mft.md` - Funding rate guide ⭐ NEW
+- `docs/guides/volume-bar-quick-reference.md` - Quick reference cheat sheet
 - `docs/guides/researcher-guide.md` - General researcher guide
 - `docs/architecture/north-star-research-architecture.md` - Design principles
 
 ### Code
 - `pointline/research/` - Research framework modules
-- `pointline/research/resample/aggregations/crypto_mft.py` - Custom aggregations
-- `examples/crypto_mft_volume_bars_example.py` - Working example
+- `pointline/research/resample/aggregations/crypto_mft.py` - Custom aggregations (9 functions) ⭐ UPDATED
+- `pointline/research/resample/aggregations/derivatives.py` - Funding/OI aggregations (14 functions)
+- `examples/crypto_mft_volume_bars_example.py` - Trade features example
+- `examples/crypto_mft_funding_features_example.py` - Funding features example ⭐ NEW
 - `examples/query_api_example.py` - Query API basics
 
 ### Tests
 - `tests/research/pipeline/test_pipeline_north_star_acceptance.py` - Quality gate tests
 - `tests/research/resample/test_integration_end_to_end.py` - Integration tests
+- `tests/research/resample/aggregations/test_crypto_mft.py` - Crypto MFT tests (19 tests) ⭐ NEW
+- `tests/research/resample/aggregations/test_custom_aggregations.py` - Custom aggregation tests
 
 ---
 
