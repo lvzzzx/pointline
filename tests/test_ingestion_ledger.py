@@ -1,5 +1,6 @@
 from datetime import date
 
+import polars as pl
 import pytest
 
 from pointline.io.delta_manifest_repo import DeltaManifestRepository
@@ -169,3 +170,27 @@ def test_filter_pending_without_sha_uses_metadata_fallback(manifest_repo):
         sha256="",
     )
     assert len(manifest_repo.filter_pending([changed])) == 1
+
+
+def test_update_status_preserves_created_at_us(manifest_repo):
+    """Status updates must not null-out the discovery timestamp."""
+    meta = BronzeFileMetadata(
+        vendor="tardis",
+        data_type="quotes",
+        date=date(2024, 1, 4),
+        bronze_file_path="path/to/preserve-created-at",
+        file_size_bytes=111,
+        last_modified_ts=4000,
+        sha256="f" * 64,
+    )
+
+    file_id = manifest_repo.resolve_file_id(meta)
+    before = manifest_repo.read_all().filter(pl.col("file_id") == file_id)
+    created_before = before.item(0, "created_at_us")
+    assert created_before is not None
+
+    manifest_repo.update_status(file_id, "success", meta, IngestionResult(10, 100, 200))
+
+    after = manifest_repo.read_all().filter(pl.col("file_id") == file_id)
+    created_after = after.item(0, "created_at_us")
+    assert created_after == created_before

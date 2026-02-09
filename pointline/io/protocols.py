@@ -86,6 +86,36 @@ class BronzeLayoutSpec:
     normalize_metadata: Callable[[dict[str, Any], dict[str, Any]], BronzeFileMetadata]
 
 
+@dataclass
+class ApiSnapshotSpec:
+    """Vendor dataset contract for API snapshot capture/replay."""
+
+    dataset: str
+    data_type: str
+    target_table: str
+    partition_keys: tuple[str, ...] = ()
+    default_glob: str = ""
+
+
+@dataclass
+class ApiCaptureRequest:
+    """Capture request passed to vendor plugins."""
+
+    params: dict[str, Any]
+    partitions: dict[str, str] | None = None
+    captured_at_us: int | None = None
+
+
+@dataclass
+class ApiReplayOptions:
+    """Replay options passed to vendor plugins when building table updates."""
+
+    rebuild: bool = False
+    effective_ts_us: int | None = None
+    partitions: dict[str, str] | None = None
+    request: dict[str, Any] | None = None
+
+
 @runtime_checkable
 class BronzeSource(Protocol):
     """Abstraction for a file system scanner."""

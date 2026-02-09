@@ -11,7 +11,13 @@ from typing import Any
 import polars as pl
 
 from pointline.config import normalize_exchange
-from pointline.io.protocols import BronzeFileMetadata, BronzeLayoutSpec
+from pointline.io.protocols import (
+    ApiCaptureRequest,
+    ApiReplayOptions,
+    ApiSnapshotSpec,
+    BronzeFileMetadata,
+    BronzeLayoutSpec,
+)
 
 
 class Quant360Vendor:
@@ -22,6 +28,7 @@ class Quant360Vendor:
     supports_parsers = True
     supports_download = False  # No download API, data delivered as archives
     supports_prehooks = True  # Needs reorganization from .7z archives
+    supports_api_snapshots = False
 
     def get_bronze_layout_spec(self) -> BronzeLayoutSpec:
         """Get bronze layout specification for Quant360.
@@ -101,6 +108,22 @@ class Quant360Vendor:
             "l3_orders": parse_quant360_orders_csv,
             "l3_ticks": parse_quant360_ticks_csv,
         }
+
+    def get_api_snapshot_specs(self) -> dict[str, ApiSnapshotSpec]:
+        return {}
+
+    def capture_api_snapshot(
+        self, dataset: str, request: ApiCaptureRequest
+    ) -> list[dict[str, Any]]:
+        raise NotImplementedError(f"{self.name} does not support API snapshots")
+
+    def build_updates_from_snapshot(
+        self,
+        dataset: str,
+        records: list[dict[str, Any]],
+        options: ApiReplayOptions,
+    ) -> pl.DataFrame:
+        raise NotImplementedError(f"{self.name} does not support API snapshots")
 
     def read_and_parse(self, path: Path, meta: BronzeFileMetadata) -> pl.DataFrame:
         """Read bronze file and return parsed DataFrame with metadata columns."""

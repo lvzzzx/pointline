@@ -251,6 +251,16 @@ class DeltaManifestRepository(BaseDeltaRepository):
         import time
 
         processed_ts_us = int(time.time() * 1_000_000)
+        created_at_us = processed_ts_us
+        try:
+            current = pl.read_delta(self.table_path).filter(pl.col("file_id") == file_id)
+            if not current.is_empty():
+                existing_created = current.item(0, "created_at_us")
+                if existing_created is not None:
+                    created_at_us = int(existing_created)
+        except Exception:
+            # Best-effort preservation: if read fails, keep a non-null timestamp.
+            pass
 
         update_df = pl.DataFrame(
             {
@@ -263,7 +273,7 @@ class DeltaManifestRepository(BaseDeltaRepository):
                 "last_modified_ts": [meta.last_modified_ts],
                 "date": [meta.date],  # Can be NULL
                 "status": [status],
-                "created_at_us": [None],  # Preserve existing created_at_us (will be merged)
+                "created_at_us": [created_at_us],
                 "processed_at_us": [processed_ts_us],
                 "row_count": [row_count],
                 "ts_local_min_us": [min_ts],
@@ -280,7 +290,7 @@ class DeltaManifestRepository(BaseDeltaRepository):
                 "last_modified_ts": pl.Int64,
                 "date": pl.Date,  # Nullable
                 "status": pl.Utf8,
-                "created_at_us": pl.Int64,  # Nullable (preserve existing)
+                "created_at_us": pl.Int64,
                 "processed_at_us": pl.Int64,  # Nullable
                 "row_count": pl.Int64,  # Nullable
                 "ts_local_min_us": pl.Int64,  # Nullable

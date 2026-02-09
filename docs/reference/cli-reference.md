@@ -199,6 +199,9 @@ pointline symbol sync --source <api|file> [options]
 - `--effective-ts`: Unix timestamp in microseconds (default: now)
 - `--table-path`: Path to dim_symbol table (default: auto-detected)
 - `--rebuild`: Perform full history rebuild
+- `--capture-api-response`: Capture raw API response to bronze metadata before transform
+- `--capture-only`: Capture API response and exit without writing dim_symbol
+- `--capture-root`: Optional root path for capture output (default: LAKE_ROOT/bronze/tardis)
 
 **Examples:**
 
@@ -232,6 +235,15 @@ pointline symbol sync \
   --rebuild
 ```
 
+**Capture raw API metadata only:**
+```bash
+pointline symbol sync \
+  --source api \
+  --exchange binance-futures \
+  --api-key YOUR_KEY \
+  --capture-only
+```
+
 ---
 
 ### `pointline symbol sync-tushare`
@@ -248,6 +260,10 @@ pointline symbol sync-tushare --exchange <szse|sse|all> [options]
 - `--include-delisted`: Include delisted stocks
 - `--token`: Tushare API token (or set `TUSHARE_TOKEN` env var)
 - `--table-path`: Path to dim_symbol table
+- `--rebuild`: Perform full history rebuild
+- `--capture-api-response`: Capture raw API response to bronze metadata before transform
+- `--capture-only`: Capture API response and exit without writing dim_symbol
+- `--capture-root`: Optional root path for capture output (default: LAKE_ROOT/bronze/tushare)
 
 **Example:**
 ```bash
@@ -260,6 +276,12 @@ pointline symbol sync-tushare \
 pointline symbol sync-tushare \
   --exchange all \
   --include-delisted \
+  --token YOUR_TOKEN
+
+# Capture Tushare response only
+pointline symbol sync-tushare \
+  --exchange szse \
+  --capture-only \
   --token YOUR_TOKEN
 ```
 
@@ -282,6 +304,41 @@ pointline symbol sync-from-stock-basic-cn [options]
 **Example:**
 ```bash
 pointline symbol sync-from-stock-basic-cn
+```
+
+---
+
+### `pointline symbol ingest-metadata`
+
+Ingest captured `dim_symbol` metadata snapshots (from API capture files) using manifest replay semantics.
+
+**Usage:**
+```bash
+pointline symbol ingest-metadata --vendor <tardis|tushare> [options]
+```
+
+**Options:**
+- `--vendor`: Metadata vendor namespace (required)
+- `--bronze-root`: Captured metadata root (default: `LAKE_ROOT/bronze/<vendor>`)
+- `--glob`: File glob under metadata root (default: `type=dim_symbol_metadata/**/*.jsonl.gz`)
+- `--exchange`: Optional exchange partition filter
+- `--manifest-path`: Path to ingest_manifest (default: auto-detected)
+- `--table-path`: Path to dim_symbol table (default: auto-detected)
+- `--rebuild`: Apply file updates via history rebuild mode
+- `--force`: Process files even if already marked success in manifest
+- `--effective-ts`: Fallback timestamp for records missing source effective time
+
+**Example:**
+```bash
+# Replay captured Tardis metadata into dim_symbol
+pointline symbol ingest-metadata \
+  --vendor tardis \
+  --exchange binance-futures
+
+# Replay all captured Tushare metadata with rebuild mode
+pointline symbol ingest-metadata \
+  --vendor tushare \
+  --rebuild
 ```
 
 ---
@@ -328,6 +385,87 @@ pointline bronze download \
   --filename-template "exchange={exchange}/type={data_type}/date={date}/symbol={symbol}/{symbol}.csv.gz" \
   --api-key YOUR_TARDIS_API_KEY \
   --concurrency 10
+```
+
+---
+
+### `pointline bronze api-capture`
+
+Capture vendor API metadata snapshots into Bronze, and replay immediately unless `--capture-only`.
+
+**Usage:**
+```bash
+pointline bronze api-capture --vendor <vendor> --dataset <dataset> [options]
+```
+
+**Common Options:**
+- `--vendor`: Vendor namespace (`tardis`, `tushare`, `coingecko`) (required)
+- `--dataset`: Dataset contract (`dim_symbol`, `dim_asset_stats`) (required)
+- `--capture-root`: Optional capture output root (default: `LAKE_ROOT/bronze/<vendor>`)
+- `--capture-only`: Capture snapshot and skip replay
+- `--manifest-path`: Path to `ingest_manifest`
+- `--table-path`: Optional target table override for replay
+- `--exchange`: Exchange partition/filter for `dim_symbol`
+- `--rebuild`: Rebuild mode for `dim_symbol` replay
+- `--effective-ts`: Fallback `dim_symbol` timestamp for missing source effective time
+
+**Dataset-specific options:**
+- Tardis `dim_symbol`: `--symbol`, `--filter`, `--api-key`
+- Tushare `dim_symbol`: `--include-delisted`, `--token`
+- CoinGecko `dim_asset_stats`: `--mode <daily|range>`, `--date`, `--start-date`, `--end-date`, `--base-assets`, `--api-key`
+
+**Examples:**
+```bash
+# Capture + replay Tardis dim_symbol
+pointline bronze api-capture \
+  --vendor tardis \
+  --dataset dim_symbol \
+  --exchange binance-futures \
+  --api-key YOUR_TARDIS_API_KEY
+
+# Capture only CoinGecko daily dim_asset_stats snapshot
+pointline bronze api-capture \
+  --vendor coingecko \
+  --dataset dim_asset_stats \
+  --mode daily \
+  --date 2026-01-01 \
+  --capture-only
+```
+
+---
+
+### `pointline bronze api-replay`
+
+Replay captured API metadata snapshots using manifest semantics.
+
+**Usage:**
+```bash
+pointline bronze api-replay --vendor <vendor> --dataset <dataset> [options]
+```
+
+**Options:**
+- `--vendor`: Vendor namespace (required)
+- `--dataset`: Dataset contract (required)
+- `--bronze-root`: Captured metadata root (default: `LAKE_ROOT/bronze/<vendor>`)
+- `--glob`: Optional snapshot glob override under bronze root
+- `--exchange`: Optional exchange partition filter (`dim_symbol`)
+- `--manifest-path`: Path to `ingest_manifest`
+- `--table-path`: Optional target table override
+- `--force`: Replay files even if already successful in manifest
+- `--rebuild`: Rebuild mode for `dim_symbol`
+- `--effective-ts`: Fallback timestamp for `dim_symbol`
+
+**Examples:**
+```bash
+pointline bronze api-replay \
+  --vendor tardis \
+  --dataset dim_symbol \
+  --exchange binance-futures
+
+pointline bronze api-replay \
+  --vendor coingecko \
+  --dataset dim_asset_stats \
+  --force
 ```
 
 ---
@@ -457,6 +595,9 @@ pointline bronze ingest [options]
 - `--validate`: Run sampled post-ingest validation
 - `--validate-sample-size`: Sample size for post-ingest validation (default: 2000)
 - `--validate-seed`: Random seed for sampled validation (default: 0)
+- `--optimize-after-ingest`: Run `delta optimize` on touched partitions after successful ingestion
+- `--optimize-zorder`: Optional comma-separated Z-order columns for post-ingest optimize
+- `--optimize-target-file-size`: Optional target file size in bytes for post-ingest optimize
 
 **Examples:**
 
@@ -493,6 +634,16 @@ for date in 2024-05-{01..31}; do
     --data-type trades \
     --glob "exchange=binance-futures/type=trades/date=$date/**/*.csv.gz"
 done
+```
+
+**Ingest + optimize touched partitions:**
+```bash
+pointline bronze ingest \
+  --vendor tardis \
+  --data-type trades \
+  --glob "exchange=binance-futures/type=trades/date=2024-05-01/**/*.csv.gz" \
+  --optimize-after-ingest \
+  --optimize-zorder "symbol_id,ts_local_us"
 ```
 
 ---
@@ -816,44 +967,55 @@ pointline stock-basic-cn sync --token YOUR_TUSHARE_TOKEN
 
 ---
 
-### `pointline dim-asset-stats sync`
+### `pointline silver dim-asset-stats sync`
 
 Sync dim_asset_stats from CoinGecko API.
 
 **Usage:**
 ```bash
-pointline dim-asset-stats sync [options]
+pointline silver dim-asset-stats sync [options]
 ```
 
 **Options:**
+- `--date`: Target date (YYYY-MM-DD) (required)
+- `--base-assets`: Optional comma-separated asset list
 - `--api-key`: CoinGecko API key (or set `COINGECKO_API_KEY`)
 - `--table-path`: Path to dim_asset_stats table (default: auto-detected)
+- `--provider`: Provider (`coingecko` supported in capture/replay path)
+- `--capture-only`: Capture API metadata snapshot and skip replay
+- `--capture-root`: Optional capture output root (default: `LAKE_ROOT/bronze/coingecko`)
 
 **Example:**
 ```bash
-pointline dim-asset-stats sync --api-key YOUR_COINGECKO_API_KEY
+pointline silver dim-asset-stats sync \
+  --date 2026-01-01 \
+  --api-key YOUR_COINGECKO_API_KEY
 ```
 
 ---
 
-### `pointline dim-asset-stats backfill`
+### `pointline silver dim-asset-stats backfill`
 
 Backfill historical dim_asset_stats data.
 
 **Usage:**
 ```bash
-pointline dim-asset-stats backfill --start-date <date> --end-date <date>
+pointline silver dim-asset-stats backfill --start-date <date> --end-date <date>
 ```
 
 **Options:**
 - `--start-date`: Start date YYYY-MM-DD (required)
 - `--end-date`: End date YYYY-MM-DD (required)
+- `--base-assets`: Optional comma-separated asset list
 - `--api-key`: CoinGecko API key
 - `--table-path`: Path to dim_asset_stats table
+- `--provider`: Provider (`coingecko` supported in capture/replay path)
+- `--capture-only`: Capture API metadata snapshot and skip replay
+- `--capture-root`: Optional capture output root (default: `LAKE_ROOT/bronze/coingecko`)
 
 **Example:**
 ```bash
-pointline dim-asset-stats backfill \
+pointline silver dim-asset-stats backfill \
   --start-date 2024-01-01 \
   --end-date 2024-12-31 \
   --api-key YOUR_KEY
