@@ -264,6 +264,78 @@ features = features.with_columns([
 
 **Output**: Parquet file with ~30 features (exchange A + B + cross-exchange)
 
+### 12. Perp-Spot Comparison Guide ⭐ NEW
+**File**: `docs/guides/perp-spot-features-mft.md`
+
+Complete guide for building perp-spot comparison features (perpetual vs spot):
+
+**Topics Covered**:
+- Why perp-spot comparison matters (perp dominates 80-90% volume)
+- Primary spine pattern (perp-driven, spot contextual)
+- Volume asymmetry solution (perp 10x spot volume)
+- 8 feature engineering patterns with IC benchmarks
+- Transaction cost modeling (cash-and-carry arbitrage)
+- Production considerations (volume ratio monitoring, funding timing)
+
+**Feature Patterns**:
+1. **Basis** (IC = 0.06): Perp premium/discount vs spot (leverage sentiment)
+2. **Funding-Basis Divergence** (IC = 0.09): Arbitrage signal (strongest!)
+3. **Lead-Lag** (IC = 0.08): Perp leads spot (price discovery)
+4. **Cash-and-Carry** (IC = 0.03): Classic arbitrage (rare but profitable)
+5. **Volume Ratio** (IC = 0.04): Leverage appetite gauge
+6. **Flow Divergence** (IC = 0.06): Sentiment differences
+7. **Volatility Ratio** (IC = 0.03): Risk comparison
+8. **Flow-Basis Interaction** (IC = 0.07): Informed flow detection
+
+**Key Innovation**: Primary spine (perp-driven) - perp drives volume bars, spot assigned to same spine (no nulls, perfect alignment)
+
+### 13. Perp-Spot Working Example ⭐ NEW
+**File**: `examples/crypto_perp_spot_comparison_example.py`
+
+Demonstrates perp-spot comparison with primary spine pattern:
+
+```python
+# Build spine from PERP volume ONLY
+spine = build_spine(
+    symbol_id=symbol_id_perp,  # Perp drives spine (not spot!)
+    config=VolumeBarConfig(threshold=100.0)
+)
+
+# Assign BOTH perp and spot to SAME spine
+bucketed_perp = assign_to_buckets(trades_perp, spine)
+bucketed_spot = assign_to_buckets(trades_spot, spine)  # Same spine!
+bucketed_funding = assign_to_buckets(funding, spine)
+
+# Aggregate features from each source
+features_perp = bucketed_perp.group_by("bucket_start").agg([...])
+features_spot = bucketed_spot.group_by("bucket_start").agg([...])
+features_funding = bucketed_funding.group_by("bucket_start").agg([...])
+
+# Inner join (no nulls, perfect alignment)
+features = (
+    features_perp
+    .join(features_spot, on="bucket_start", how="inner")
+    .join(features_funding, on="bucket_start", how="left")
+)
+
+# Perp-spot features
+features = features.with_columns([
+    # Basis (bps)
+    (((pl.col("perp_close") - pl.col("spot_close")) / pl.col("spot_close")) * 10000).alias("basis_bps"),
+
+    # Funding-basis divergence (key arbitrage signal)
+    (pl.col("funding_close") - (pl.col("basis_bps") / 10000 / 3)).alias("funding_basis_divergence"),
+
+    # Lead-lag
+    (pl.col("perp_ret_1bar") - pl.col("spot_ret_1bar")).alias("momentum_divergence"),
+
+    # Cash-and-carry opportunity
+    (pl.col("basis_bps").abs() > 48.0).alias("cash_carry_opportunity"),
+])
+```
+
+**Output**: Parquet file with ~40 features (perp + spot + funding + cross-features)
+
 ---
 
 ## Quick Start Guide
@@ -395,6 +467,11 @@ class MyCustomAggregation(AggregationSpec):
   - Implementation: `docs/guides/cross-exchange-arbitrage-mft.md`
   - Example: `examples/crypto_cross_exchange_arbitrage_example.py`
   - IC: 0.08 for lead-lag, 0.05 for spread mean reversion
+- [x] **Implement perp-spot comparison features** ✅ COMPLETE
+  - Implementation: `docs/guides/perp-spot-features-mft.md`
+  - Example: `examples/crypto_perp_spot_comparison_example.py`
+  - IC: 0.09 for funding-basis divergence, 0.08 for lead-lag
+  - Innovation: Primary spine pattern (perp-driven, perfect alignment)
 - [ ] Add liquidation flow detection (aggressive unwinds)
   - **Blocker**: No liquidations table available yet
   - **Workaround**: Build proxy detector using aggressive trade flow
@@ -427,7 +504,8 @@ class MyCustomAggregation(AggregationSpec):
 - `docs/guides/volume-bar-features-crypto-mft.md` - Practical guide (trade features)
 - `docs/guides/funding-rate-features-mft.md` - Funding rate guide ⭐
 - `docs/guides/multitimeframe-features-mft.md` - Multi-timeframe guide ⭐
-- `docs/guides/cross-exchange-arbitrage-mft.md` - Cross-exchange arbitrage guide ⭐ NEW
+- `docs/guides/cross-exchange-arbitrage-mft.md` - Cross-exchange arbitrage guide ⭐
+- `docs/guides/perp-spot-features-mft.md` - Perp-spot comparison guide ⭐ NEW
 - `docs/guides/volume-bar-quick-reference.md` - Quick reference cheat sheet
 - `docs/guides/researcher-guide.md` - General researcher guide
 - `docs/architecture/north-star-research-architecture.md` - Design principles
@@ -439,7 +517,8 @@ class MyCustomAggregation(AggregationSpec):
 - `examples/crypto_mft_volume_bars_example.py` - Trade features example
 - `examples/crypto_mft_funding_features_example.py` - Funding features example ⭐
 - `examples/crypto_mft_multitimeframe_example.py` - Multi-timeframe example ⭐
-- `examples/crypto_cross_exchange_arbitrage_example.py` - Cross-exchange example ⭐ NEW
+- `examples/crypto_cross_exchange_arbitrage_example.py` - Cross-exchange example ⭐
+- `examples/crypto_perp_spot_comparison_example.py` - Perp-spot comparison example ⭐ NEW
 - `examples/query_api_example.py` - Query API basics
 
 ### Tests
