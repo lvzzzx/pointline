@@ -190,6 +190,7 @@ class GenericIngestionService(BaseService):
                 ts_local_min_us=0,
                 ts_local_max_us=0,
                 error_message=error_msg,
+                failure_reason="missing_required_metadata",
             )
             if not dry_run:
                 self._write_validation_log(meta, file_id, result, start_time_ms)
@@ -209,6 +210,7 @@ class GenericIngestionService(BaseService):
                 ts_local_min_us=0,
                 ts_local_max_us=0,
                 error_message=error_msg,
+                failure_reason="missing_bronze_file",
             )
             if not dry_run:
                 self._write_validation_log(meta, file_id, result, start_time_ms)
@@ -244,6 +246,7 @@ class GenericIngestionService(BaseService):
                     ts_local_min_us=0,
                     ts_local_max_us=0,
                     error_message=error_msg,
+                    failure_reason="vendor_missing_required_columns",
                 )
                 if not dry_run:
                     self._write_validation_log(meta, file_id, result, start_time_ms)
@@ -257,6 +260,7 @@ class GenericIngestionService(BaseService):
                     ts_local_min_us=0,
                     ts_local_max_us=0,
                     error_message=error_msg,
+                    failure_reason="vendor_null_required_columns",
                 )
                 if not dry_run:
                     self._write_validation_log(meta, file_id, result, start_time_ms)
@@ -280,6 +284,7 @@ class GenericIngestionService(BaseService):
                     ts_local_min_us=0,
                     ts_local_max_us=0,
                     error_message=error_msg,
+                    failure_reason="unknown_exchange",
                 )
                 if not dry_run:
                     self._write_validation_log(meta, file_id, result, start_time_ms)
@@ -303,6 +308,7 @@ class GenericIngestionService(BaseService):
                     ts_local_min_us=0,
                     ts_local_max_us=0,
                     error_message="All symbols quarantined",
+                    failure_reason="all_symbols_quarantined",
                     partial_ingestion=True,
                     filtered_symbol_count=filtered_symbol_count,
                     filtered_row_count=filtered_row_count,
@@ -349,6 +355,7 @@ class GenericIngestionService(BaseService):
                         ts_local_min_us=0,
                         ts_local_max_us=0,
                         error_message="All rows filtered by validation",
+                        failure_reason="all_rows_filtered_by_validation",
                         partial_ingestion=True,
                         filtered_symbol_count=filtered_symbol_count,
                         filtered_row_count=filtered_row_count,
@@ -397,6 +404,7 @@ class GenericIngestionService(BaseService):
                 ts_local_min_us=0,
                 ts_local_max_us=0,
                 error_message=error_msg,
+                failure_reason="ingest_exception",
             )
             if not dry_run:
                 self._write_validation_log(meta, file_id, result, start_time_ms)

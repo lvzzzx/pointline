@@ -83,7 +83,7 @@ def create_ingestion_service(data_type: str, manifest_repo, *, interval: str | N
             resolve_symbol_ids=tables.book_snapshots.resolve_symbol_ids,
         )
         return GenericIngestionService(
-            "book_snapshots", strategy, repo, dim_symbol_repo, manifest_repo
+            "book_snapshot_25", strategy, repo, dim_symbol_repo, manifest_repo
         )
 
     # Derivative ticker
@@ -118,7 +118,7 @@ def create_ingestion_service(data_type: str, manifest_repo, *, interval: str | N
             resolve_symbol_ids=tables.klines.resolve_symbol_ids,
             ts_col="ts_bucket_start_us",  # Klines use bucket timestamps, not event timestamps
         )
-        return GenericIngestionService("klines", strategy, repo, dim_symbol_repo, manifest_repo)
+        return GenericIngestionService(table_name, strategy, repo, dim_symbol_repo, manifest_repo)
 
     # SZSE L3 Orders
     if data_type == "l3_orders":

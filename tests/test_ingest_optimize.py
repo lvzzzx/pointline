@@ -1,6 +1,7 @@
 from datetime import date
 
 from pointline.cli.commands import ingest as ingest_cmd
+from pointline.cli.ingestion_factory import create_ingestion_service
 from pointline.cli.parser import build_parser
 from pointline.io.protocols import BronzeFileMetadata
 
@@ -108,3 +109,11 @@ def test_bronze_ingest_parser_accepts_optimize_flags():
     assert args.optimize_after_ingest is True
     assert args.optimize_zorder == "symbol_id,ts_local_us"
     assert args.optimize_target_file_size == 1048576
+
+
+def test_ingestion_factory_uses_physical_table_names_for_logs():
+    service_book = create_ingestion_service("book_snapshot_25", manifest_repo=object())
+    assert service_book.table_name == "book_snapshot_25"
+
+    service_kline = create_ingestion_service("klines", manifest_repo=object(), interval="1h")
+    assert service_kline.table_name == "kline_1h"

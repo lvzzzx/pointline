@@ -4,6 +4,8 @@ import argparse
 from datetime import date
 from pathlib import Path
 
+import polars as pl
+
 from pointline.cli.commands import ingest as ingest_cmd
 from pointline.io.protocols import BronzeFileMetadata, IngestionResult
 
@@ -122,6 +124,7 @@ def test_cmd_ingest_run_marks_all_symbols_quarantined(monkeypatch, tmp_path):
                 ts_local_min_us=0,
                 ts_local_max_us=0,
                 error_message="All symbols quarantined",
+                failure_reason="all_symbols_quarantined",
             )
 
     fake_manifest = FakeManifestRepo()
@@ -231,3 +234,72 @@ def test_cmd_ingest_run_filters_pending_after_hash(monkeypatch, tmp_path):
     rc = ingest_cmd.cmd_ingest_run(_make_args(tmp_path, dry_run=False))
     assert rc == 0
     assert fake_manifest.filter_seen_sha == ["z" * 64]
+
+
+def test_cmd_ingest_run_retry_quarantined_prefilters_before_hash(monkeypatch, tmp_path):
+    m1 = _sample_meta()
+    m2 = BronzeFileMetadata(
+        vendor="tardis",
+        data_type="trades",
+        bronze_file_path="exchange=binance/type=trades/date=2024-05-01/symbol=ETHUSDT/file.csv.gz",
+        file_size_bytes=1,
+        last_modified_ts=1,
+        sha256="",
+        date=date(2024, 5, 1),
+    )
+
+    class FakeSource:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def list_files(self, _glob):
+            return [m1, m2]
+
+    class FakeManifestRepo:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def filter_pending(self, candidates):
+            return candidates
+
+        def resolve_file_id(self, _meta):
+            return 1
+
+        def update_status(self, *_args, **_kwargs):
+            pass
+
+        def read_all(self):
+            return pl.DataFrame(
+                {
+                    "status": ["quarantined"],
+                    "vendor": ["tardis"],
+                    "bronze_file_name": [m2.bronze_file_path],
+                }
+            )
+
+    class FakeService:
+        def ingest_file(self, _meta, _file_id, **_kwargs):
+            return IngestionResult(row_count=1, ts_local_min_us=1, ts_local_max_us=2)
+
+    sha_paths: list[str] = []
+
+    def _fake_sha(path):
+        sha_paths.append(str(path))
+        return "x" * 64
+
+    monkeypatch.setattr(ingest_cmd, "LocalBronzeSource", FakeSource)
+    monkeypatch.setattr(
+        ingest_cmd, "DeltaManifestRepository", lambda *_args, **_kwargs: FakeManifestRepo()
+    )
+    monkeypatch.setattr(
+        ingest_cmd, "create_ingestion_service", lambda *_args, **_kwargs: FakeService()
+    )
+    monkeypatch.setattr(ingest_cmd, "compute_sha256", _fake_sha)
+
+    args = _make_args(tmp_path, dry_run=False)
+    args.vendor = "tardis"
+    args.retry_quarantined = True
+    rc = ingest_cmd.cmd_ingest_run(args)
+    assert rc == 0
+    assert len(sha_paths) == 1
+    assert "ETHUSDT" in sha_paths[0]

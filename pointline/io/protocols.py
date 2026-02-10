@@ -140,6 +140,7 @@ class IngestionResult:
     ts_local_min_us: int
     ts_local_max_us: int
     error_message: str | None = None
+    failure_reason: str | None = None
     partial_ingestion: bool = False
     filtered_symbol_count: int = 0
     filtered_row_count: int = 0

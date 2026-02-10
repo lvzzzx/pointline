@@ -167,7 +167,19 @@ def cmd_ingest_run(args: argparse.Namespace) -> int:
         print("No files to ingest.")
         return 0
 
-    # Resolve SHA256 for discovered files before manifest filtering.
+    if args.retry_quarantined:
+        manifest_df = manifest_repo.read_all()
+        quarantined = manifest_df.filter(pl.col("status") == "quarantined")
+        if bronze_root.name != "bronze" and "vendor" in quarantined.columns:
+            quarantined = quarantined.filter(pl.col("vendor") == bronze_root.name)
+        if not quarantined.is_empty():
+            quarantined_paths = set(quarantined["bronze_file_name"].to_list())
+            files = [f for f in files if f.bronze_file_path in quarantined_paths]
+        else:
+            print("No quarantined files to retry.")
+            return 0
+
+    # Resolve SHA256 for candidate files before manifest filtering.
     hashed_files = []
     for file_meta in files:
         bronze_path = bronze_root / file_meta.bronze_file_path
@@ -179,18 +191,6 @@ def cmd_ingest_run(args: argparse.Namespace) -> int:
         files = manifest_repo.filter_pending(files)
         if not files:
             print("No files to ingest.")
-            return 0
-
-    if args.retry_quarantined:
-        manifest_df = manifest_repo.read_all()
-        quarantined = manifest_df.filter(pl.col("status") == "quarantined")
-        if bronze_root.name != "bronze" and "vendor" in quarantined.columns:
-            quarantined = quarantined.filter(pl.col("vendor") == bronze_root.name)
-        if not quarantined.is_empty():
-            quarantined_paths = set(quarantined["bronze_file_name"].to_list())
-            files = [f for f in files if f.bronze_file_path in quarantined_paths]
-        else:
-            print("No quarantined files to retry.")
             return 0
 
     files = sorted_files(files)
@@ -257,11 +257,11 @@ def cmd_ingest_run(args: argparse.Namespace) -> int:
                     )
 
             if result.error_message:
-                if (
-                    "missing_symbol" in result.error_message
-                    or "invalid_validity_window" in result.error_message
-                    or "all symbols quarantined" in result.error_message.lower()
-                ):
+                if result.failure_reason in {
+                    "missing_symbol",
+                    "invalid_validity_window",
+                    "all_symbols_quarantined",
+                }:
                     status = "quarantined"
                     quarantined_count += 1
                 else:
