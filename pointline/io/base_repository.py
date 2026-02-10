@@ -85,6 +85,8 @@ class BaseDeltaRepository:
         table_path: str | Path,
         partition_by: list[str] | None = None,
         expected_schema: dict[str, pl.DataType] | None = None,
+        *,
+        table_name: str | None = None,
     ):
         """
         Initializes the repository with a specific table path.
@@ -95,10 +97,19 @@ class BaseDeltaRepository:
                          If None, table will not be partitioned.
             expected_schema: Optional expected schema for write-time validation.
                             If provided, every write operation validates the DataFrame against it.
+            table_name: Optional table name to auto-lookup schema from the schema registry.
+                       If both table_name and expected_schema are provided, expected_schema wins.
         """
         self.table_path = str(table_path)
         self.partition_by = partition_by
-        self.expected_schema = expected_schema
+        if expected_schema is not None:
+            self.expected_schema = expected_schema
+        elif table_name is not None:
+            from pointline.schema_registry import get_schema
+
+            self.expected_schema = get_schema(table_name)
+        else:
+            self.expected_schema = None
 
     def _validate_before_write(self, df: pl.DataFrame) -> None:
         """Validate DataFrame schema before writing, if expected_schema is set."""

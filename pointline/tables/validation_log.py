@@ -251,3 +251,11 @@ def normalize_validation_log_schema(df: pl.DataFrame) -> pl.DataFrame:
 def required_validation_log_columns() -> tuple[str, ...]:
     """Columns required for a validation_log DataFrame."""
     return tuple(VALIDATION_LOG_SCHEMA.keys())
+
+
+# ---------------------------------------------------------------------------
+# Schema registry registration
+# ---------------------------------------------------------------------------
+from pointline.schema_registry import register_schema as _register_schema  # noqa: E402
+
+_register_schema("validation_log", VALIDATION_LOG_SCHEMA)

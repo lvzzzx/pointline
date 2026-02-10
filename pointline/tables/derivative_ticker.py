@@ -183,3 +183,13 @@ def resolve_symbol_ids(
 def required_derivative_ticker_columns() -> Sequence[str]:
     """Columns required for a derivative_ticker DataFrame after normalization."""
     return tuple(DERIVATIVE_TICKER_SCHEMA.keys())
+
+
+# ---------------------------------------------------------------------------
+# Schema registry registration
+# ---------------------------------------------------------------------------
+from pointline.schema_registry import register_schema as _register_schema  # noqa: E402
+
+_register_schema(
+    "derivative_ticker", DERIVATIVE_TICKER_SCHEMA, partition_by=["exchange", "date"], has_date=True
+)

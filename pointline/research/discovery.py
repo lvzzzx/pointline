@@ -635,8 +635,87 @@ def _get_table_description(table_name: str) -> str:
         "kline_1h": "1-hour OHLCV candlesticks",
         "szse_l3_orders": "SZSE Level 3 order placements",
         "szse_l3_ticks": "SZSE Level 3 trade executions and cancellations",
+        "dim_futures_contract": "Futures contract satellite (expiry, settlement, underlying)",
+        "dim_options_contract": "Options contract satellite (strike, put/call, exercise style)",
+        "dim_equity_listing": "Equity listing satellite (ISIN, CUSIP, FIGI, sector)",
     }
     return descriptions.get(table_name, "")
+
+
+def symbol_metadata(
+    symbol_id: int,
+    *,
+    include_satellites: bool = True,
+) -> pl.DataFrame:
+    """Return enriched symbol metadata, optionally joining satellite dimensions.
+
+    Reads dim_symbol for the given symbol_id, then left-joins satellite tables
+    (dim_futures_contract, dim_options_contract, dim_equity_listing) based on
+    asset_type. Only satellite-exclusive columns (not already in dim_symbol)
+    are added.
+
+    Args:
+        symbol_id: The symbol_id to look up.
+        include_satellites: If True, join relevant satellite tables.
+
+    Returns:
+        DataFrame with symbol metadata, enriched with satellite columns.
+        Returns empty DataFrame if symbol_id not found.
+    """
+    import logging
+
+    logger = logging.getLogger(__name__)
+
+    dim = read_dim_symbol_table()
+    row = dim.filter(pl.col("symbol_id") == symbol_id)
+
+    if row.is_empty():
+        return row
+
+    if not include_satellites:
+        return row
+
+    dim_cols = set(row.columns)
+
+    # Determine which satellite to join based on asset_type
+    asset_type = row["asset_type"][0]
+
+    satellite_map = {
+        2: ("dim_futures_contract", "pointline.tables.dim_futures_contract"),
+        3: ("dim_options_contract", "pointline.tables.dim_options_contract"),
+    }
+
+    if asset_type in satellite_map:
+        table_name, module_path = satellite_map[asset_type]
+        try:
+            table_path = get_table_path(table_name)
+            if table_path.exists():
+                sat_df = pl.read_delta(str(table_path))
+                sat_df = sat_df.filter(pl.col("symbol_id") == symbol_id)
+                if not sat_df.is_empty():
+                    # Only add columns not already in dim_symbol
+                    new_cols = [c for c in sat_df.columns if c not in dim_cols or c == "symbol_id"]
+                    if len(new_cols) > 1:  # more than just symbol_id
+                        row = row.join(sat_df.select(new_cols), on="symbol_id", how="left")
+        except Exception as exc:
+            logger.debug("Could not join %s: %s", table_name, exc)
+
+    # Check equity listing for any asset type (keyed by isin presence, not asset_type)
+    try:
+        eq_path = get_table_path("dim_equity_listing")
+        if eq_path.exists():
+            eq_df = pl.read_delta(str(eq_path))
+            eq_df = eq_df.filter(pl.col("symbol_id") == symbol_id)
+            if not eq_df.is_empty():
+                new_cols = [
+                    c for c in eq_df.columns if c not in set(row.columns) or c == "symbol_id"
+                ]
+                if len(new_cols) > 1:
+                    row = row.join(eq_df.select(new_cols), on="symbol_id", how="left")
+    except Exception as exc:
+        logger.debug("Could not join dim_equity_listing: %s", exc)
+
+    return row
 
 
 def trading_days(

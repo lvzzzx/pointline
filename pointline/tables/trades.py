@@ -321,3 +321,11 @@ def resolve_symbol_ids(
 def required_trades_columns() -> Sequence[str]:
     """Columns required for a trades DataFrame after normalization."""
     return tuple(TRADES_SCHEMA.keys())
+
+
+# ---------------------------------------------------------------------------
+# Schema registry registration
+# ---------------------------------------------------------------------------
+from pointline.schema_registry import register_schema as _register_schema  # noqa: E402
+
+_register_schema("trades", TRADES_SCHEMA, partition_by=["exchange", "date"], has_date=True)

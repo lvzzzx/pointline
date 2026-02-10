@@ -543,3 +543,12 @@ def _filter_header_row(df: pl.DataFrame) -> pl.DataFrame:
         return df.slice(1, df.height - 1)
 
     return df
+
+
+# ---------------------------------------------------------------------------
+# Schema registry registration
+# ---------------------------------------------------------------------------
+from pointline.schema_registry import register_schema as _register_schema  # noqa: E402
+
+_register_schema("kline_1h", KLINE_SCHEMA, partition_by=["exchange", "date"], has_date=True)
+_register_schema("kline_1d", KLINE_SCHEMA, partition_by=["exchange", "date"], has_date=True)

@@ -56,3 +56,11 @@ def bootstrap_from_config() -> pl.DataFrame:
 
 def canonical_columns() -> tuple[str, ...]:
     return tuple(DIM_EXCHANGE_SCHEMA.keys())
+
+
+# ---------------------------------------------------------------------------
+# Schema registry registration
+# ---------------------------------------------------------------------------
+from pointline.schema_registry import register_schema as _register_schema  # noqa: E402
+
+_register_schema("dim_exchange", DIM_EXCHANGE_SCHEMA)

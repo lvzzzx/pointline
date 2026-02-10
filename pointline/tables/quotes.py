@@ -399,3 +399,11 @@ def resolve_symbol_ids(
 def required_quotes_columns() -> Sequence[str]:
     """Columns required for a quotes DataFrame after normalization."""
     return tuple(QUOTES_SCHEMA.keys())
+
+
+# ---------------------------------------------------------------------------
+# Schema registry registration
+# ---------------------------------------------------------------------------
+from pointline.schema_registry import register_schema as _register_schema  # noqa: E402
+
+_register_schema("quotes", QUOTES_SCHEMA, partition_by=["exchange", "date"], has_date=True)

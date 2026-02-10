@@ -302,3 +302,13 @@ def resolve_symbol_ids(
 def required_szse_l3_ticks_columns() -> Sequence[str]:
     """Columns required for a szse_l3_ticks DataFrame after normalization."""
     return tuple(SZSE_L3_TICKS_SCHEMA.keys())
+
+
+# ---------------------------------------------------------------------------
+# Schema registry registration
+# ---------------------------------------------------------------------------
+from pointline.schema_registry import register_schema as _register_schema  # noqa: E402
+
+_register_schema(
+    "szse_l3_ticks", SZSE_L3_TICKS_SCHEMA, partition_by=["exchange", "date"], has_date=True
+)

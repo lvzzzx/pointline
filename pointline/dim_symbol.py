@@ -500,3 +500,11 @@ def required_update_columns() -> Sequence[str]:
 def required_dim_symbol_columns() -> Sequence[str]:
     """Columns required for a dim_symbol DataFrame."""
     return tuple(SCHEMA.keys())
+
+
+# ---------------------------------------------------------------------------
+# Schema registry registration
+# ---------------------------------------------------------------------------
+from pointline.schema_registry import register_schema as _register_schema  # noqa: E402
+
+_register_schema("dim_symbol", SCHEMA)
