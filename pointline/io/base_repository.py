@@ -344,7 +344,7 @@ class BaseDeltaRepository:
             # Then concatenate with the new data
             updated = pl.concat([current.join(df.select(keys), on=keys, how="anti"), df])
             self.write_full(updated)
-        except TableNotFoundError:
+        except (TableNotFoundError, FileNotFoundError):
             # If table doesn't exist, perform a full write
             self.write_full(df)
 

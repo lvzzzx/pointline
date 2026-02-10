@@ -100,6 +100,7 @@ class DeltaManifestRepository(BaseDeltaRepository):
         # Counter file lives alongside (not inside) the Delta table directory
         counter_dir = Path(self.table_path).parent
         self._counter = _FileIdCounter(counter_dir / ".file_id_counter")
+        self._identity_lock_path = counter_dir / ".manifest_identity.lock"
 
     def _ensure_initialized(self):
         """Creates the manifest table with correct schema if it doesn't exist."""
@@ -118,54 +119,58 @@ class DeltaManifestRepository(BaseDeltaRepository):
         Returns:
             file_id: Integer file ID for this bronze file
         """
-        try:
-            DeltaTable(self.table_path)
-            df = pl.read_delta(self.table_path)
-        except Exception:
-            df = pl.DataFrame(schema=MANIFEST_SCHEMA)
+        import filelock
 
-        # Check existing by composite key
-        existing = df.filter(
-            (pl.col("vendor") == meta.vendor)
-            & (pl.col("data_type") == meta.data_type)
-            & (pl.col("bronze_file_name") == meta.bronze_file_path)
-            & (pl.col("sha256") == meta.sha256)
-        )
+        lock = filelock.FileLock(self._identity_lock_path, timeout=30)
+        with lock:
+            try:
+                DeltaTable(self.table_path)
+                df = pl.read_delta(self.table_path)
+            except Exception:
+                df = pl.DataFrame(schema=MANIFEST_SCHEMA)
 
-        if not existing.is_empty():
-            return existing.item(0, "file_id")
+            # Check existing by composite key
+            existing = df.filter(
+                (pl.col("vendor") == meta.vendor)
+                & (pl.col("data_type") == meta.data_type)
+                & (pl.col("bronze_file_name") == meta.bronze_file_path)
+                & (pl.col("sha256") == meta.sha256)
+            )
 
-        # Ensure counter is synced with manifest (handles first run or counter reset)
-        self._counter.sync_from_manifest(df)
+            if not existing.is_empty():
+                return existing.item(0, "file_id")
 
-        # Mint new ID using cross-platform counter
-        next_id = self._counter.next_id()
+            # Ensure counter is synced with manifest (handles first run or counter reset)
+            self._counter.sync_from_manifest(df)
 
-        current_ts_us = int(time.time() * 1_000_000)
+            # Mint new ID using cross-platform counter
+            next_id = self._counter.next_id()
 
-        pending_record = pl.DataFrame(
-            {
-                "file_id": [next_id],
-                "vendor": [meta.vendor],
-                "data_type": [meta.data_type],
-                "bronze_file_name": [meta.bronze_file_path],
-                "sha256": [meta.sha256],
-                "file_size_bytes": [meta.file_size_bytes],
-                "last_modified_ts": [meta.last_modified_ts],
-                "date": [meta.date],
-                "status": ["pending"],
-                "created_at_us": [current_ts_us],
-                "processed_at_us": [None],
-                "row_count": [None],
-                "ts_local_min_us": [None],
-                "ts_local_max_us": [None],
-                "error_message": [None],
-            },
-            schema=MANIFEST_SCHEMA,
-        )
+            current_ts_us = int(time.time() * 1_000_000)
 
-        self.append(pending_record)
-        return next_id
+            pending_record = pl.DataFrame(
+                {
+                    "file_id": [next_id],
+                    "vendor": [meta.vendor],
+                    "data_type": [meta.data_type],
+                    "bronze_file_name": [meta.bronze_file_path],
+                    "sha256": [meta.sha256],
+                    "file_size_bytes": [meta.file_size_bytes],
+                    "last_modified_ts": [meta.last_modified_ts],
+                    "date": [meta.date],
+                    "status": ["pending"],
+                    "created_at_us": [current_ts_us],
+                    "processed_at_us": [None],
+                    "row_count": [None],
+                    "ts_local_min_us": [None],
+                    "ts_local_max_us": [None],
+                    "error_message": [None],
+                },
+                schema=MANIFEST_SCHEMA,
+            )
+
+            self.append(pending_record)
+            return next_id
 
     def filter_pending(self, candidates: list[BronzeFileMetadata]) -> list[BronzeFileMetadata]:
         """Returns only files that need processing (efficient batch anti-join).
@@ -196,7 +201,7 @@ class DeltaManifestRepository(BaseDeltaRepository):
                 ["vendor", "data_type", "bronze_file_name", "sha256"]
             ).iter_rows()
         )
-        fallback_success_keys = set(
+        fallback_success_keys_all = set(
             success_manifest.select(
                 [
                     "vendor",
@@ -206,6 +211,21 @@ class DeltaManifestRepository(BaseDeltaRepository):
                     "last_modified_ts",
                 ]
             ).iter_rows()
+        )
+        # Fallback matching for checksum-present candidates is only safe against
+        # legacy success rows that were recorded without checksums.
+        fallback_success_keys_no_sha = set(
+            success_manifest.filter(pl.col("sha256") == "")
+            .select(
+                [
+                    "vendor",
+                    "data_type",
+                    "bronze_file_name",
+                    "file_size_bytes",
+                    "last_modified_ts",
+                ]
+            )
+            .iter_rows()
         )
 
         pending: list[BronzeFileMetadata] = []
@@ -219,6 +239,15 @@ class DeltaManifestRepository(BaseDeltaRepository):
                 )
                 if strict_key in strict_success_keys:
                     continue
+                fallback_key = (
+                    candidate.vendor,
+                    candidate.data_type,
+                    candidate.bronze_file_path,
+                    candidate.file_size_bytes,
+                    candidate.last_modified_ts,
+                )
+                if fallback_key in fallback_success_keys_no_sha:
+                    continue
             else:
                 fallback_key = (
                     candidate.vendor,
@@ -227,7 +256,7 @@ class DeltaManifestRepository(BaseDeltaRepository):
                     candidate.file_size_bytes,
                     candidate.last_modified_ts,
                 )
-                if fallback_key in fallback_success_keys:
+                if fallback_key in fallback_success_keys_all:
                     continue
 
             pending.append(candidate)
