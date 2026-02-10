@@ -32,13 +32,22 @@ These are **historical artifacts** - they document the planning process but may 
 ### Implementation Notes
 **Purpose:** Technical notes from development process
 
-**Located in:** Root of `internal/` or `implementation/`
+**Located in:** Root of `internal/` (or `archive/` if historical)
 
 These capture implementation details, decisions made during development, and context that might not fit in code comments or user docs.
 
+---
+
+### Archive
+**Purpose:** Historical documents from completed work
+
+**Located in:** `archive/`
+
+Documents that have been superseded or are historical only. Preserved for reference but not actively maintained. See [archive/README.md](archive/README.md) for contents.
+
 Examples:
-- `bronze-prehooks-implementation.md` - Bronze layer preprocessing implementation
-- `cli-migration-plan.md` - CLI refactoring notes
+- `archive/bronze-prehooks-implementation.md` - Bronze layer preprocessing implementation (archived)
+- `archive/cli-migration-plan.md` - CLI refactoring notes (archived)
 
 ---
 
@@ -61,7 +70,9 @@ Examples:
 ## 📚 Document Lifecycle
 
 ```
-Idea → Plan (internal/plans/) → Implementation → User Docs (docs/)
+Idea → Plan → Implementation → User Docs (docs/)
+                                        ↓
+                                Archive (if historical)
                                         ↓
                                 Historical artifact
                                 (kept for reference)
@@ -69,10 +80,10 @@ Idea → Plan (internal/plans/) → Implementation → User Docs (docs/)
 
 **Example:**
 1. Feature idea: "Data Discovery API"
-2. Planning: `internal/plans/plan_data_discovery_api.md` created
+2. Planning: `internal/plan_data_discovery_api.md` created (later archived)
 3. Implementation: Code written, tests added
 4. Documentation: `docs/guides/researcher-guide.md` updated with discovery API usage
-5. Archive: Plan kept in `internal/plans/` for historical reference
+5. Archive: Plan moved to `internal/archive/` for historical reference
 
 ---
 
@@ -82,14 +93,14 @@ Idea → Plan (internal/plans/) → Implementation → User Docs (docs/)
 internal/
 ├── README.md (this file)
 ├── plans/                              # Feature planning documents
-│   ├── plan_data_discovery_api.md
-│   ├── plan_quant360_szse_l3.md
-│   ├── query-api-promotion-plan.md
+│   ├── (archived: plan_data_discovery_api.md, plan_quant360_szse_l3.md, query-api-promotion-plan.md)
 │   └── ...
 ├── implementation/                     # Implementation notes
-│   └── timezone-partitioning.md
-├── bronze-prehooks-implementation.md   # Specific implementation details
-├── cli-migration-plan.md               # CLI refactoring notes
+│   └── (archived: timezone-partitioning.md)
+├── archive/                            # Historical documents
+│   ├── bronze-prehooks-implementation.md
+│   ├── cli-migration-plan.md
+│   └── ...
 └── ...
 ```
 

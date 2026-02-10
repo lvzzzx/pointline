@@ -1,8 +1,10 @@
-# Context/Risk Layer Architecture (North-Star Extension)
+# Context/Risk Layer Architecture
+
+**Status:** ✅ Implemented | **Module:** `pointline.research.context`
 
 ## Summary
 
-Add a first-class **Context/Risk Layer** to the research framework as a post-aggregation module:
+First-class **Context/Risk Layer** in the research framework as a post-aggregation module:
 
 `resample/aggregate -> context/risk -> labels -> evaluation/gates -> output`
 

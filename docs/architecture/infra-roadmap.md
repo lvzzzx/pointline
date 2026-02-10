@@ -3,7 +3,7 @@
 **Owner:** Infra Engineering
 **Created:** 2026-02-10
 **North Star:** [infra-north-star.md](infra-north-star.md)
-**Previous Review:** [review_2026_02_02.md](review_2026_02_02.md)
+**Previous Review:** [review_2026_02_02.md](../internal/archive/review_2026_02_02.md) (archived)
 
 ---
 
