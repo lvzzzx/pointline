@@ -54,6 +54,25 @@ TRACKED_COLS: tuple[str, ...] = (
     "price_increment",
     "amount_increment",
     "contract_size",
+    # Multi-asset fields (Phase 2) — nullable for asset classes that don't use them
+    "expiry_ts_us",
+    "underlying_symbol_id",
+    "settlement_type",
+    "strike",
+    "put_call",
+    "isin",
+)
+
+# Tracked columns that may be omitted from updates (filled with null if missing).
+OPTIONAL_TRACKED_COLS: frozenset[str] = frozenset(
+    {
+        "expiry_ts_us",
+        "underlying_symbol_id",
+        "settlement_type",
+        "strike",
+        "put_call",
+        "isin",
+    }
 )
 
 SCHEMA: dict[str, pl.DataType] = {
@@ -69,6 +88,14 @@ SCHEMA: dict[str, pl.DataType] = {
     "price_increment": pl.Float64,
     "amount_increment": pl.Float64,
     "contract_size": pl.Float64,
+    # Multi-asset fields (Phase 2) — nullable for asset classes that don't use them
+    "expiry_ts_us": pl.Int64,  # Futures/options contract expiry (nullable)
+    "underlying_symbol_id": pl.Int64,  # Underlying instrument symbol_id (nullable)
+    "settlement_type": pl.Utf8,  # "cash" / "physical" (nullable)
+    "strike": pl.Float64,  # Options strike price (nullable)
+    "put_call": pl.Utf8,  # "put" / "call" (nullable)
+    "isin": pl.Utf8,  # ISIN identifier for equities (nullable)
+    # SCD Type 2 metadata
     "valid_from_ts": pl.Int64,
     "valid_until_ts": pl.Int64,
     "is_current": pl.Boolean,
@@ -146,9 +173,25 @@ def normalize_dim_symbol_schema(df: pl.DataFrame) -> pl.DataFrame:
         # (shouldn't happen in practice)
         df = df.with_columns(pl.col("exchange").fill_null("unknown"))
 
-    missing = [col for col in SCHEMA if col not in df.columns]
+    # Columns that are nullable (added in Phase 2 for multi-asset support).
+    # These are filled with null if absent from the input DataFrame.
+    nullable_cols = {
+        "expiry_ts_us",
+        "underlying_symbol_id",
+        "settlement_type",
+        "strike",
+        "put_call",
+        "isin",
+    }
+
+    missing = [col for col in SCHEMA if col not in df.columns and col not in nullable_cols]
     if missing:
         raise ValueError(f"dim_symbol missing required columns: {missing}")
+
+    # Fill missing nullable columns with null
+    for col in nullable_cols:
+        if col not in df.columns:
+            df = df.with_columns(pl.lit(None, dtype=SCHEMA[col]).alias(col))
 
     return df.with_columns([pl.col(col).cast(dtype) for col, dtype in SCHEMA.items()])
 
@@ -196,10 +239,17 @@ def scd2_upsert(
 
     # exchange column is optional in updates - will be derived from
     # exchange_id if missing
-    required_cols = set(NATURAL_KEY_COLS + TRACKED_COLS + ("valid_from_ts",))
+    required_cols = (
+        set(NATURAL_KEY_COLS + TRACKED_COLS + ("valid_from_ts",)) - OPTIONAL_TRACKED_COLS
+    )
     missing = [col for col in required_cols if col not in updates.columns]
     if missing:
         raise ValueError(f"updates missing required columns: {missing}")
+
+    # Fill missing optional tracked columns with null
+    for col in OPTIONAL_TRACKED_COLS:
+        if col not in updates.columns:
+            updates = updates.with_columns(pl.lit(None, dtype=SCHEMA[col]).alias(col))
 
     # Derive exchange from exchange_id if missing in updates
     if "exchange" not in updates.columns and "exchange_id" in updates.columns:
@@ -305,10 +355,15 @@ def rebuild_from_history(
     if valid_from_col != "valid_from_ts":
         history = history.rename({valid_from_col: "valid_from_ts"})
 
-    required = set(NATURAL_KEY_COLS + TRACKED_COLS + ("valid_from_ts",))
+    required = set(NATURAL_KEY_COLS + TRACKED_COLS + ("valid_from_ts",)) - OPTIONAL_TRACKED_COLS
     missing = [c for c in required if c not in history.columns]
     if missing:
         raise ValueError(f"History missing required columns: {missing}")
+
+    # Fill missing optional tracked columns with null
+    for col in OPTIONAL_TRACKED_COLS:
+        if col not in history.columns:
+            history = history.with_columns(pl.lit(None, dtype=SCHEMA[col]).alias(col))
 
     # Sort to ensure correct windowing
     df = history.sort(list(NATURAL_KEY_COLS) + ["valid_from_ts"])
@@ -434,8 +489,12 @@ def resolve_symbol_ids(
 
 
 def required_update_columns() -> Sequence[str]:
-    """Columns required for an updates DataFrame."""
-    return (*NATURAL_KEY_COLS, *TRACKED_COLS, "valid_from_ts")
+    """Columns required for an updates DataFrame (excludes optional multi-asset cols)."""
+    return tuple(
+        c
+        for c in (*NATURAL_KEY_COLS, *TRACKED_COLS, "valid_from_ts")
+        if c not in OPTIONAL_TRACKED_COLS
+    )
 
 
 def required_dim_symbol_columns() -> Sequence[str]:

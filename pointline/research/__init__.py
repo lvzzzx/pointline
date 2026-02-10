@@ -72,6 +72,8 @@ from pointline.research.contracts import (
     validate_quant_research_workflow_input_v2,
     validate_quant_research_workflow_output_v2,
 )
+
+# Import discovery functions (data exploration API)
 from pointline.research.core import (
     _apply_filters,
     _derive_date_bounds_from_ts,
@@ -81,6 +83,7 @@ from pointline.research.core import (
     _validate_ts_range,
     load_book_snapshot_25,
     load_book_snapshot_25_decoded,
+    load_kline_1d_decoded,
     load_kline_1h_decoded,
     load_quotes,
     load_quotes_decoded,
@@ -90,14 +93,13 @@ from pointline.research.core import (
     scan_table,
     table_path,
 )
-
-# Import discovery functions (data exploration API)
 from pointline.research.discovery import (
     data_coverage,
     list_exchanges,
     list_symbols,
     list_tables,
     summarize_symbol,
+    trading_days,
 )
 from pointline.research.pipeline import compile_request, pipeline
 from pointline.research.workflow import compile_workflow_request, workflow
@@ -114,12 +116,14 @@ __all__ = [
     "load_quotes_decoded",
     "load_book_snapshot_25_decoded",
     "load_kline_1h_decoded",
+    "load_kline_1d_decoded",
     # Discovery API functions
     "list_exchanges",
     "list_symbols",
     "list_tables",
     "data_coverage",
     "summarize_symbol",
+    "trading_days",
     # Query module (convenience layer)
     "query",
     # Context/risk module

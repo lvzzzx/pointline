@@ -639,6 +639,75 @@ def _get_table_description(table_name: str) -> str:
     return descriptions.get(table_name, "")
 
 
+def trading_days(
+    exchange: str,
+    start: str | datetime,
+    end: str | datetime,
+) -> list:
+    """Return trading days for an exchange in a date range.
+
+    For 24/7 crypto exchanges, returns every calendar day.
+    For exchanges with a dim_trading_calendar entry, reads from the table.
+
+    Args:
+        exchange: Exchange name (e.g., "binance-futures", "szse")
+        start: Start date (ISO string or datetime, inclusive)
+        end: End date (ISO string or datetime, inclusive)
+
+    Returns:
+        Sorted list of ``datetime.date`` objects that are trading days.
+    """
+    import datetime as dt
+
+    from pointline.tables.dim_trading_calendar import bootstrap_crypto
+    from pointline.tables.dim_trading_calendar import trading_days as _td
+
+    if isinstance(start, str):
+        start_date = dt.date.fromisoformat(start)
+    elif isinstance(start, datetime):
+        start_date = start.date()
+    else:
+        start_date = start
+
+    if isinstance(end, str):
+        end_date = dt.date.fromisoformat(end)
+    elif isinstance(end, datetime):
+        end_date = end.date()
+    else:
+        end_date = end
+
+    # Try reading from dim_trading_calendar table
+    try:
+        cal_path = get_table_path("dim_trading_calendar")
+        cal_df = (
+            pl.scan_delta(str(cal_path))
+            .filter(
+                (pl.col("exchange") == exchange)
+                & (pl.col("date") >= start_date)
+                & (pl.col("date") <= end_date)
+            )
+            .collect()
+        )
+        if not cal_df.is_empty():
+            return _td(cal_df, exchange, start_date, end_date)
+    except Exception:
+        pass
+
+    # Fallback: check if this is a crypto exchange (24/7)
+    meta = get_exchange_metadata(exchange)
+    if meta is None:
+        normalized = normalize_exchange(exchange)
+        if normalized != exchange:
+            meta = get_exchange_metadata(normalized)
+    asset_class = meta.get("asset_class", "") if meta else ""
+    if asset_class.startswith("crypto"):
+        cal_df = bootstrap_crypto(exchange, start_date, end_date)
+        return _td(cal_df, exchange, start_date, end_date)
+
+    # No calendar data available — return empty
+    return []
+
+
 def _get_default_tables() -> list[str]:
     """Get default list of tables to check for coverage."""
     return [

@@ -106,12 +106,14 @@ TABLE_PATHS = {
     "ingest_manifest": "silver/ingest_manifest",
     "validation_log": "silver/validation_log",
     "dim_exchange": "silver/dim_exchange",
+    "dim_trading_calendar": "silver/dim_trading_calendar",
     "dq_summary": "silver/dq_summary",
     "trades": "silver/trades",
     "quotes": "silver/quotes",
     "book_snapshot_25": "silver/book_snapshot_25",
     "derivative_ticker": "silver/derivative_ticker",
     "kline_1h": "silver/kline_1h",
+    "kline_1d": "silver/kline_1d",
     "szse_l3_orders": "silver/szse_l3_orders",
     "szse_l3_ticks": "silver/szse_l3_ticks",
 }
@@ -120,6 +122,7 @@ TABLE_PATHS = {
 TABLE_HAS_DATE = {
     "dim_symbol": False,
     "dim_exchange": False,
+    "dim_trading_calendar": True,
     "stock_basic_cn": False,
     "dim_asset_stats": True,
     "ingest_manifest": True,
@@ -130,6 +133,7 @@ TABLE_HAS_DATE = {
     "book_snapshot_25": True,
     "derivative_ticker": True,
     "kline_1h": True,
+    "kline_1d": True,
     "szse_l3_orders": True,
     "szse_l3_ticks": True,
 }
