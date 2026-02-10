@@ -198,6 +198,77 @@ When ownership is unclear:
 - Stable, explicit schema contracts
 - Reliable data quality checks with actionable diagnostics
 
+## LLM Collaboration Protocol
+
+This protocol applies when LLM agents are used as collaborators and when LLMs are end users of Pointline interfaces.
+
+### Principles
+
+- Human role owners remain accountable for correctness, risk decisions, and final approvals.
+- LLM outputs are treated as proposals unless the task is explicitly marked as safe for autonomous execution.
+- Any artifact intended for LLM consumption must be explicit, machine-readable where possible, and versioned.
+
+### Human-in-the-Loop Ownership
+
+- Every task must declare one human lead role (`Data Infra`, `Data Quality`, `Research Engineer`, `Quant Researcher`, or `Platform/DevEx`).
+- Required reviewers follow the PR routing rules in this document.
+- If an LLM proposes a contract-affecting change, the owning human role must approve before merge.
+
+### Standard LLM Task Envelope
+
+Any task delegated to an LLM (or handed off between personas through LLM tooling) must include:
+
+- `Context`: relevant tables/modules, current behavior, and linked docs
+- `Goal`: exact expected outcome
+- `Inputs/Outputs`: paths, schemas, CLI/API signatures, and artifact format
+- `Constraints`: PIT rules, determinism/idempotency requirements, performance bounds
+- `Acceptance Checks`: tests, queries, and quality gates that must pass
+- `Failure + Rollback`: what to do if checks fail or regressions are detected
+
+Tasks without this envelope are considered not ready for LLM execution.
+
+### LLM-Ready Artifacts By Role
+
+- `Data Infra`:
+  - Replay/order invariants, partitioning rules, and idempotency guarantees are documented alongside ingestion code.
+  - Backfill/reprocess procedures include deterministic rerun expectations.
+- `Data Quality`:
+  - Validation rules are explicit about severity, failure conditions, and remediation guidance.
+  - Schema contracts define required/optional fields and breaking-change criteria.
+- `Research Engineer`:
+  - Research APIs and feature pipelines include PIT-safe usage examples and anti-leakage guidance.
+  - Join semantics and timeline assumptions are documented in examples and references.
+- `Quant Researcher`:
+  - Feature requests and experiment specs include leakage checks, metrics, and regime assumptions.
+  - Strategy diagnostics are reproducible from committed artifacts.
+- `Platform/DevEx`:
+  - Canonical local/CI commands and expected pass conditions are documented and kept current.
+  - Tooling updates include migration notes for humans and automation/agents.
+
+### Autonomy Levels
+
+- `Level 0 (Auto)`:
+  - Safe mechanical changes (formatting, typo/docs fixes, non-semantic refactors).
+- `Level 1 (Guarded)`:
+  - Code/test changes allowed only with required tests and quality gates passing.
+- `Level 2 (Approval Required)`:
+  - Schema contracts, PIT semantics, storage/replay behavior, or release-critical logic require explicit human owner approval.
+
+Default level is `Level 1` unless the task is explicitly marked otherwise.
+
+### Validation and CI Expectations
+
+- CI must fail when contract-critical documentation is missing or inconsistent with implementation.
+- Any change affecting PIT semantics must include tests that demonstrate no lookahead behavior.
+- Any change affecting ingestion or storage semantics must include deterministic rerun/replay validation.
+- LLM-generated or LLM-assisted changes follow the same `pytest`, lint, and type-check gates as human-authored changes.
+
+### Escalation Rules
+
+- If ownership is ambiguous, use the Decision Guidelines section and assign a temporary lead before implementation continues.
+- If an LLM output conflicts with documented contracts, stop and escalate to the owning human role.
+- If required context is missing, do not proceed with autonomous changes; first complete the task envelope.
+
 ## Lightweight Team Cadence
 
 - Weekly 30-minute sync with role leads:
