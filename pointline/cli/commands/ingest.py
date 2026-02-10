@@ -256,17 +256,32 @@ def cmd_ingest_run(args: argparse.Namespace) -> int:
                         error_message=message,
                     )
 
-            if result.error_message:
-                if result.failure_reason in {
-                    "missing_symbol",
-                    "invalid_validity_window",
-                    "all_symbols_quarantined",
-                }:
-                    status = "quarantined"
-                    quarantined_count += 1
-                else:
-                    status = "failed"
-                    failed_count += 1
+            if result.filtered_symbol_count > 0 and result.error_message is None:
+                result = IngestionResult(
+                    row_count=result.row_count,
+                    ts_local_min_us=result.ts_local_min_us,
+                    ts_local_max_us=result.ts_local_max_us,
+                    error_message=(
+                        "Partial ingestion: "
+                        f"{result.filtered_symbol_count} symbol-date pairs quarantined, "
+                        f"{result.filtered_row_count} rows filtered"
+                    ),
+                    failure_reason=result.failure_reason,
+                    partial_ingestion=result.partial_ingestion,
+                    filtered_symbol_count=result.filtered_symbol_count,
+                    filtered_row_count=result.filtered_row_count,
+                )
+
+            if result.failure_reason in {
+                "missing_symbol",
+                "invalid_validity_window",
+                "all_symbols_quarantined",
+            } or result.filtered_symbol_count > 0:
+                status = "quarantined"
+                quarantined_count += 1
+            elif result.error_message:
+                status = "failed"
+                failed_count += 1
             else:
                 status = "success"
                 success_count += 1

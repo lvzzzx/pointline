@@ -847,6 +847,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="Path to the ingest manifest table",
     )
     manifest_show.add_argument(
+        "--vendor",
+        help="Filter by vendor name",
+    )
+    manifest_show.add_argument(
         "--detailed",
         action="store_true",
         help="Show detailed file information instead of summary",

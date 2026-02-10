@@ -197,6 +197,42 @@ def test_vectorized_quarantine_empty_df():
     assert fsc == 0
 
 
+def test_validate_date_partition_alignment_passes_for_matching_day():
+    service = create_ingestion_service("trades", manifest_repo=Mock())
+
+    ts_local_us = int(dt.datetime(2024, 5, 1, 12, 0, tzinfo=dt.timezone.utc).timestamp() * 1_000_000)
+    df = pl.DataFrame(
+        {
+            "exchange": ["binance-futures"],
+            "date": [dt.date(2024, 5, 1)],
+            "ts_local_us": [ts_local_us],
+        }
+    )
+
+    ok, message = service._validate_date_partition_alignment(df, ts_col="ts_local_us")
+    assert ok is True
+    assert message is None
+
+
+def test_validate_date_partition_alignment_fails_for_out_of_day_timestamp():
+    service = create_ingestion_service("trades", manifest_repo=Mock())
+
+    ts_local_us = int(dt.datetime(2024, 5, 2, 0, 0, tzinfo=dt.timezone.utc).timestamp() * 1_000_000)
+    df = pl.DataFrame(
+        {
+            "exchange": ["binance-futures"],
+            "date": [dt.date(2024, 5, 1)],
+            "ts_local_us": [ts_local_us],
+            "file_line_number": [42],
+        }
+    )
+
+    ok, message = service._validate_date_partition_alignment(df, ts_col="ts_local_us")
+    assert ok is False
+    assert message is not None
+    assert "Date partition mismatch" in message
+
+
 # ---------------------------------------------------------------------------
 # 3.1: Validation log ingestion record
 # ---------------------------------------------------------------------------

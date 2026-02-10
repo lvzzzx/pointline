@@ -299,10 +299,26 @@ class GenericIngestionService(BaseService):
                 pl.col("exchange").replace_strict(exchange_map).cast(pl.Int16).alias("exchange_id")
             )
 
-            # 4. Load dim_symbol for quarantine check
+            # 4. Validate date partition alignment against exchange-local timezone
+            date_alignment_ok, date_alignment_error = self._validate_date_partition_alignment(
+                df, ts_col=self.strategy.ts_col
+            )
+            if not date_alignment_ok:
+                result = IngestionResult(
+                    row_count=0,
+                    ts_local_min_us=0,
+                    ts_local_max_us=0,
+                    error_message=date_alignment_error,
+                    failure_reason="date_partition_mismatch",
+                )
+                if not dry_run:
+                    self._write_validation_log(meta, file_id, result, start_time_ms)
+                return result
+
+            # 5. Load dim_symbol for quarantine check
             dim_symbol = self.dim_symbol_repo.read_all()
 
-            # 5. Vectorized quarantine check
+            # 6. Vectorized quarantine check
             df, filtered_row_count, filtered_symbol_count = self._check_quarantine_vectorized(
                 df, dim_symbol
             )
@@ -329,7 +345,7 @@ class GenericIngestionService(BaseService):
                     filtered_row_count,
                 )
 
-            # 6. Resolve symbol IDs (SCD Type 2 as-of join using columns)
+            # 7. Resolve symbol IDs (SCD Type 2 as-of join using columns)
             resolved_df = self.strategy.resolve_symbol_ids(
                 df,
                 dim_symbol,
@@ -338,16 +354,16 @@ class GenericIngestionService(BaseService):
                 ts_col=self.strategy.ts_col,
             )
 
-            # 7. Encode fixed-point (price/qty → integers)
+            # 8. Encode fixed-point (price/qty → integers)
             encoded_df = self.strategy.encode_fixed_point(resolved_df, dim_symbol)
 
-            # 8. Add lineage columns (file_id, file_line_number)
+            # 9. Add lineage columns (file_id, file_line_number)
             lineage_df = self._add_lineage(encoded_df, file_id)
 
-            # 9. Normalize schema (enforce canonical schema)
+            # 10. Normalize schema (enforce canonical schema)
             normalized_df = self.strategy.normalize_schema(lineage_df)
 
-            # 10. Validate (quality checks)
+            # 11. Validate (quality checks)
             validated_df = self.validate(normalized_df)
 
             filtered_by_validation = normalized_df.height - validated_df.height
@@ -369,7 +385,7 @@ class GenericIngestionService(BaseService):
                         self._write_validation_log(meta, file_id, result, start_time_ms)
                     return result
 
-            # 11. Append to Delta table (skip in dry-run mode)
+            # 12. Append to Delta table (skip in dry-run mode)
             if dry_run:
                 logger.info(
                     f"DRY RUN: would ingest {validated_df.height} rows from "
@@ -378,7 +394,7 @@ class GenericIngestionService(BaseService):
             else:
                 self.write(validated_df, use_merge=idempotent_write)
 
-            # 12. Compute result stats
+            # 13. Compute result stats
             ts_min = validated_df[self.strategy.ts_col].min()
             ts_max = validated_df[self.strategy.ts_col].max()
 
@@ -510,6 +526,84 @@ class GenericIngestionService(BaseService):
 
         filtered_row_count = df.height - filtered_df.height
         return filtered_df, filtered_row_count, filtered_symbol_count
+
+    def _validate_date_partition_alignment(
+        self, df: pl.DataFrame, *, ts_col: str
+    ) -> tuple[bool, str | None]:
+        """Validate that row timestamps align with exchange-local date partitions.
+
+        Date partitions are authoritative metadata. Every row timestamp must fall into
+        the exchange-local day window represented by its `(exchange, date)` pair.
+        """
+        if df.is_empty():
+            return True, None
+
+        required = {"exchange", "date", ts_col}
+        missing = sorted(required - set(df.columns))
+        if missing:
+            return False, (
+                f"Date partition validation requires columns {sorted(required)}; "
+                f"missing {missing}"
+            )
+
+        unique_pairs = df.select(["exchange", "date"]).unique()
+        tz_cache: dict[str, ZoneInfo] = {}
+        boundaries: list[dict[str, object]] = []
+
+        for row in unique_pairs.iter_rows(named=True):
+            exchange_name = str(row["exchange"])
+            trading_date = row["date"]
+            if exchange_name not in tz_cache:
+                tz_name = get_exchange_timezone(exchange_name, strict=True)
+                tz_cache[exchange_name] = ZoneInfo(tz_name)
+
+            tz = tz_cache[exchange_name]
+            day_start_local = datetime.combine(trading_date, datetime.min.time(), tzinfo=tz)
+            day_end_local = datetime.combine(
+                trading_date + timedelta(days=1), datetime.min.time(), tzinfo=tz
+            )
+            boundaries.append(
+                {
+                    "exchange": exchange_name,
+                    "date": trading_date,
+                    "_day_start_us": int(day_start_local.astimezone(timezone.utc).timestamp() * 1_000_000),
+                    "_day_end_us": int(day_end_local.astimezone(timezone.utc).timestamp() * 1_000_000),
+                }
+            )
+
+        boundary_df = pl.DataFrame(
+            boundaries,
+            schema={
+                "exchange": pl.Utf8,
+                "date": pl.Date,
+                "_day_start_us": pl.Int64,
+                "_day_end_us": pl.Int64,
+            },
+        )
+
+        checked = df.join(boundary_df, on=["exchange", "date"], how="left")
+        invalid_rows = checked.filter(
+            pl.col(ts_col).is_null()
+            | pl.col("_day_start_us").is_null()
+            | pl.col("_day_end_us").is_null()
+            | (pl.col(ts_col) < pl.col("_day_start_us"))
+            | (pl.col(ts_col) >= pl.col("_day_end_us"))
+        )
+
+        if invalid_rows.is_empty():
+            return True, None
+
+        sample_cols = ["exchange", "date", ts_col]
+        if "file_line_number" in invalid_rows.columns:
+            sample_cols.append("file_line_number")
+        sample = invalid_rows.select(sample_cols).head(5).to_dicts()
+
+        error_message = (
+            "Date partition mismatch: "
+            f"{invalid_rows.height} row(s) outside exchange-local day window for '{ts_col}'. "
+            f"sample={sample}"
+        )
+        return False, error_message
 
     def _check_quarantine(
         self,

@@ -142,6 +142,63 @@ def test_cmd_ingest_run_marks_all_symbols_quarantined(monkeypatch, tmp_path):
     assert fake_manifest.updated == [(7, "quarantined", "All symbols quarantined")]
 
 
+def test_cmd_ingest_run_marks_partial_symbol_quarantine_as_quarantined(monkeypatch, tmp_path):
+    meta = _sample_meta()
+
+    class FakeSource:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def list_files(self, _glob):
+            return [meta]
+
+    class FakeManifestRepo:
+        def __init__(self, *_args, **_kwargs):
+            self.updated = []
+
+        def filter_pending(self, candidates):
+            return candidates
+
+        def resolve_file_id(self, _meta):
+            return 11
+
+        def update_status(self, file_id, status, _meta, result):
+            self.updated.append((file_id, status, result.error_message))
+
+        def read_all(self):
+            raise AssertionError("read_all should not be called in this test")
+
+    class FakeService:
+        def ingest_file(self, _meta, _file_id, **_kwargs):
+            return IngestionResult(
+                row_count=10,
+                ts_local_min_us=1,
+                ts_local_max_us=2,
+                partial_ingestion=True,
+                filtered_symbol_count=1,
+                filtered_row_count=5,
+            )
+
+    fake_manifest = FakeManifestRepo()
+    monkeypatch.setattr(ingest_cmd, "LocalBronzeSource", FakeSource)
+    monkeypatch.setattr(
+        ingest_cmd, "DeltaManifestRepository", lambda *_args, **_kwargs: fake_manifest
+    )
+    monkeypatch.setattr(
+        ingest_cmd, "create_ingestion_service", lambda *_args, **_kwargs: FakeService()
+    )
+    monkeypatch.setattr(ingest_cmd, "compute_sha256", lambda _path: "a" * 64)
+
+    rc = ingest_cmd.cmd_ingest_run(_make_args(tmp_path, dry_run=False))
+    assert rc == 0
+    assert len(fake_manifest.updated) == 1
+    file_id, status, message = fake_manifest.updated[0]
+    assert file_id == 11
+    assert status == "quarantined"
+    assert message is not None
+    assert "Partial ingestion" in message
+
+
 def test_cmd_ingest_run_passes_idempotent_write_for_real_ingest(monkeypatch, tmp_path):
     meta = _sample_meta()
 

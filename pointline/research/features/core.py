@@ -187,12 +187,12 @@ def pit_align(
     by: tuple[str, str] = ("exchange_id", "symbol_id"),
 ) -> pl.LazyFrame:
     """As-of join multiple tables onto a spine with deterministic ordering."""
-    base = spine.sort([*by, on])
+    base = spine.sort(_event_sort_columns(spine, on=on, by=by))
 
     for name, table in tables.items():
         if table is None:
             continue
-        right = table.sort([*by, on, "file_id", "file_line_number"])
+        right = table.sort(_event_sort_columns(table, on=on, by=by))
         base = base.join_asof(
             right,
             on=on,
@@ -202,3 +202,19 @@ def pit_align(
         )
 
     return base
+
+
+def _event_sort_columns(
+    frame: pl.LazyFrame,
+    *,
+    on: str,
+    by: tuple[str, str],
+) -> list[str]:
+    """Build deterministic sort columns for event-time operations."""
+    schema_names = set(frame.collect_schema().names())
+    sort_cols = [*by, on]
+    if "file_id" in schema_names:
+        sort_cols.append("file_id")
+    if "file_line_number" in schema_names:
+        sort_cols.append("file_line_number")
+    return sort_cols

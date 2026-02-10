@@ -11,6 +11,25 @@ from pointline.cli.utils import compute_sha256
 from pointline.io.delta_manifest_repo import DeltaManifestRepository
 
 
+def _extract_partition_from_path_expr(key: str) -> pl.Expr:
+    return pl.col("bronze_file_name").cast(pl.Utf8).str.extract(rf"(?:^|/){key}=([^/]+)", 1)
+
+
+def _filter_partition_column(
+    df: pl.DataFrame,
+    *,
+    key: str,
+    value: str | None,
+) -> tuple[pl.DataFrame, bool]:
+    if value is None:
+        return df, True
+    if key in df.columns:
+        return df.filter(pl.col(key) == value), True
+    if "bronze_file_name" in df.columns:
+        return df.filter(_extract_partition_from_path_expr(key) == value), True
+    return df, False
+
+
 def cmd_manifest_show(args: argparse.Namespace) -> int:
     manifest_repo = DeltaManifestRepository(Path(args.manifest_path))
     df = manifest_repo.read_all()
@@ -19,19 +38,22 @@ def cmd_manifest_show(args: argparse.Namespace) -> int:
         print("manifest: empty")
         return 0
 
+    if args.vendor:
+        if "vendor" in df.columns:
+            df = df.filter(pl.col("vendor") == args.vendor)
+        else:
+            print("manifest: vendor filter ignored (vendor column not present)")
     if args.status:
         df = df.filter(pl.col("status") == args.status)
     if args.exchange:
-        if "exchange" in df.columns:
-            df = df.filter(pl.col("exchange") == args.exchange)
-        else:
+        df, applied = _filter_partition_column(df, key="exchange", value=args.exchange)
+        if not applied:
             print("manifest: exchange filter ignored (exchange column not present)")
     if args.data_type:
         df = df.filter(pl.col("data_type") == args.data_type)
     if args.symbol:
-        if "symbol" in df.columns:
-            df = df.filter(pl.col("symbol") == args.symbol)
-        else:
+        df, applied = _filter_partition_column(df, key="symbol", value=args.symbol)
+        if not applied:
             print("manifest: symbol filter ignored (symbol column not present)")
 
     if df.is_empty():
@@ -65,14 +87,24 @@ def cmd_manifest_show(args: argparse.Namespace) -> int:
         for row in summary.iter_rows(named=True):
             print(f"  {row['status']}: {row['count']}")
 
-        if "exchange" in df.columns:
+        exchange_df = df
+        exchange_col = "exchange"
+        if exchange_col not in exchange_df.columns and "bronze_file_name" in exchange_df.columns:
+            exchange_col = "_exchange_from_path"
+            exchange_df = exchange_df.with_columns(
+                _extract_partition_from_path_expr("exchange").alias(exchange_col)
+            )
+        if exchange_col in exchange_df.columns:
             exchange_summary = (
-                df.group_by("exchange").agg(pl.len().alias("count")).sort("count", descending=True)
+                exchange_df.filter(pl.col(exchange_col).is_not_null())
+                .group_by(exchange_col)
+                .agg(pl.len().alias("count"))
+                .sort("count", descending=True)
             )
             if exchange_summary.height > 0:
                 print("\nexchange counts:")
                 for row in exchange_summary.iter_rows(named=True):
-                    print(f"  {row['exchange']}: {row['count']}")
+                    print(f"  {row[exchange_col]}: {row['count']}")
 
         print(f"\ntotal rows: {df.height}")
 
