@@ -1,9 +1,16 @@
+from __future__ import annotations
+
+import logging
 import os
 import re
+import threading
+import time
 import warnings
 from pathlib import Path
 
 from pointline._error_messages import exchange_not_found_error
+
+logger = logging.getLogger(__name__)
 
 try:
     import tomllib
@@ -98,6 +105,7 @@ TABLE_PATHS = {
     "dim_asset_stats": "silver/dim_asset_stats",
     "ingest_manifest": "silver/ingest_manifest",
     "validation_log": "silver/validation_log",
+    "dim_exchange": "silver/dim_exchange",
     "dq_summary": "silver/dq_summary",
     "trades": "silver/trades",
     "quotes": "silver/quotes",
@@ -111,6 +119,7 @@ TABLE_PATHS = {
 # Table registry for date column availability (used for safe filtering).
 TABLE_HAS_DATE = {
     "dim_symbol": False,
+    "dim_exchange": False,
     "stock_basic_cn": False,
     "dim_asset_stats": True,
     "ingest_manifest": True,
@@ -163,6 +172,62 @@ EXCHANGE_MAP = {
     "sse": 31,  # Shanghai Stock Exchange
 }
 
+# Pre-computed reverse mapping: exchange_id -> exchange name (O(1) lookup)
+_REVERSE_EXCHANGE_MAP: dict[int, str] = {eid: name for name, eid in EXCHANGE_MAP.items()}
+
+
+# ---------------------------------------------------------------------------
+# dim_exchange table loader (cached, with fallback to hardcoded dicts)
+# ---------------------------------------------------------------------------
+_dim_exchange_cache_lock = threading.Lock()
+_dim_exchange_cache: dict[str, dict] | None = None
+_dim_exchange_cache_at: float = 0.0
+_DIM_EXCHANGE_TTL: float = 3600.0  # 1 hour (exchanges change rarely)
+
+
+def _load_dim_exchange() -> dict[str, dict] | None:
+    """Load dim_exchange table into a dict keyed by exchange name.
+
+    Returns None if the table doesn't exist yet (cold start).
+    Caches for _DIM_EXCHANGE_TTL seconds.
+    """
+    global _dim_exchange_cache, _dim_exchange_cache_at
+
+    now = time.monotonic()
+    if _dim_exchange_cache is not None and (now - _dim_exchange_cache_at) < _DIM_EXCHANGE_TTL:
+        return _dim_exchange_cache
+
+    with _dim_exchange_cache_lock:
+        now = time.monotonic()
+        if _dim_exchange_cache is not None and (now - _dim_exchange_cache_at) < _DIM_EXCHANGE_TTL:
+            return _dim_exchange_cache
+
+        try:
+            import polars as pl
+
+            table_path = get_table_path("dim_exchange")
+            if not table_path.exists():
+                return None
+            df = pl.read_delta(str(table_path))
+            if df.is_empty():
+                return None
+            result = {}
+            for row in df.iter_rows(named=True):
+                result[row["exchange"]] = row
+            _dim_exchange_cache = result
+            _dim_exchange_cache_at = time.monotonic()
+            return result
+        except Exception:
+            return None
+
+
+def invalidate_exchange_cache() -> None:
+    """Force next call to re-read dim_exchange from disk."""
+    global _dim_exchange_cache, _dim_exchange_cache_at
+    with _dim_exchange_cache_lock:
+        _dim_exchange_cache = None
+        _dim_exchange_cache_at = 0.0
+
 
 def normalize_exchange(exchange: str) -> str:
     """
@@ -183,8 +248,7 @@ def normalize_exchange(exchange: str) -> str:
 def get_exchange_id(exchange: str) -> int:
     """Get exchange_id for a given exchange name.
 
-    This is the canonical source of truth for exchange → exchange_id mapping.
-    Normalizes the exchange name before lookup.
+    Tries dim_exchange table first, falls back to hardcoded EXCHANGE_MAP.
 
     Args:
         exchange: Exchange name (will be normalized before lookup)
@@ -193,19 +257,27 @@ def get_exchange_id(exchange: str) -> int:
         Exchange ID (Int16 compatible)
 
     Raises:
-        ValueError: If exchange is not found in EXCHANGE_MAP after normalization
+        ValueError: If exchange is not found
     """
     normalized = normalize_exchange(exchange)
-    if normalized not in EXCHANGE_MAP:
-        raise ValueError(exchange_not_found_error(exchange, list(EXCHANGE_MAP.keys())))
-    return EXCHANGE_MAP[normalized]
+
+    # Try dim_exchange first
+    dim_ex = _load_dim_exchange()
+    if dim_ex is not None and normalized in dim_ex:
+        return dim_ex[normalized]["exchange_id"]
+
+    # Fallback to hardcoded
+    if normalized in EXCHANGE_MAP:
+        return EXCHANGE_MAP[normalized]
+
+    all_keys = list(dim_ex.keys()) if dim_ex else list(EXCHANGE_MAP.keys())
+    raise ValueError(exchange_not_found_error(exchange, all_keys))
 
 
 def get_exchange_name(exchange_id: int) -> str:
-    """
-    Get normalized exchange name for a given exchange_id.
+    """Get normalized exchange name for a given exchange_id.
 
-    This is the reverse mapping of get_exchange_id().
+    Tries dim_exchange table first, falls back to hardcoded reverse map.
 
     Args:
         exchange_id: Exchange ID to look up
@@ -214,14 +286,21 @@ def get_exchange_name(exchange_id: int) -> str:
         Normalized exchange name (e.g., "binance-futures")
 
     Raises:
-        ValueError: If exchange_id is not found in EXCHANGE_MAP
+        ValueError: If exchange_id is not found
     """
-    for name, eid in EXCHANGE_MAP.items():
-        if eid == exchange_id:
-            return normalize_exchange(name)
+    # Try dim_exchange first
+    dim_ex = _load_dim_exchange()
+    if dim_ex is not None:
+        for name, row in dim_ex.items():
+            if row["exchange_id"] == exchange_id:
+                return normalize_exchange(name)
+
+    # Fallback to hardcoded
+    if exchange_id in _REVERSE_EXCHANGE_MAP:
+        return normalize_exchange(_REVERSE_EXCHANGE_MAP[exchange_id])
+
     raise ValueError(
-        f"Exchange ID {exchange_id} not found in EXCHANGE_MAP. "
-        f"Available IDs: {sorted(EXCHANGE_MAP.values())}"
+        f"Exchange ID {exchange_id} not found. Available IDs: {sorted(EXCHANGE_MAP.values())}"
     )
 
 
@@ -262,8 +341,7 @@ def get_exchange_timezone(exchange: str, *, strict: bool = True) -> str:
     """
     Get timezone for exchange-local date partitioning.
 
-    This timezone is used to derive the partition date from ts_local_us,
-    ensuring that one trading day maps to one partition.
+    Tries dim_exchange table first, falls back to hardcoded EXCHANGE_TIMEZONES.
 
     Args:
         exchange: Exchange name (will be normalized before lookup)
@@ -274,18 +352,24 @@ def get_exchange_timezone(exchange: str, *, strict: bool = True) -> str:
         IANA timezone string (e.g., "UTC", "Asia/Shanghai")
 
     Raises:
-        ValueError: If strict=True and exchange not found in EXCHANGE_TIMEZONES
+        ValueError: If strict=True and exchange not found
 
     Examples:
         >>> get_exchange_timezone("binance-futures")
         'UTC'
         >>> get_exchange_timezone("szse")
         'Asia/Shanghai'
-        >>> get_exchange_timezone("unknown", strict=True)
-        Traceback (most recent call last):
-        ValueError: Exchange 'unknown' not found in EXCHANGE_TIMEZONES registry...
     """
     normalized = normalize_exchange(exchange)
+
+    # Try dim_exchange first
+    dim_ex = _load_dim_exchange()
+    if dim_ex is not None and normalized in dim_ex:
+        return dim_ex[normalized].get("timezone", "UTC")
+
+    # Fallback to hardcoded
+    if normalized in EXCHANGE_TIMEZONES:
+        return EXCHANGE_TIMEZONES[normalized]
 
     if normalized not in EXCHANGE_TIMEZONES:
         if strict:
@@ -419,63 +503,9 @@ def get_coingecko_coin_id(base_asset: str) -> str | None:
     return ASSET_TO_COINGECKO_MAP.get(base_asset.upper())
 
 
-# Asset Class Taxonomy
-# Hierarchical classification for data discovery and filtering
-# Designed for extensibility - easily add new asset classes (US equities, futures, forex, etc.)
-ASSET_CLASS_TAXONOMY = {
-    "crypto": {
-        "description": "Cryptocurrency spot and derivatives",
-        "children": ["crypto-spot", "crypto-derivatives"],
-    },
-    "crypto-spot": {
-        "description": "Cryptocurrency spot trading",
-        "parent": "crypto",
-        "exchanges": [
-            "binance",
-            "coinbase",
-            "kraken",
-            "okx",
-            "huobi",
-            "gate",
-            "bitfinex",
-            "bitstamp",
-            "gemini",
-            "crypto-com",
-            "kucoin",
-            "binance-us",
-            "coinbase-pro",
-        ],
-    },
-    "crypto-derivatives": {
-        "description": "Cryptocurrency futures, perpetuals, and options",
-        "parent": "crypto",
-        "exchanges": [
-            "binance-futures",
-            "binance-coin-futures",
-            "deribit",
-            "bybit",
-            "okx-futures",
-            "bitmex",
-            "ftx",
-            "dydx",
-        ],
-    },
-    "stocks": {
-        "description": "Equity markets",
-        "children": ["stocks-cn"],
-    },
-    "stocks-cn": {
-        "description": "Chinese stock exchanges with Level 3 order book data",
-        "parent": "stocks",
-        "exchanges": ["szse", "sse"],
-    },
-    # Future asset classes (placeholder for extensibility):
-    # "stocks-us": {"description": "US stock exchanges", "parent": "stocks", "exchanges": []},
-    # "futures": {"description": "Traditional futures (CME, ICE, etc.)", "exchanges": []},
-    # "options": {"description": "Listed options markets", "exchanges": []},
-    # "forex": {"description": "Foreign exchange spot and derivatives", "exchanges": []},
-}
-
+# Asset Class Taxonomy (canonical source: pointline.tables.asset_class)
+# Re-exported here for backward compatibility.
+from pointline.tables.asset_class import ASSET_CLASS_TAXONOMY as ASSET_CLASS_TAXONOMY  # noqa: E402
 
 # Exchange Metadata Registry
 # Extended metadata for data discovery and UI presentation
@@ -657,6 +687,8 @@ EXCHANGE_METADATA = {
 def get_exchange_metadata(exchange: str) -> dict | None:
     """Get metadata for a given exchange.
 
+    Tries dim_exchange table first, falls back to hardcoded EXCHANGE_METADATA.
+
     Args:
         exchange: Exchange name (will be normalized before lookup)
 
@@ -669,14 +701,27 @@ def get_exchange_metadata(exchange: str) -> dict | None:
         'crypto-derivatives'
     """
     normalized = normalize_exchange(exchange)
+
+    # Try dim_exchange first
+    dim_ex = _load_dim_exchange()
+    if dim_ex is not None and normalized in dim_ex:
+        row = dim_ex[normalized]
+        return {
+            "exchange_id": row["exchange_id"],
+            "asset_class": row.get("asset_class", "unknown"),
+            "description": row.get("description", ""),
+            "is_active": row.get("is_active", True),
+        }
+
+    # Fallback to hardcoded
     return EXCHANGE_METADATA.get(normalized)
 
 
 def get_asset_class_exchanges(asset_class: str) -> list[str]:
     """Get all exchanges belonging to an asset class.
 
-    Handles hierarchical taxonomy - if asset_class has children,
-    returns exchanges from all children.
+    Tries dim_exchange table first (filter by asset_class column).
+    Falls back to hardcoded ASSET_CLASS_TAXONOMY.
 
     Args:
         asset_class: Asset class name (e.g., "crypto", "crypto-spot", "stocks-cn")
@@ -690,20 +735,22 @@ def get_asset_class_exchanges(asset_class: str) -> list[str]:
         >>> get_asset_class_exchanges("crypto")  # includes spot + derivatives
         ['binance', 'coinbase', ..., 'binance-futures', 'deribit', ...]
     """
-    if asset_class not in ASSET_CLASS_TAXONOMY:
-        return []
+    # Try dim_exchange first
+    dim_ex = _load_dim_exchange()
+    if dim_ex is not None:
+        # Handle parent class (e.g., "crypto" matches "crypto-spot", "crypto-derivatives")
+        result = []
+        for name, row in dim_ex.items():
+            row_class = row.get("asset_class", "")
+            if row_class == asset_class or row_class.startswith(asset_class + "-"):
+                result.append(name)
+        if result:
+            return result
 
-    taxonomy_entry = ASSET_CLASS_TAXONOMY[asset_class]
+    # Fallback to static taxonomy
+    from pointline.tables.asset_class import taxonomy_exchanges
 
-    # If this is a parent class with children, recurse
-    if "children" in taxonomy_entry:
-        exchanges = []
-        for child in taxonomy_entry["children"]:
-            exchanges.extend(get_asset_class_exchanges(child))
-        return exchanges
-
-    # Otherwise, return exchanges directly
-    return taxonomy_entry.get("exchanges", [])
+    return taxonomy_exchanges(asset_class)
 
 
 def get_table_path(table_name: str) -> Path:

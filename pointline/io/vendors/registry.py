@@ -135,6 +135,34 @@ def detect_vendor(path: Path) -> str | None:
     return None
 
 
+def resolve_table_name(vendor: str, data_type: str, *, interval: str | None = None) -> str | None:
+    """Resolve vendor data_type to silver table name using plugin mapping.
+
+    Args:
+        vendor: Vendor name (e.g., "tardis", "binance_vision")
+        data_type: Data type from bronze metadata (e.g., "trades", "klines")
+        interval: Optional interval for parameterized table names (e.g., "1h")
+
+    Returns:
+        Silver table name, or None if data_type not in vendor's mapping.
+    """
+    if vendor not in _VENDOR_REGISTRY:
+        return None
+
+    plugin = _VENDOR_REGISTRY[vendor]
+    mapping = plugin.get_table_mapping()
+    template = mapping.get(data_type)
+    if template is None:
+        return None
+
+    if "{interval}" in template:
+        if not interval:
+            return None
+        return template.format(interval=interval)
+
+    return template
+
+
 # ============================================================================
 # Parser Registry API (Backward Compatibility)
 # ============================================================================

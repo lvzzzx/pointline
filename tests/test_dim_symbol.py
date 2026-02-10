@@ -192,12 +192,12 @@ def test_resolve_symbol_ids_sorts_by_keys():
 
 def test_assign_symbol_id_hash_determinism():
     df = _base_updates(100)
-    # The hash for (1, "BTC-PERPETUAL", 100) with blake2b(4 bytes) should be stable
+    # The hash for (1, "BTC-PERPETUAL", 100) with blake2b(8 bytes) should be stable
     dim = scd2_bootstrap(df)
     symbol_id = dim["symbol_id"][0]
 
     # Asserting the specific value to ensure we don't break existing IDs
-    assert symbol_id == 3019004731
+    assert symbol_id == -1005432936908793197
     assert dim["symbol_id"].dtype == pl.Int64
 
     # Test with multiple rows
@@ -209,8 +209,8 @@ def test_assign_symbol_id_hash_determinism():
     )
     dim_multi = scd2_bootstrap(df_multi)
     assert dim_multi.height == 2
-    assert dim_multi["symbol_id"][0] == 3019004731
-    assert dim_multi["symbol_id"][1] != 3019004731
+    assert dim_multi["symbol_id"][0] == -1005432936908793197
+    assert dim_multi["symbol_id"][1] != -1005432936908793197
 
 
 def test_upsert_empty_updates_returns_original():

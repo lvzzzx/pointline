@@ -85,6 +85,19 @@ class VendorPlugin(Protocol):
         """
         ...
 
+    def get_table_mapping(self) -> dict[str, str]:
+        """Get mapping from vendor data_type to silver table name.
+
+        Each vendor declares which silver table its data types write to.
+        Use ``{interval}`` as a placeholder for interval-dependent table names
+        (e.g., ``"kline_{interval}"`` resolves to ``"kline_1h"``).
+
+        Returns:
+            Dictionary mapping data_type to silver table name.
+            Example: {"trades": "trades", "l3_orders": "szse_l3_orders"}
+        """
+        ...
+
     def get_parsers(self) -> dict[str, Callable[[pl.DataFrame], pl.DataFrame]]:
         """Get all parsers provided by this vendor.
 
