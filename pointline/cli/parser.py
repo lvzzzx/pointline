@@ -245,7 +245,7 @@ def build_parser() -> argparse.ArgumentParser:
     bronze_download.add_argument(
         "--data-types",
         required=True,
-        help="Comma-separated list of data types (e.g., trades,quotes,book_snapshot_25,options_chain)",
+        help="Comma-separated list of data types (e.g., trades,quotes,book_snapshot_25,options_chain,liquidations)",
     )
     bronze_download.add_argument(
         "--symbols",
@@ -495,7 +495,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     bronze_discover.add_argument(
         "--data-type",
-        help="Filter by data type (e.g., trades, quotes, book_snapshot_25, options_chain)",
+        help="Filter by data type (e.g., trades, quotes, book_snapshot_25, options_chain, liquidations)",
     )
     bronze_discover.add_argument(
         "--pending-only",
@@ -532,7 +532,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     bronze_ingest.add_argument(
         "--data-type",
-        help="Filter by data type (e.g., trades, quotes, book_snapshot_25, options_chain).",
+        help="Filter by data type (e.g., trades, quotes, book_snapshot_25, options_chain, liquidations).",
     )
     bronze_ingest.add_argument(
         "--force",
@@ -861,7 +861,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     manifest_show.add_argument(
         "--data-type",
-        help="Filter by data type (e.g., trades, quotes, book_snapshot_25, options_chain)",
+        help="Filter by data type (e.g., trades, quotes, book_snapshot_25, options_chain, liquidations)",
     )
     manifest_show.add_argument(
         "--symbol",

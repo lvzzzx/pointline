@@ -363,7 +363,7 @@ pointline bronze download \
 
 **Options:**
 - `--exchange`: Exchange name (e.g., binance-futures) (required)
-- `--data-types`: Comma-separated data types (e.g., trades,quotes,book_snapshot_25,options_chain) (required)
+- `--data-types`: Comma-separated data types (e.g., trades,quotes,book_snapshot_25,options_chain,liquidations) (required)
 - `--symbols`: Comma-separated symbols (e.g., BTCUSDT,ETHUSDT) (required)
 - `--start-date`: Start date YYYY-MM-DD (inclusive) (required)
 - `--end-date`: End date YYYY-MM-DD (exclusive) (required)
@@ -542,7 +542,7 @@ pointline bronze discover [options]
 - `--vendor`: Vendor name (optional, constructs bronze-root as LAKE_ROOT/bronze/{vendor})
 - `--manifest-path`: Path to ingest_manifest (default: auto-detected)
 - `--glob`: Glob pattern for bronze files (default: `**/*.csv.gz`)
-- `--data-type`: Filter by data type (e.g., trades, quotes, options_chain)
+- `--data-type`: Filter by data type (e.g., trades, quotes, options_chain, liquidations)
 - `--pending-only`: Show only files not yet ingested
 - `--limit`: Maximum number of files to show
 
@@ -589,7 +589,7 @@ pointline bronze ingest [options]
 - `--bronze-root`: Bronze root path (default: LAKE_ROOT/bronze)
 - `--vendor`: Vendor name (optional, constructs bronze-root as LAKE_ROOT/bronze/{vendor})
 - `--glob`: Glob pattern for bronze files (default: `**/*.csv.gz`)
-- `--data-type`: Filter by data type (e.g., trades, quotes, book_snapshot_25, options_chain)
+- `--data-type`: Filter by data type (e.g., trades, quotes, book_snapshot_25, options_chain, liquidations)
 - `--force`: Re-ingest files even if already marked success
 - `--retry-quarantined`: Retry only quarantined files
 - `--validate`: Run sampled post-ingest validation

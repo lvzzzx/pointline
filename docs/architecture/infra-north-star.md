@@ -46,7 +46,7 @@ Pointline is a **universal offline research data lake** for quantitative trading
 | szse_l3_orders | HFT | Active |
 | szse_l3_ticks | HFT | Active |
 | kline_1d | LFT | Planned |
-| liquidations | MFT | Planned |
+| liquidations | MFT | Active (Ingest) |
 | options_chain | MFT | Active (Ingest) |
 | fundamentals | LFT | Planned |
 
@@ -219,7 +219,7 @@ Unit tests exist for individual parsers and services, but no end-to-end integrat
 
 #### P3: Schema Docs List Unimplemented Tables
 
-`docs/reference/schemas.md` defines `book_ticker`, `liquidations`, `options_surface_grid` which have no corresponding `TABLE_PATHS` entries, table modules, or parsers.
+`docs/reference/schemas.md` defines `book_ticker`, `options_surface_grid` which have no corresponding `TABLE_PATHS` entries, table modules, or parsers.
 
 **Recommendation:** Add status markers (Implemented / Planned) to the schema catalog.
 
@@ -285,7 +285,7 @@ Within `_check_quarantine_vectorized()`, the anti-join filter is vectorized, but
 │  ├── trades, quotes, book_snapshot_25         (HFT, partitioned)│
 │  ├── derivative_ticker, kline_1h, kline_1d    (MFT, partitioned)│
 │  ├── szse_l3_orders, szse_l3_ticks            (HFT, partitioned)│
-│  ├── liquidations                             (planned)          │
+│  ├── liquidations                             (active ingest)    │
 │  ├── options_chain                            (active ingest)    │
 │  └── fundamentals                             (LFT, planned)    │
 │                                                                  │

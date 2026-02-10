@@ -118,5 +118,8 @@ def test_ingestion_factory_uses_physical_table_names_for_logs():
     service_options = create_ingestion_service("options_chain", manifest_repo=object())
     assert service_options.table_name == "options_chain"
 
+    service_liquidations = create_ingestion_service("liquidations", manifest_repo=object())
+    assert service_liquidations.table_name == "liquidations"
+
     service_kline = create_ingestion_service("klines", manifest_repo=object(), interval="1h")
     assert service_kline.table_name == "kline_1h"

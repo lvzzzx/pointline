@@ -19,6 +19,7 @@ from pointline.io.vendors.tardis.mapper import build_updates_from_instruments
 from pointline.io.vendors.tardis.parsers import (
     parse_tardis_book_snapshots_csv,
     parse_tardis_derivative_ticker_csv,
+    parse_tardis_liquidations_csv,
     parse_tardis_options_chain_csv,
     parse_tardis_quotes_csv,
     parse_tardis_trades_csv,
@@ -40,5 +41,6 @@ __all__ = [
     "parse_tardis_quotes_csv",
     "parse_tardis_book_snapshots_csv",
     "parse_tardis_derivative_ticker_csv",
+    "parse_tardis_liquidations_csv",
     "parse_tardis_options_chain_csv",
 ]

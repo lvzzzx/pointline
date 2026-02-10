@@ -31,6 +31,7 @@ class TardisVendor:
     - quotes
     - book_snapshot_25
     - derivative_ticker
+    - liquidations
     - options_chain
     """
 
@@ -110,6 +111,7 @@ class TardisVendor:
             "quotes": "quotes",
             "book_snapshot_25": "book_snapshot_25",
             "derivative_ticker": "derivative_ticker",
+            "liquidations": "liquidations",
             "options_chain": "options_chain",
         }
 
@@ -123,6 +125,7 @@ class TardisVendor:
         from pointline.io.vendors.tardis.parsers import (
             parse_tardis_book_snapshots_csv,
             parse_tardis_derivative_ticker_csv,
+            parse_tardis_liquidations_csv,
             parse_tardis_options_chain_csv,
             parse_tardis_quotes_csv,
             parse_tardis_trades_csv,
@@ -133,6 +136,7 @@ class TardisVendor:
             "quotes": parse_tardis_quotes_csv,
             "book_snapshot_25": parse_tardis_book_snapshots_csv,
             "derivative_ticker": parse_tardis_derivative_ticker_csv,
+            "liquidations": parse_tardis_liquidations_csv,
             "options_chain": parse_tardis_options_chain_csv,
         }
 
