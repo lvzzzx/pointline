@@ -26,7 +26,6 @@ from typing import Any
 import polars as pl
 
 from pointline.config import (
-    ASSET_CLASS_TAXONOMY,
     EXCHANGE_METADATA,
     TABLE_HAS_DATE,
     TABLE_PATHS,
@@ -38,6 +37,7 @@ from pointline.config import (
 )
 from pointline.dim_symbol import read_dim_symbol_table
 from pointline.research.core import _normalize_timestamp
+from pointline.tables.asset_class import ASSET_CLASS_TAXONOMY
 
 
 def list_exchanges(
@@ -79,10 +79,23 @@ def list_exchanges(
         >>> # List Chinese stocks + crypto spot
         >>> combined = list_exchanges(asset_class=["stocks-cn", "crypto-spot"])
     """
-    # Get all exchanges from EXCHANGE_METADATA
+    # Try dim_exchange first, fall back to EXCHANGE_METADATA
+    from pointline.config import _load_dim_exchange
+
+    dim_ex = _load_dim_exchange()
+    source_items: list[tuple[str, dict]] = []
+
+    if dim_ex is not None:
+        source_items = list(dim_ex.items())
+    else:
+        source_items = [
+            (name, {**meta, "timezone": meta.get("timezone", "UTC")})
+            for name, meta in EXCHANGE_METADATA.items()
+        ]
+
     exchanges_data = []
 
-    for exchange_name, metadata in EXCHANGE_METADATA.items():
+    for exchange_name, metadata in source_items:
         # Filter by active status
         if active_only and not metadata.get("is_active", True):
             continue
@@ -100,17 +113,18 @@ def list_exchanges(
                     if ac in ASSET_CLASS_TAXONOMY:
                         taxonomy_entry = ASSET_CLASS_TAXONOMY[ac]
                         if "children" in taxonomy_entry:
-                            # Parent class - include all children
                             expanded_classes.update(taxonomy_entry["children"])
                         else:
-                            # Leaf class
                             expanded_classes.add(ac)
                     else:
-                        # Unknown class - include as-is for filtering
                         expanded_classes.add(ac)
+                    # Also match parent prefix (e.g., "crypto" matches "crypto-spot")
+                    expanded_classes.add(ac)
 
-                # Check if this exchange belongs to any of the requested classes
-                if metadata.get("asset_class") not in expanded_classes:
+                row_class = metadata.get("asset_class", "")
+                if row_class not in expanded_classes and not any(
+                    row_class.startswith(ec + "-") for ec in expanded_classes
+                ):
                     continue
 
         exchanges_data.append(

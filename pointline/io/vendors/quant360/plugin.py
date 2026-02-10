@@ -93,6 +93,12 @@ class Quant360Vendor:
             extra=None,
         )
 
+    def get_table_mapping(self) -> dict[str, str]:
+        return {
+            "l3_orders": "szse_l3_orders",
+            "l3_ticks": "szse_l3_ticks",
+        }
+
     def get_parsers(self) -> dict[str, Callable[[pl.DataFrame], pl.DataFrame]]:
         """Get all parsers provided by this vendor.
 

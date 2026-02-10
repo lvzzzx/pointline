@@ -15,6 +15,7 @@ from typing import Literal
 # A CI test (test_type_registry_sync.py) ensures this stays in sync.
 TableName = Literal[
     "dim_symbol",
+    "dim_exchange",
     "stock_basic_cn",
     "dim_asset_stats",
     "ingest_manifest",

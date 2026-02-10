@@ -72,6 +72,9 @@ class TushareVendor:
             extra=None,
         )
 
+    def get_table_mapping(self) -> dict[str, str]:
+        return {}
+
     def get_parsers(self) -> dict[str, Callable[[pl.DataFrame], pl.DataFrame]]:
         """Get all parsers provided by this vendor (none).
 

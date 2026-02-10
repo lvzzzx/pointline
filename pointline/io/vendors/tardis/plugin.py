@@ -103,6 +103,14 @@ class TardisVendor:
             extra=None,
         )
 
+    def get_table_mapping(self) -> dict[str, str]:
+        return {
+            "trades": "trades",
+            "quotes": "quotes",
+            "book_snapshot_25": "book_snapshot_25",
+            "derivative_ticker": "derivative_ticker",
+        }
+
     def get_parsers(self) -> dict[str, Callable[[pl.DataFrame], pl.DataFrame]]:
         """Get all Tardis parsers.
 

@@ -17,15 +17,7 @@ from pointline.io.base_repository import BaseDeltaRepository
 from pointline.io.delta_manifest_repo import DeltaManifestRepository
 from pointline.io.local_source import LocalBronzeSource
 from pointline.io.protocols import BronzeFileMetadata, IngestionResult
-
-TABLE_NAME_BY_DATA_TYPE = {
-    "trades": "trades",
-    "quotes": "quotes",
-    "book_snapshot_25": "book_snapshot_25",
-    "derivative_ticker": "derivative_ticker",
-    "l3_orders": "szse_l3_orders",
-    "l3_ticks": "szse_l3_ticks",
-}
+from pointline.io.vendors.registry import resolve_table_name
 
 
 def _extract_partition_value(bronze_file_path: str, key: str) -> str | None:
@@ -38,11 +30,7 @@ def _extract_partition_value(bronze_file_path: str, key: str) -> str | None:
 
 
 def _resolve_target_table_name(meta: BronzeFileMetadata) -> str | None:
-    if meta.data_type == "klines":
-        if not meta.interval:
-            return None
-        return f"kline_{meta.interval}"
-    return TABLE_NAME_BY_DATA_TYPE.get(meta.data_type)
+    return resolve_table_name(meta.vendor, meta.data_type, interval=meta.interval)
 
 
 def _extract_partition_filters(meta: BronzeFileMetadata) -> dict[str, object] | None:

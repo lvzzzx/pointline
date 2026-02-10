@@ -97,6 +97,11 @@ class BinanceVisionVendor:
             extra=None,
         )
 
+    def get_table_mapping(self) -> dict[str, str]:
+        return {
+            "klines": "kline_{interval}",
+        }
+
     def get_parsers(self) -> dict[str, Callable[[pl.DataFrame], pl.DataFrame]]:
         """Get all parsers provided by this vendor.
 

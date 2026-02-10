@@ -433,7 +433,7 @@ def test_trades_service_write():
 
     service.write(df)
 
-    repo.merge.assert_called_once_with(df, keys=["file_id", "file_line_number"])
+    repo.append.assert_called_once_with(df)
 
 
 def test_trades_service_ingest_file_quarantine():
@@ -587,8 +587,8 @@ def test_trades_service_ingest_file_success():
         assert result.ts_local_min_us > 0
         assert result.ts_local_max_us > 0
 
-        # Verify idempotent lineage-key merge was used
-        repo.merge.assert_called_once()
+        # Verify append-first write was used (default)
+        repo.append.assert_called_once()
 
     finally:
         temp_path.unlink(missing_ok=True)

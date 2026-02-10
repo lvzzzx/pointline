@@ -109,25 +109,32 @@ class GenericIngestionService(BaseService):
         """
         return self.strategy.normalize_schema(valid_data)
 
-    def write(self, result: pl.DataFrame) -> None:
-        """Append data to the Delta table."""
+    def write(self, result: pl.DataFrame, *, use_merge: bool = False) -> None:
+        """Append data to the Delta table.
+
+        Default is append-only for performance. MERGE is available as opt-in
+        for tables that need upsert semantics or explicit crash-recovery dedup.
+
+        Args:
+            result: DataFrame to write.
+            use_merge: If True, use MERGE on lineage keys for idempotent writes.
+                      Default False (append-only, ~2-5x faster).
+        """
         if result.is_empty():
             logger.warning("write: skipping empty DataFrame")
             return
 
-        # Prefer lineage-key upsert to make retries idempotent if a crash happens
-        # after Silver write but before manifest status update.
-        lineage_keys = ["file_id", "file_line_number"]
-        if all(col in result.columns for col in lineage_keys) and hasattr(self.repo, "merge"):
-            self.repo.merge(result, keys=lineage_keys)
-            return
+        if use_merge:
+            lineage_keys = ["file_id", "file_line_number"]
+            if all(col in result.columns for col in lineage_keys) and hasattr(self.repo, "merge"):
+                self.repo.merge(result, keys=lineage_keys)
+                return
 
-        # Fallback for repositories/tables without lineage columns.
         if hasattr(self.repo, "append"):
             self.repo.append(result)
             return
 
-        raise NotImplementedError("Repository must support merge() or append() for event data")
+        raise NotImplementedError("Repository must support append() for event data")
 
     def ingest_file(
         self,

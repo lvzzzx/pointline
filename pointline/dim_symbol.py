@@ -110,7 +110,11 @@ def assign_symbol_id_hash(df: pl.DataFrame) -> pl.DataFrame:
     def _hash_payloads(s: pl.Series) -> pl.Series:
         return pl.Series(
             [
-                int.from_bytes(hashlib.blake2b(x.encode("utf-8"), digest_size=4).digest(), "little")
+                int.from_bytes(
+                    hashlib.blake2b(x.encode("utf-8"), digest_size=8).digest(),
+                    "little",
+                    signed=True,
+                )
                 for x in s
             ],
             dtype=pl.Int64,
