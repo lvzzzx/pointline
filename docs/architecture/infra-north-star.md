@@ -151,15 +151,16 @@ Recommendation: Phase 1 — move exchange/asset metadata to `dim_exchange` Silve
 
 **Location:** `dim_symbol.py:47-75`
 
-`TRACKED_COLS` are crypto-centric: `base_asset`, `quote_asset`, `asset_type`, `tick_size`, `lot_size`, `price_increment`, `amount_increment`, `contract_size`. Missing for other asset classes:
+`TRACKED_COLS` are crypto-centric: `base_asset`, `quote_asset`, `asset_type`, `tick_size`, `lot_size`, `price_increment`, `amount_increment`, `contract_size`. Options fields (`expiry_ts_us`, `underlying_symbol_id`, `strike`, `put_call`) have been added as nullable columns for crypto options support.
+
+Remaining gaps for future asset classes:
 
 | Asset Class | Missing Fields |
 |-------------|---------------|
-| Futures | `expiry_ts_us`, `underlying_symbol_id`, `settlement_type`, `contract_month` |
-| Options | `strike`, `put_call`, `exercise_style`, `expiry_ts_us`, `underlying_symbol_id` |
+| Futures | `contract_month`, `settlement_type` |
 | Equities | `isin`, `cusip`, `listing_exchange`, `sector` |
 
-Recommendation: Short-term — add nullable columns for the next asset class. Long-term — satellite dimension tables (`dim_futures_contract`, `dim_options_contract`, `dim_equity_listing`) joined by `symbol_id`.
+Recommendation: Add nullable columns as needed when onboarding each asset class. Reconsider satellite dimension tables if dim_symbol exceeds ~25 columns.
 
 #### P2: No Trading Calendar
 
@@ -243,7 +244,6 @@ Recommendation: Add status markers (Implemented / Planned) to the schema catalog
 
 | Task | Priority | Effort | Impact |
 |------|----------|--------|--------|
-| Satellite dimension tables (`dim_futures_contract`, etc.) | P2 | Large | Clean multi-asset data model |
 | Cross-asset query helpers in research API | P2 | Medium | Research ergonomics |
 | Runtime schema registry (replace scattered schema dicts) | P2 | Large | Automated schema validation and docs |
 
@@ -314,7 +314,7 @@ Recommendation: Add status markers (Implemented / Planned) to the schema catalog
 
 1. **Pure data lake over hybrid storage.** DuckDB as a query layer over Delta Lake gives SQL and indexed access without dual-write consistency problems. No separate database for klines or metadata.
 
-2. **Wide dim_symbol with satellite tables at scale.** Add nullable columns for the next asset class (futures or US equities). Migrate to satellite dimension tables when three or more asset classes have distinct metadata needs.
+2. **Wide dim_symbol with nullable columns.** Options fields (strike, put_call, expiry, underlying) live directly in dim_symbol. Add more nullable columns for future asset classes. Reconsider satellite tables only if dim_symbol exceeds ~25 columns.
 
 3. **Config as data, phased migration.** Phase 1: move `EXCHANGE_MAP` to `dim_exchange` table. Phase 2: vendor plugins self-register exchange support. Phase 3: retire `config.py` registries entirely.
 

@@ -54,13 +54,11 @@ TRACKED_COLS: tuple[str, ...] = (
     "price_increment",
     "amount_increment",
     "contract_size",
-    # Multi-asset fields (Phase 2) — nullable for asset classes that don't use them
+    # Options fields — nullable for asset classes that don't use them
     "expiry_ts_us",
     "underlying_symbol_id",
-    "settlement_type",
     "strike",
     "put_call",
-    "isin",
 )
 
 # Tracked columns that may be omitted from updates (filled with null if missing).
@@ -68,10 +66,8 @@ OPTIONAL_TRACKED_COLS: frozenset[str] = frozenset(
     {
         "expiry_ts_us",
         "underlying_symbol_id",
-        "settlement_type",
         "strike",
         "put_call",
-        "isin",
     }
 )
 
@@ -88,13 +84,11 @@ SCHEMA: dict[str, pl.DataType] = {
     "price_increment": pl.Float64,
     "amount_increment": pl.Float64,
     "contract_size": pl.Float64,
-    # Multi-asset fields (Phase 2) — nullable for asset classes that don't use them
-    "expiry_ts_us": pl.Int64,  # Futures/options contract expiry (nullable)
+    # Options fields — nullable for asset classes that don't use them
+    "expiry_ts_us": pl.Int64,  # Contract expiry (nullable)
     "underlying_symbol_id": pl.Int64,  # Underlying instrument symbol_id (nullable)
-    "settlement_type": pl.Utf8,  # "cash" / "physical" (nullable)
     "strike": pl.Float64,  # Options strike price (nullable)
     "put_call": pl.Utf8,  # "put" / "call" (nullable)
-    "isin": pl.Utf8,  # ISIN identifier for equities (nullable)
     # SCD Type 2 metadata
     "valid_from_ts": pl.Int64,
     "valid_until_ts": pl.Int64,
@@ -173,15 +167,13 @@ def normalize_dim_symbol_schema(df: pl.DataFrame) -> pl.DataFrame:
         # (shouldn't happen in practice)
         df = df.with_columns(pl.col("exchange").fill_null("unknown"))
 
-    # Columns that are nullable (added in Phase 2 for multi-asset support).
+    # Columns that are nullable (options fields).
     # These are filled with null if absent from the input DataFrame.
     nullable_cols = {
         "expiry_ts_us",
         "underlying_symbol_id",
-        "settlement_type",
         "strike",
         "put_call",
-        "isin",
     }
 
     missing = [col for col in SCHEMA if col not in df.columns and col not in nullable_cols]

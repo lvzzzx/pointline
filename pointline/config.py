@@ -116,9 +116,6 @@ TABLE_PATHS = {
     "kline_1d": "silver/kline_1d",
     "szse_l3_orders": "silver/szse_l3_orders",
     "szse_l3_ticks": "silver/szse_l3_ticks",
-    "dim_futures_contract": "silver/dim_futures_contract",
-    "dim_options_contract": "silver/dim_options_contract",
-    "dim_equity_listing": "silver/dim_equity_listing",
 }
 
 # Table registry for date column availability (used for safe filtering).
@@ -139,9 +136,6 @@ TABLE_HAS_DATE = {
     "kline_1d": True,
     "szse_l3_orders": True,
     "szse_l3_ticks": True,
-    "dim_futures_contract": False,
-    "dim_options_contract": False,
-    "dim_equity_listing": False,
 }
 
 # Storage Settings

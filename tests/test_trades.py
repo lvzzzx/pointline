@@ -513,10 +513,8 @@ def test_check_quarantine_uses_exchange_local_trading_day():
             "contract_size": [1.0],
             "expiry_ts_us": [None],
             "underlying_symbol_id": [None],
-            "settlement_type": [None],
             "strike": [None],
             "put_call": [None],
-            "isin": [None],
             # 2024-05-01 in Asia/Shanghai => [2024-04-30T16:00:00Z, 2024-05-01T16:00:00Z)
             "valid_from_ts": [1714492800000000],
             "valid_until_ts": [1714579200000000],

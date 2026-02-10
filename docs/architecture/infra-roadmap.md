@@ -238,30 +238,19 @@ supported_tables list<string>  (e.g., ["trades", "quotes", "book_snapshot_25"])
 
 ### 2.1 Extend dim_symbol with Nullable Asset-Class Columns
 
-**Why:** Futures need `expiry_ts_us`, `underlying_symbol_id`, `settlement_type`. Options need `strike`, `put_call`. Equities need `isin`, `listing_exchange`. These don't apply to crypto, so they must be nullable.
+**Why:** Options need `expiry_ts_us`, `underlying_symbol_id`, `strike`, `put_call`. These don't apply to crypto spot/perp, so they must be nullable.
 
-**Scope:**
-- Add nullable columns to `dim_symbol.SCHEMA`:
+**Status:** Done. The following nullable columns are in dim_symbol:
 
 ```python
-# Futures/Options fields (nullable for crypto/equity)
+# Options fields (nullable for non-options)
 "expiry_ts_us": pl.Int64,           # Contract expiry (nullable)
 "underlying_symbol_id": pl.Int64,   # Underlying instrument (nullable)
-"settlement_type": pl.Utf8,         # "cash" / "physical" (nullable)
-
-# Options fields (nullable for non-options)
 "strike": pl.Float64,               # Strike price (nullable)
 "put_call": pl.Utf8,                # "put" / "call" (nullable)
-
-# Equity fields (nullable for non-equity)
-"isin": pl.Utf8,                    # ISIN identifier (nullable)
 ```
 
-- Update `TRACKED_COLS` to include new fields (SCD2 change detection)
-- Update `normalize_dim_symbol_schema()` to handle new columns
-- Update `docs/reference/schemas.md` with new columns
-
-**Decision gate:** If this push dim_symbol past ~25 columns, switch to satellite tables (Phase 4) instead.
+Additional columns (`settlement_type`, `isin`, etc.) will be added when their respective asset classes are onboarded.
 
 **Acceptance:**
 - Existing crypto dim_symbol data loads with new columns (all null)
@@ -511,17 +500,9 @@ The choice depends on research priority. The architecture supports either.
 **Trigger:** When the third asset class is onboarded, or when dim_symbol exceeds ~25 columns.
 **Duration:** Ongoing.
 
-### 5.1 Satellite Dimension Tables
+### 5.1 Satellite Dimension Tables — Deferred
 
-**Why:** When three asset classes have distinct metadata (crypto, equities, futures), a wide dim_symbol with 30+ nullable columns becomes unwieldy. Satellite tables keep the core slim.
-
-**Scope:**
-- `dim_futures_contract(symbol_id, expiry_ts_us, underlying_symbol_id, settlement_type, contract_month, multiplier)`
-- `dim_options_contract(symbol_id, strike, put_call, exercise_style, expiry_ts_us, underlying_symbol_id)`
-- `dim_equity_listing(symbol_id, isin, cusip, figi, listing_exchange, sector, industry)`
-- Each is a small unpartitioned Delta table joined by `symbol_id`
-- Move asset-class-specific nullable columns from dim_symbol to satellites
-- Research API: `research.symbol_metadata(symbol_id)` auto-joins relevant satellite
+**Status:** Deferred. Options metadata (strike, put_call, expiry_ts_us, underlying_symbol_id) lives directly in dim_symbol as nullable columns. Satellite tables will be reconsidered if dim_symbol exceeds ~25 columns after onboarding 3+ asset classes.
 
 ---
 

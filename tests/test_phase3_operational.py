@@ -43,10 +43,8 @@ def _make_dim_symbol(rows: list[dict]) -> pl.DataFrame:
         "is_current": True,
         "expiry_ts_us": None,
         "underlying_symbol_id": None,
-        "settlement_type": None,
         "strike": None,
         "put_call": None,
-        "isin": None,
     }
     data: dict = {k: [] for k in DIM_SYMBOL_SCHEMA}
     for row in rows:
