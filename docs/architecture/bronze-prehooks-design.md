@@ -1,5 +1,9 @@
 # Bronze Layer Prehooks Design
 
+**Status:** ⚠️ Partial Implementation (Quant360 only)
+
+> **Note:** Prehooks are currently implemented only for the Quant360 vendor plugin. Other vendors use standard ingestion paths without prehooks.
+
 ## Problem Statement
 
 Certain vendors (e.g., Quant360) deliver data in archive formats (.7z, .zip) that require reorganization before ingestion. Currently, this is a manual preprocessing step that users must remember to run.

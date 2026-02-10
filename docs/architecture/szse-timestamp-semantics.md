@@ -1,8 +1,8 @@
 # SZSE Level 3 Data: Timestamp Semantics and Sequence Validation
 
 **Created:** 2026-02-06
-**Status:** Design Document
-**Context:** Quant360 SZSE L3 data lacks arrival timestamps; channel-based ordering guarantees
+**Status:** ✅ Implemented | **Module:** `pointline.io.vendors.quant360` (SZSE L3 parser)
+**Context:** Quant360 SZSE L3 data lacks arrival timestamps; channel-based ordering guarantees. Implemented with exchange time as `ts_local_us` fallback.
 
 ---
 
