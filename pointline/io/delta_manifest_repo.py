@@ -283,3 +283,11 @@ class DeltaManifestRepository(BaseDeltaRepository):
         )
 
         self.merge(update_df, keys=["file_id"])
+
+
+# ---------------------------------------------------------------------------
+# Schema registry registration
+# ---------------------------------------------------------------------------
+from pointline.schema_registry import register_schema as _register_schema  # noqa: E402
+
+_register_schema("ingest_manifest", MANIFEST_SCHEMA, has_date=True)

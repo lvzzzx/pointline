@@ -55,3 +55,11 @@ def normalize_stock_basic_cn_schema(df: pl.DataFrame) -> pl.DataFrame:
 def required_stock_basic_cn_columns() -> tuple[str, ...]:
     """Columns required for a stock_basic_cn DataFrame."""
     return tuple(SCHEMA.keys())
+
+
+# ---------------------------------------------------------------------------
+# Schema registry registration
+# ---------------------------------------------------------------------------
+from pointline.schema_registry import register_schema as _register_schema  # noqa: E402
+
+_register_schema("stock_basic_cn", SCHEMA)

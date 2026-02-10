@@ -99,6 +99,7 @@ from pointline.research.discovery import (
     list_symbols,
     list_tables,
     summarize_symbol,
+    symbol_metadata,
     trading_days,
 )
 from pointline.research.pipeline import compile_request, pipeline
@@ -123,6 +124,7 @@ __all__ = [
     "list_tables",
     "data_coverage",
     "summarize_symbol",
+    "symbol_metadata",
     "trading_days",
     # Query module (convenience layer)
     "query",

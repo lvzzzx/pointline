@@ -99,3 +99,11 @@ def trading_days(
     ).sort("date")
 
     return result["date"].to_list()
+
+
+# ---------------------------------------------------------------------------
+# Schema registry registration
+# ---------------------------------------------------------------------------
+from pointline.schema_registry import register_schema as _register_schema  # noqa: E402
+
+_register_schema("dim_trading_calendar", DIM_TRADING_CALENDAR_SCHEMA, has_date=True)
