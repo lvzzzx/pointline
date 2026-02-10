@@ -56,10 +56,12 @@ Pointline is a **universal offline research data lake** for quantitative trading
 |-------|--------|---------|
 | dim_symbol | Active | SCD Type 2 instrument metadata |
 | dim_asset_stats | Active | Daily asset-level stats (supply, market cap) |
-| dim_trading_calendar | Planned | Exchange trading schedules and holidays |
-| dim_exchange | Planned | Exchange metadata (replaces hardcoded EXCHANGE_MAP) |
+| dim_exchange | Schema defined | Exchange metadata (fallback chain with EXCHANGE_MAP) |
+| dim_trading_calendar | Schema defined | Exchange trading schedules and holidays |
 | stock_basic_cn | Active | CN equity reference data |
 | ingest_manifest | Active | ETL tracking ledger |
+| validation_log | Active | Ingestion DQ audit trail |
+| dq_summary | Active | Per-run data quality summaries |
 
 ### Non-Goals
 
@@ -73,142 +75,159 @@ Pointline is a **universal offline research data lake** for quantitative trading
 
 ## Architecture Review (2026-02-10)
 
-### Previous Review Status (2026-02-02)
+### Review History
 
-The Feb 2 review identified four weaknesses. Current status:
+**Feb 2, 2026 review** identified four weaknesses. **All four are now resolved:**
 
 | Issue | Status | Resolution |
 |-------|--------|------------|
 | Ingestion boilerplate | **Resolved** | `GenericIngestionService` consolidated all per-table services |
 | Vendor coupling | **Resolved** | Vendor plugin system (`io/vendors/`) with 5 plugins |
-| DQ observability | **Open** | `validation_log` table exists but not wired into ingestion pipeline |
-| Schema management | **Partially resolved** | `docs/reference/schemas.md` is comprehensive; no runtime schema registry |
+| DQ observability | **Resolved** | `_write_validation_log()` wired into `GenericIngestionService` at all exit points |
+| Schema management | **Resolved** | `pointline/schema_registry.py` provides runtime registration, lookup, and validation |
 
 ### Current State (2026-02-10)
 
 **Codebase:** ~24K LoC Python, 12 silver tables, 5 vendor plugins, 27 registered exchanges.
 
-**What works well:**
+### What Works Well
 
-1. **Layered architecture.** `tables/` (domain logic, pure Polars) → `services/` (orchestration) → `io/` (Delta Lake storage). Clean separation with Protocol-based interfaces. Service layer is storage-agnostic and testable.
+1. **Layered architecture.** `tables/` (domain logic, pure Polars) -> `services/` (orchestration) -> `io/` (Delta Lake storage). Clean separation with Protocol-based interfaces (`TableRepository`, `AppendableTableRepository`, `BronzeSource`). Service layer is storage-agnostic and testable.
 
-2. **Vendor plugin system.** Capability-based protocol (`supports_parsers`, `supports_download`, `supports_prehooks`, `supports_api_snapshots`) with auto-discovery. Adding a vendor requires zero core changes. The `read_and_parse()` contract is asset-agnostic.
+2. **Vendor plugin system.** Capability-based protocol (`supports_parsers`, `supports_download`, `supports_prehooks`, `supports_api_snapshots`) with auto-discovery. The `VendorPlugin` protocol includes `get_table_mapping()` for explicit vendor-to-table routing and `read_and_parse()` for asset-agnostic parsing. `resolve_table_name()` in the vendor registry handles parameterized table names (e.g., `kline_{interval}`). Adding a vendor requires zero core changes.
 
-3. **SCD Type 2 symbol management.** `dim_symbol` with validity windows, as-of joins via `join_asof()`, contiguous coverage checks. Hash-based `symbol_id` assignment gives deterministic surrogates. Quarantine logic prevents ingestion of data for unknown symbols.
+3. **SCD Type 2 symbol management.** `dim_symbol` with validity windows, as-of joins via `join_asof()`, contiguous coverage checks. Hash-based `symbol_id` assignment using BLAKE2b with 8-byte digest (full Int64 range) gives deterministic surrogates safe for >1M contracts. Quarantine logic prevents ingestion of data for unknown symbols.
 
 4. **Fixed-point encoding.** `px_int = round(price / price_increment)` eliminates floating-point error. Dual `tick_size` (exchange rule) vs `price_increment` (storage encoding) is well-documented.
 
-5. **Two-tier research API.** `research.query.*` (convenience, auto-resolution) and `research.core.*` (production, explicit symbol_id). `decoded=True` hides the fixed-point join. Good developer experience.
+5. **Two-tier research API.** `research.query.*` (convenience, auto-resolution) and `research.core.*` (production, explicit symbol_id). `decoded=True` hides the fixed-point join. Discovery API (`list_exchanges`, `list_symbols`, `data_coverage`, `summarize_symbol`) provides exploration without prior knowledge.
 
 6. **Timezone-aware partitioning.** `date` partition derived from `ts_local_us` in exchange-local timezone. `EXCHANGE_TIMEZONES` registry ensures one trading day = one partition.
 
-### Identified Issues
+7. **Idempotent ingestion.** The CLI runs real ingests with `idempotent_write=True`, using MERGE on lineage keys `(file_id, file_line_number)` so retries and crash recovery are safe. Dry-run walks the full pipeline but skips all writes and validation-log side effects. The `write()` method supports both append (for bulk loads) and MERGE (for production ingests).
 
-#### P0: Manifest Concurrency Model
+8. **Schema validation at write boundary.** `validate_schema()` in `base_repository.py` checks column presence, absence of unexpected columns, and type matching before all write paths (`append`, `write_full`, `overwrite_partition`, `merge`). Canonical schemas registered via `schema_registry.py`.
 
-**Location:** `io/delta_manifest_repo.py:86-164`
+9. **Runtime schema registry.** `pointline/schema_registry.py` provides `register_schema()`, `get_schema()`, `get_entry()`, `list_tables()`, and `validate_df()`. Each table module self-registers at import time.
 
-`resolve_file_id()` uses `fcntl.flock()` on a lock file inside the Delta table directory, with a full `pl.read_delta()` under the lock to compute `max(file_id) + 1`.
+10. **Cross-platform manifest.** `resolve_file_id()` uses `filelock.FileLock` (cross-platform) with a separate binary counter file (`_FileIdCounter`) for monotonic file_id assignment. Counter syncs with manifest max on startup for crash recovery.
 
-Problems:
-- Platform-specific (`fcntl` is POSIX-only).
-- Lock file sits alongside Delta's own `_delta_log/`, creating parallel coordination.
-- Full-table read under exclusive lock becomes a bottleneck as manifest grows.
+11. **Caching.** TTL-based caches with double-checked locking: `dim_symbol` (5 min), `dim_exchange` (1 hour). Pre-computed `_REVERSE_EXCHANGE_MAP` for O(1) reverse exchange lookup.
 
-Recommendation: Use Delta native MERGE for atomic ID reservation, or maintain a monotonic counter file separate from the Delta table.
+12. **DQ observability.** `_write_validation_log()` wired into `GenericIngestionService` at all exit points (success, error, quarantine, empty file, missing metadata). Suppressed during dry-run to guarantee no side effects. Status classification uses structured `IngestionResult.failure_reason` (e.g., `all_symbols_quarantined`, `unknown_exchange`, `ingest_exception`) rather than error-message substring matching. Best-effort writes to avoid blocking ingestion on DQ failures.
 
-#### P1: Default Write Strategy is MERGE, Not Append
+13. **Vectorized quarantine.** `_check_quarantine_vectorized()` builds unique `(exchange_id, exchange_symbol, date)` pairs, evaluates coverage per pair, then filters via anti-join in one pass. Coverage check per unique pair is still a Python call to `check_coverage()`, but the final DataFrame filter is vectorized.
 
-**Location:** `services/generic_ingestion_service.py:118-130`
+14. **Config-as-data migration in progress.** `get_exchange_id()` uses a fallback chain: `dim_exchange` table (1-hour TTL cache) -> hardcoded `EXCHANGE_MAP`. The hardcoded dicts remain as fallback for cold start and backward compatibility.
 
-`write()` prefers `repo.merge(result, keys=["file_id", "file_line_number"])` for every ingestion, paying full MERGE cost even on the happy path. The stated justification (crash between Silver write and manifest update) can be solved more cheaply with a three-phase commit: write manifest as "in_progress" → append Silver → update manifest to "success".
+### Open Issues
 
-#### P1: No Schema Validation at Repository Boundary
+#### P3: Manifest Full-Table Read Under Lock (Transitional — Acceptable at Current Scale)
 
-**Location:** `io/base_repository.py:49-73`
+**Location:** `io/delta_manifest_repo.py` — `resolve_file_id()`
 
-`write_full()` and `append()` blindly convert DataFrame → Arrow → Delta. No check that the DataFrame schema matches the expected table schema. Schema mismatches produce cryptic Arrow errors or silent schema widening.
+`resolve_file_id()` holds an exclusive `FileLock` while performing `pl.read_delta()` on the entire manifest table to check for existing identity keys. The current approach is correct and simple to reason about — it prevents duplicate file_id assignment races and works well for single-host/local workloads where manifest size is manageable.
 
-Recommendation: Add `validate_schema(df, expected_schema)` before Arrow conversion. Canonical schemas exist in `tables/*.py` — they're just not enforced at the write boundary.
+**Why it hurts later:** Every `resolve_file_id()` reads the full manifest under lock, so concurrent workers queue up. As the manifest grows (millions of rows), lock hold time rises and ingestion throughput drops. The issue is lock duration, not correctness.
 
-#### P1: symbol_id Hash Collision Risk
+**Incremental improvement path:**
+1. **Current (operational):** Full read under lock. Safest, simplest. Justified at current scale.
+2. **Next step:** Keyed lookup under lock — read only the `(vendor, data_type, bronze_file_name, sha256)` match instead of the full table. Keep the lock only around lookup + insert critical section.
+3. **Later:** Manifest index/partition strategy + batched ID reservation to amortize lock overhead.
 
-**Location:** `dim_symbol.py:93-119`
+#### P1: Counter File Uses 4-Byte Integer
 
-`assign_symbol_id_hash()` uses `blake2b` with 4-byte digest (32-bit space). With crypto (~5K symbols) this is safe. With US equities + options (~1M+ contracts), birthday paradox gives ~50% collision probability.
+**Location:** `io/delta_manifest_repo.py` — `_FileIdCounter`
 
-Recommendation: Widen digest to 8 bytes. The column is already Int64 — the storage supports it.
+Counter is stored as `struct.pack("<i", next_val)` — a signed 32-bit integer capping `file_id` at 2,147,483,647. Sufficient for current scale but will silently overflow if the lake reaches billions of ingested files over its lifetime.
 
-#### P1: Configuration is Hardcoded
+**Recommendation:** Widen to `struct.pack("<q", next_val)` (signed 64-bit) to match the `Int64` column type. This is a one-line change with a migration step to rewrite the counter file.
 
-**Location:** `config.py` (736 lines)
+#### P1: Hardcoded Config Dicts Not Yet Retired
 
-`EXCHANGE_MAP`, `EXCHANGE_METADATA`, `EXCHANGE_TIMEZONES`, `ASSET_CLASS_TAXONOMY`, `TYPE_MAP`, `ASSET_TO_COINGECKO_MAP` are all Python dicts. Every new exchange requires a code change. This violates the north star principle that configuration is data.
+**Location:** `config.py` (787 lines)
 
-Recommendation: Phase 1 — move exchange/asset metadata to `dim_exchange` Silver table or `config.toml`. Phase 2 — make the vendor plugin system self-register its supported exchanges.
+`EXCHANGE_MAP`, `EXCHANGE_METADATA`, `EXCHANGE_TIMEZONES`, `ASSET_CLASS_TAXONOMY`, `TYPE_MAP`, and `ASSET_TO_COINGECKO_MAP` remain as hardcoded Python dicts. The `dim_exchange` fallback chain is implemented, but the hardcoded dicts are still the primary source in practice (most deployments don't have a populated `dim_exchange` table).
 
-#### P2: dim_symbol Assumes Crypto Semantics
+Every new exchange still requires a code change to `config.py`.
 
-**Location:** `dim_symbol.py:47-75`
+**Recommendation:** Phase 1 — populate `dim_exchange` table as part of standard setup (CLI command or bootstrap script). Phase 2 — make vendor plugins self-register supported exchanges. Phase 3 — remove hardcoded dicts, keep only as emergency fallback.
 
-`TRACKED_COLS` are crypto-centric: `base_asset`, `quote_asset`, `asset_type`, `tick_size`, `lot_size`, `price_increment`, `amount_increment`, `contract_size`. Options fields (`expiry_ts_us`, `underlying_symbol_id`, `strike`, `put_call`) have been added as nullable columns for crypto options support.
+#### P2: dim_symbol Column Growth for Future Asset Classes
 
-Remaining gaps for future asset classes:
+**Location:** `dim_symbol.py`
+
+`TRACKED_COLS` are crypto-centric. Options fields (`expiry_ts_us`, `underlying_symbol_id`, `strike`, `put_call`) have been added as nullable columns. Remaining gaps:
 
 | Asset Class | Missing Fields |
 |-------------|---------------|
 | Futures | `contract_month`, `settlement_type` |
 | Equities | `isin`, `cusip`, `listing_exchange`, `sector` |
 
-Recommendation: Add nullable columns as needed when onboarding each asset class. Reconsider satellite dimension tables if dim_symbol exceeds ~25 columns.
+**Recommendation:** Add nullable columns as needed when onboarding each asset class. Reconsider satellite dimension tables if `dim_symbol` exceeds ~25 columns.
 
-#### P2: No Trading Calendar
+#### P2: dim_trading_calendar and dim_exchange Not Populated
 
-No concept of trading days, exchange holidays, or market hours exists in the codebase. Cross-asset queries ("last trading day for both BTC and SPY") cannot be answered correctly.
+Both table modules exist with schema definitions, but neither is populated with data as part of standard setup. Cross-asset queries requiring trading day alignment ("last trading day for both BTC and SPY") cannot be answered correctly.
 
-Recommendation: Add `dim_trading_calendar` table with `(exchange, date, is_trading_day, open_time_us, close_time_us, session_type)`. Source from `exchange_calendars` package or vendor APIs.
+**Recommendation:** Add CLI commands `pointline dim populate-exchange` and `pointline dim populate-calendar` that bootstrap these tables from existing config + `exchange_calendars` package.
 
-#### P2: Quarantine Check is O(n * m)
+#### P2: Gold Layer Is Aspirational
 
-**Location:** `services/generic_ingestion_service.py:269-293`
+The architecture diagram lists `daily_ohlcv`, `reflexivity_bars`, and `options_surface_grid` in Gold, but there is no Gold-layer service, no Gold-layer write path, and no documented contract for how Gold tables relate to Silver tables. The research framework v2 (`research.pipeline` / `research.workflow`) will need to produce Gold-tier outputs.
 
-Row-by-row Python loop over unique `(exchange_id, exchange_symbol, date)` pairs, each doing a `dim_symbol.filter(...)`. For Quant360 files with ~3000 symbols, this is a performance bottleneck.
+**Recommendation:** Define the boundary between "research notebook output" and "Gold table" before the research framework v2 reaches M3 (bar_then_feature production-ready). At minimum, document: who writes Gold tables (pipeline output vs. dedicated Gold service), what guarantees Gold tables provide (schema, freshness, lineage), and whether Gold tables are append-only or overwrite.
 
-Recommendation: Vectorize with a single anti-join between unique pairs and dim_symbol validity windows.
+#### P2: No Backfill / Re-ingestion Strategy
 
-#### P2: Registry Re-reads dim_symbol on Every Call
+The design assumes append-only ingestion. No documented path exists for:
+- Vendor corrections to historical data
+- Re-ingestion after schema migrations (which the versioning policy explicitly allows)
+- Selective partition rebuilds
 
-**Location:** `registry.py:19-65`
+The `ingest_manifest` tracks file-level status, but there is no "mark dirty and re-ingest" workflow.
 
-`_read_dim_symbol()` calls `pl.scan_delta(...).collect()` on every `resolve_symbol()`, `find_symbol()`, or `resolve_symbols()` invocation. No caching. In notebook sessions, this re-reads the entire table from disk repeatedly.
+**Recommendation:** Document a backfill protocol: (1) mark affected manifest rows as `superseded`, (2) delete or archive affected Silver partitions, (3) re-run ingestion from bronze. Add CLI support: `pointline ingest backfill --table trades --exchange binance-futures --date-range 2024-05-01:2024-05-31`.
 
-Recommendation: Module-level LRU cache with TTL (5-minute staleness is acceptable for offline research).
+#### P2: Cross-Table Join Semantics Undocumented
 
-#### P2: DQ Observability Gap
+The most common research pattern — joining trades + quotes + book_snapshot_25 for a single symbol — has no formalized semantics. Questions without documented answers:
+- Join key: always `ts_local_us`? What about vendor clock skew between data types?
+- Join type: as-of join with backward tolerance? What tolerance?
+- Ordering: when trades and quotes share the same `ts_local_us`, which comes first?
 
-`validation_log` table module exists in `pointline/tables/` but is not wired into `GenericIngestionService`. Ingestion metrics (row counts, quarantined symbols, errors, duration) are only logged to stderr. No queryable audit trail.
+The research framework v2 will need to codify these choices.
 
-Recommendation: Add a `_write_validation_log()` step at the end of `ingest_file()`.
+**Recommendation:** Add a `docs/reference/join-semantics.md` documenting canonical join patterns. Implement helper functions in the research API (e.g., `query.trades_with_quotes()`) that encode these semantics.
 
-#### P3: Vendor-to-Table Routing is Implicit
+#### P2: No Data Retention or Lifecycle Policy
 
-When multiple vendors provide the same data type under different names (e.g., Databento `mbp-1` vs Tardis `trades` → both target `silver.trades`), the routing is implicit via `data_type` string matching.
+Bronze is immutable, Silver is append-only. At HFT resolution, storage grows linearly without bound. For a single-machine target, this matters.
 
-Recommendation: Add `get_table_mapping() -> dict[str, str]` to the `VendorPlugin` protocol.
+No documented policy for:
+- When (if ever) old Bronze files can be archived or deleted
+- Silver compaction cadence beyond ad-hoc `pointline delta optimize`
+- Storage growth projections or monitoring
 
-#### P3: Reverse Exchange Lookup is O(n)
+**Recommendation:** Document a retention policy. At minimum: (1) Bronze retention = forever (or until explicitly archived), (2) Silver compaction SLA (e.g., optimize partitions older than 7 days, vacuum after 168 hours), (3) Storage growth monitoring via a simple CLI command (`pointline lake stats`).
 
-**Location:** `config.py:204-225`
+#### P2: No Golden-File Integration Tests
 
-`get_exchange_name()` iterates the entire `EXCHANGE_MAP` dict. Called during every SCD2 upsert. Harmless at 27 exchanges, incorrect as a pattern.
+Unit tests exist for individual parsers and services, but no end-to-end integration test verifies the full Bronze -> Silver pipeline with deterministic output. The PIT correctness and deterministic ordering claims are not mechanically verified by CI.
 
-Recommendation: Pre-compute reverse map at module load time.
+**Recommendation:** Add a golden-file test: fixed bronze input files -> `ingest_file()` -> compare Silver output against a checked-in expected Parquet file (byte-level or row-level comparison). Cover at least `trades` and `quotes` for one vendor.
 
 #### P3: Schema Docs List Unimplemented Tables
 
 `docs/reference/schemas.md` defines `book_ticker`, `liquidations`, `options_chain`, `options_surface_grid` which have no corresponding `TABLE_PATHS` entries, table modules, or parsers.
 
-Recommendation: Add status markers (Implemented / Planned) to the schema catalog.
+**Recommendation:** Add status markers (Implemented / Planned) to the schema catalog.
+
+#### P3: Quarantine Coverage Check Is Per-Pair Python Loop
+
+Within `_check_quarantine_vectorized()`, the anti-join filter is vectorized, but `check_coverage()` is still called once per unique `(exchange_id, exchange_symbol, date)` pair in a Python list comprehension. For typical crypto files (~1-10 symbols) this is negligible. For Quant360 SZSE files (~3000 symbols) it adds measurable overhead.
+
+**Recommendation:** Refactor `check_coverage()` to accept a batch of pairs and return a boolean Series in one pass, using a vectorized interval-overlap join against dim_symbol validity windows.
 
 ### Improvement Roadmap
 
@@ -216,36 +235,29 @@ Recommendation: Add status markers (Implemented / Planned) to the schema catalog
 
 | Task | Priority | Effort | Impact |
 |------|----------|--------|--------|
-| Widen `symbol_id` hash to 8 bytes | P1 | Small | Prevents collision at scale |
-| Add schema validation at repository write boundary | P1 | Small | Catches schema drift early |
-| Switch ingestion default from MERGE to append with in-progress status | P1 | Medium | ~2-5x write performance |
-| Pre-compute reverse exchange map | P3 | Trivial | Code correctness |
-| Cache dim_symbol reads with TTL | P2 | Small | Research API performance |
+| Widen counter file to 64-bit integer | P1 | Trivial | Future-proofs file_id space |
+| Populate `dim_exchange` via CLI bootstrap command | P1 | Small | Enables config-as-data migration |
+| Add golden-file integration test for trades pipeline | P2 | Medium | Mechanically verifies PIT correctness |
 
 #### Phase 2: Multi-Asset Readiness
 
 | Task | Priority | Effort | Impact |
 |------|----------|--------|--------|
-| Extract exchange registry to `dim_exchange` table or config file | P1 | Medium | Enables data-driven exchange management |
+| Retire hardcoded config dicts (vendor self-registration) | P1 | Medium | Completes config-as-data migration |
 | Add nullable columns to `dim_symbol` for futures/options/equities | P2 | Medium | Unblocks next asset class |
-| Implement `dim_trading_calendar` | P2 | Medium | Enables cross-asset time alignment |
-| Add `get_table_mapping()` to vendor plugin protocol | P3 | Small | Clean vendor-to-table routing |
+| Populate `dim_trading_calendar` via CLI | P2 | Medium | Enables cross-asset time alignment |
+| Document cross-table join semantics | P2 | Small | Research correctness |
 
 #### Phase 3: Operational Maturity
 
 | Task | Priority | Effort | Impact |
 |------|----------|--------|--------|
-| Wire `validation_log` into `GenericIngestionService` | P2 | Medium | Queryable DQ audit trail |
-| Vectorize quarantine check | P2 | Medium | Ingestion performance for large universes |
-| Fix manifest concurrency model | P0 | Medium | Correctness under concurrent ingestion |
+| Document backfill / re-ingestion protocol | P2 | Small | Operational completeness |
+| Define Gold layer contract and write path | P2 | Medium | Unblocks research framework v2 M3 |
+| Add data retention policy and `pointline lake stats` | P2 | Small | Storage management |
+| Manifest keyed lookup under lock (replace full-table read) | P3 | Medium | Ingestion scalability at large manifest size |
+| Batch-vectorize quarantine coverage check | P3 | Medium | Ingestion performance for large universes |
 | Add status markers to schema catalog | P3 | Trivial | Documentation accuracy |
-
-#### Phase 4: Scale (When 3+ Asset Classes Active)
-
-| Task | Priority | Effort | Impact |
-|------|----------|--------|--------|
-| Cross-asset query helpers in research API | P2 | Medium | Research ergonomics |
-| Runtime schema registry (replace scattered schema dicts) | P2 | Large | Automated schema validation and docs |
 
 ### Architecture Diagram
 
@@ -277,14 +289,15 @@ Recommendation: Add status markers (Implemented / Planned) to the schema catalog
 │  └── fundamentals                             (LFT, planned)    │
 │                                                                  │
 │  Dimension Tables (Reference)                                    │
-│  ├── dim_symbol          (SCD2, universal core)                  │
-│  ├── dim_exchange         (planned, replaces EXCHANGE_MAP)       │
-│  ├── dim_trading_calendar (planned)                              │
+│  ├── dim_symbol          (SCD2, active, 8-byte hash IDs)        │
+│  ├── dim_exchange         (schema defined, fallback chain active)│
+│  ├── dim_trading_calendar (schema defined, not yet populated)    │
 │  ├── dim_asset_stats      (daily supply/market cap)              │
-│  └── ingest_manifest      (ETL ledger)                           │
+│  ├── ingest_manifest      (ETL ledger, cross-platform locking)  │
+│  └── validation_log       (DQ audit trail, wired into pipeline) │
 │                                                                  │
-│  Gold (Derived Research Tables)                                  │
-│  ├── daily_ohlcv          (cross-sectional, Z-order by date)     │
+│  Gold (Derived Research Tables — not yet implemented)            │
+│  ├── daily_ohlcv          (cross-sectional, Z-order by date)    │
 │  ├── reflexivity_bars     (dollar-volume bars)                   │
 │  └── options_surface_grid (time-gridded surface)                 │
 │                                                                  │
@@ -301,13 +314,18 @@ Recommendation: Add status markers (Implemented / Planned) to the schema catalog
 │  │          │ │          │ │ _vision  │ │          │          │
 │  └──────────┘ └──────────┘ └──────────┘ └──────────┘          │
 │                                                                  │
+│  Each plugin: get_table_mapping(), read_and_parse(),            │
+│  get_bronze_layout_spec(), normalize_exchange/symbol()           │
+│                                                                  │
 │  Future: databento, polygon, CME DataMine, tushare, bloomberg   │
 └──────────────────────────────────────────────────────────────────┘
 
-  In-Process Cache Layer:
-    dim_symbol       → LRU, 5min TTL
-    dim_asset_stats  → LRU, 1hr TTL
-    dim_exchange     → LRU, 24hr TTL
+  Schema Registry:  schema_registry.py (register, get, validate)
+  In-Process Cache:
+    dim_symbol       → TTL 5min,  thread-safe double-checked lock
+    dim_exchange     → TTL 1hr,   thread-safe double-checked lock
+    dim_asset_stats  → TTL 1hr
+  Write Boundary:   validate_schema() before all Delta writes
 ```
 
 ### Key Design Decisions
@@ -316,8 +334,8 @@ Recommendation: Add status markers (Implemented / Planned) to the schema catalog
 
 2. **Wide dim_symbol with nullable columns.** Options fields (strike, put_call, expiry, underlying) live directly in dim_symbol. Add more nullable columns for future asset classes. Reconsider satellite tables only if dim_symbol exceeds ~25 columns.
 
-3. **Config as data, phased migration.** Phase 1: move `EXCHANGE_MAP` to `dim_exchange` table. Phase 2: vendor plugins self-register exchange support. Phase 3: retire `config.py` registries entirely.
+3. **Config as data, phased migration.** Phase 1 (in progress): `dim_exchange` table with fallback to hardcoded dicts. Phase 2: vendor plugins self-register exchange support. Phase 3: retire `config.py` registries entirely.
 
-4. **Trading calendar as a first-class dimension.** Required before any non-24/7 asset class can be queried correctly in cross-asset research.
+4. **Trading calendar as a first-class dimension.** Required before any non-24/7 asset class can be queried correctly in cross-asset research. Schema defined; population tooling needed.
 
-5. **Append-first ingestion with in-progress status tracking.** Replace MERGE-by-default with a three-phase commit to improve write performance while maintaining crash recovery guarantees.
+5. **Idempotent ingestion by default.** Production ingests use MERGE on lineage keys `(file_id, file_line_number)` for crash-safe retries. `append()` remains available for bulk loads. Manifest writes `pending` on file_id mint, `success` after Silver write. Dry-run mode walks the full pipeline with zero side effects (no writes, no validation-log records).

@@ -591,11 +591,16 @@ class GenericIngestionService(BaseService):
         """
         duration_ms = int(time.time() * 1000) - start_time_ms
 
-        if result.error_message:
-            if "quarantined" in (result.error_message or "").lower():
-                status = "quarantined"
-            else:
-                status = "error"
+        _QUARANTINE_REASONS = {
+            "all_symbols_quarantined",
+            "missing_symbol",
+            "invalid_validity_window",
+        }
+
+        if result.failure_reason in _QUARANTINE_REASONS:
+            status = "quarantined"
+        elif result.failure_reason is not None or result.error_message is not None:
+            status = "error"
         else:
             status = "ingested"
 
