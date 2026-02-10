@@ -224,7 +224,10 @@ def cmd_ingest_run(args: argparse.Namespace) -> int:
 
             file_id = manifest_repo.resolve_file_id(file_meta)
 
-            result = service.ingest_file(file_meta, file_id, bronze_root=bronze_root)
+            dry_run = getattr(args, "dry_run", False)
+            result = service.ingest_file(
+                file_meta, file_id, bronze_root=bronze_root, dry_run=dry_run
+            )
 
             if (
                 args.validate
@@ -269,10 +272,12 @@ def cmd_ingest_run(args: argparse.Namespace) -> int:
                             (exchange, partition_date)
                         )
 
-            manifest_repo.update_status(file_id, status, file_meta, result)
+            if not dry_run:
+                manifest_repo.update_status(file_id, status, file_meta, result)
 
             if status == "success":
-                print(f"✓ {file_meta.bronze_file_path}: {result.row_count} rows")
+                prefix = "[DRY RUN] " if dry_run else ""
+                print(f"{prefix}✓ {file_meta.bronze_file_path}: {result.row_count} rows")
             elif status == "quarantined":
                 print(f"⚠ {file_meta.bronze_file_path}: QUARANTINED - {result.error_message}")
             else:
