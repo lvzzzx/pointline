@@ -695,7 +695,11 @@ def trading_days(
 
     # Fallback: check if this is a crypto exchange (24/7)
     meta = get_exchange_metadata(exchange)
-    asset_class = meta.get("asset_class", "")
+    if meta is None:
+        normalized = normalize_exchange(exchange)
+        if normalized != exchange:
+            meta = get_exchange_metadata(normalized)
+    asset_class = meta.get("asset_class", "") if meta else ""
     if asset_class.startswith("crypto"):
         cal_df = bootstrap_crypto(exchange, start_date, end_date)
         return _td(cal_df, exchange, start_date, end_date)

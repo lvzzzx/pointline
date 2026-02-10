@@ -480,7 +480,7 @@ def kline_1d(
             lazy=lazy,
         )
 
-    return core.scan_table(
+    lf = core.scan_table(
         "kline_1d",
         symbol_id=symbol_ids,
         start_ts_us=start_ts_us,
@@ -488,6 +488,7 @@ def kline_1d(
         ts_col=ts_col,
         columns=columns,
     )
+    return lf if lazy else lf.collect()
 
 
 __all__ = [
