@@ -145,6 +145,7 @@ class GenericIngestionService(BaseService):
         *,
         bronze_root: Path | None = None,
         dry_run: bool = False,
+        idempotent_write: bool = False,
     ) -> IngestionResult:
         """Ingest a single CSV file from Bronze to Silver with runtime vendor dispatch.
 
@@ -153,6 +154,7 @@ class GenericIngestionService(BaseService):
             file_id: File ID from manifest repository
             bronze_root: Root path for bronze files (default: auto-detected from vendor)
             dry_run: Walk the full pipeline but skip write. No side effects.
+            idempotent_write: If True, write via MERGE on lineage keys to make retries safe.
 
         Returns:
             IngestionResult with row count and timestamp ranges
@@ -189,7 +191,8 @@ class GenericIngestionService(BaseService):
                 ts_local_max_us=0,
                 error_message=error_msg,
             )
-            self._write_validation_log(meta, file_id, result, start_time_ms)
+            if not dry_run:
+                self._write_validation_log(meta, file_id, result, start_time_ms)
             return result
 
         # Detect vendor from metadata and get bronze root
@@ -207,7 +210,8 @@ class GenericIngestionService(BaseService):
                 ts_local_max_us=0,
                 error_message=error_msg,
             )
-            self._write_validation_log(meta, file_id, result, start_time_ms)
+            if not dry_run:
+                self._write_validation_log(meta, file_id, result, start_time_ms)
             return result
 
         try:
@@ -222,7 +226,8 @@ class GenericIngestionService(BaseService):
                     ts_local_max_us=0,
                     error_message=None,
                 )
-                self._write_validation_log(meta, file_id, result, start_time_ms)
+                if not dry_run:
+                    self._write_validation_log(meta, file_id, result, start_time_ms)
                 return result
 
             # 2. Validate required metadata columns
@@ -240,7 +245,8 @@ class GenericIngestionService(BaseService):
                     ts_local_max_us=0,
                     error_message=error_msg,
                 )
-                self._write_validation_log(meta, file_id, result, start_time_ms)
+                if not dry_run:
+                    self._write_validation_log(meta, file_id, result, start_time_ms)
                 return result
             null_cols = [col for col in required_cols if df[col].null_count() > 0]
             if null_cols:
@@ -252,7 +258,8 @@ class GenericIngestionService(BaseService):
                     ts_local_max_us=0,
                     error_message=error_msg,
                 )
-                self._write_validation_log(meta, file_id, result, start_time_ms)
+                if not dry_run:
+                    self._write_validation_log(meta, file_id, result, start_time_ms)
                 return result
 
             # 3. Map exchange -> exchange_id (vectorized)
@@ -274,7 +281,8 @@ class GenericIngestionService(BaseService):
                     ts_local_max_us=0,
                     error_message=error_msg,
                 )
-                self._write_validation_log(meta, file_id, result, start_time_ms)
+                if not dry_run:
+                    self._write_validation_log(meta, file_id, result, start_time_ms)
                 return result
 
             df = df.with_columns(
@@ -299,7 +307,8 @@ class GenericIngestionService(BaseService):
                     filtered_symbol_count=filtered_symbol_count,
                     filtered_row_count=filtered_row_count,
                 )
-                self._write_validation_log(meta, file_id, result, start_time_ms)
+                if not dry_run:
+                    self._write_validation_log(meta, file_id, result, start_time_ms)
                 return result
 
             if filtered_symbol_count:
@@ -344,7 +353,8 @@ class GenericIngestionService(BaseService):
                         filtered_symbol_count=filtered_symbol_count,
                         filtered_row_count=filtered_row_count,
                     )
-                    self._write_validation_log(meta, file_id, result, start_time_ms)
+                    if not dry_run:
+                        self._write_validation_log(meta, file_id, result, start_time_ms)
                     return result
 
             # 11. Append to Delta table (skip in dry-run mode)
@@ -354,7 +364,7 @@ class GenericIngestionService(BaseService):
                     f"{meta.bronze_file_path} [vendor={vendor}, data_type={meta.data_type}]"
                 )
             else:
-                self.write(validated_df)
+                self.write(validated_df, use_merge=idempotent_write)
 
             # 12. Compute result stats
             ts_min = validated_df[self.strategy.ts_col].min()
@@ -388,7 +398,8 @@ class GenericIngestionService(BaseService):
                 ts_local_max_us=0,
                 error_message=error_msg,
             )
-            self._write_validation_log(meta, file_id, result, start_time_ms)
+            if not dry_run:
+                self._write_validation_log(meta, file_id, result, start_time_ms)
             return result
 
     def _check_quarantine_vectorized(

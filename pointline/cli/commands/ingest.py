@@ -150,7 +150,8 @@ def cmd_ingest_run(args: argparse.Namespace) -> int:
     else:
         bronze_root = Path(args.bronze_root)
 
-    # Discover first without checksums (fast), then hash only files we will ingest.
+    # Discover first, then compute checksums before filtering pending.
+    # This avoids false skips when fallback metadata matching is ambiguous.
     source = LocalBronzeSource(
         bronze_root,
         compute_checksums=False,
@@ -162,21 +163,23 @@ def cmd_ingest_run(args: argparse.Namespace) -> int:
     if args.data_type:
         files = [f for f in files if f.data_type == args.data_type]
 
-    if not args.force:
-        files = manifest_repo.filter_pending(files)
-
     if not files:
         print("No files to ingest.")
         return 0
 
-    # Resolve SHA256 only for files that survived filtering. This avoids hashing
-    # every discovered file during large backfills.
+    # Resolve SHA256 for discovered files before manifest filtering.
     hashed_files = []
     for file_meta in files:
         bronze_path = bronze_root / file_meta.bronze_file_path
         sha256 = compute_sha256(bronze_path)
         hashed_files.append(replace(file_meta, sha256=sha256))
     files = hashed_files
+
+    if not args.force:
+        files = manifest_repo.filter_pending(files)
+        if not files:
+            print("No files to ingest.")
+            return 0
 
     if args.retry_quarantined:
         manifest_df = manifest_repo.read_all()
@@ -222,15 +225,19 @@ def cmd_ingest_run(args: argparse.Namespace) -> int:
             if args.data_type and file_meta.data_type != args.data_type:
                 continue
 
-            file_id = manifest_repo.resolve_file_id(file_meta)
-
             dry_run = getattr(args, "dry_run", False)
+            file_id = 0 if dry_run else manifest_repo.resolve_file_id(file_meta)
             result = service.ingest_file(
-                file_meta, file_id, bronze_root=bronze_root, dry_run=dry_run
+                file_meta,
+                file_id,
+                bronze_root=bronze_root,
+                dry_run=dry_run,
+                idempotent_write=not dry_run,
             )
 
             if (
                 args.validate
+                and not dry_run
                 and result.error_message is None
                 and hasattr(service, "validate_ingested")
             ):
@@ -253,6 +260,7 @@ def cmd_ingest_run(args: argparse.Namespace) -> int:
                 if (
                     "missing_symbol" in result.error_message
                     or "invalid_validity_window" in result.error_message
+                    or "all symbols quarantined" in result.error_message.lower()
                 ):
                     status = "quarantined"
                     quarantined_count += 1
@@ -293,7 +301,7 @@ def cmd_ingest_run(args: argparse.Namespace) -> int:
     print(summary)
 
     optimize_failures = 0
-    if args.optimize_after_ingest and success_count > 0:
+    if args.optimize_after_ingest and success_count > 0 and not getattr(args, "dry_run", False):
         optimize_failures = _run_post_ingest_optimize(
             touched_partitions,
             target_file_size=args.optimize_target_file_size,
