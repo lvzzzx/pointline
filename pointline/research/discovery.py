@@ -633,8 +633,8 @@ def _get_table_description(table_name: str) -> str:
         "book_snapshot_25": "Top 25 levels order book snapshots",
         "derivative_ticker": "Funding rates, OI, mark/index prices",
         "kline_1h": "1-hour OHLCV candlesticks",
-        "szse_l3_orders": "SZSE Level 3 order placements",
-        "szse_l3_ticks": "SZSE Level 3 trade executions and cancellations",
+        "l3_orders": "China exchange Level 3 order placements",
+        "l3_ticks": "China exchange Level 3 trade executions and cancellations",
     }
     return descriptions.get(table_name, "")
 
@@ -732,8 +732,8 @@ def _get_default_tables() -> list[str]:
         "book_snapshot_25",
         "derivative_ticker",
         "kline_1h",
-        "szse_l3_orders",
-        "szse_l3_ticks",
+        "l3_orders",
+        "l3_ticks",
     ]
 
 

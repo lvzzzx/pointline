@@ -43,8 +43,8 @@ Pointline is a **universal offline research data lake** for quantitative trading
 | book_snapshot_25 | HFT | Active |
 | derivative_ticker | MFT | Active |
 | kline_1h | MFT | Active |
-| szse_l3_orders | HFT | Active |
-| szse_l3_ticks | HFT | Active |
+| l3_orders | HFT | Active |
+| l3_ticks | HFT | Active |
 | kline_1d | LFT | Planned |
 | liquidations | MFT | Active (Ingest) |
 | options_chain | MFT | Active (Ingest) |
@@ -284,7 +284,7 @@ Within `_check_quarantine_vectorized()`, the anti-join filter is vectorized, but
 │  Silver (Canonical Research Foundation)                          │
 │  ├── trades, quotes, book_snapshot_25         (HFT, partitioned)│
 │  ├── derivative_ticker, kline_1h, kline_1d    (MFT, partitioned)│
-│  ├── szse_l3_orders, szse_l3_ticks            (HFT, partitioned)│
+│  ├── l3_orders, l3_ticks                      (HFT, partitioned)│
 │  ├── liquidations                             (active ingest)    │
 │  ├── options_chain                            (active ingest)    │
 │  └── fundamentals                             (LFT, planned)    │

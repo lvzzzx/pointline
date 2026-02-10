@@ -116,8 +116,8 @@ TABLE_PATHS = {
     "options_chain": "silver/options_chain",
     "kline_1h": "silver/kline_1h",
     "kline_1d": "silver/kline_1d",
-    "szse_l3_orders": "silver/szse_l3_orders",
-    "szse_l3_ticks": "silver/szse_l3_ticks",
+    "l3_orders": "silver/l3_orders",
+    "l3_ticks": "silver/l3_ticks",
 }
 
 # Table registry for date column availability (used for safe filtering).
@@ -138,8 +138,8 @@ TABLE_HAS_DATE = {
     "options_chain": True,
     "kline_1h": True,
     "kline_1d": True,
-    "szse_l3_orders": True,
-    "szse_l3_ticks": True,
+    "l3_orders": True,
+    "l3_ticks": True,
 }
 
 # Storage Settings

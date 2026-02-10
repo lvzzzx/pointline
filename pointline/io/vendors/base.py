@@ -94,7 +94,7 @@ class VendorPlugin(Protocol):
 
         Returns:
             Dictionary mapping data_type to silver table name.
-            Example: {"trades": "trades", "l3_orders": "szse_l3_orders"}
+            Example: {"trades": "trades", "l3_orders": "l3_orders"}
         """
         ...
 

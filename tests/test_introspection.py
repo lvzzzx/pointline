@@ -56,22 +56,24 @@ def test_get_schema_dim_symbol():
     assert "valid_until_ts" in schema
 
 
-def test_get_schema_szse_l3_orders():
-    """Test schema retrieval for szse_l3_orders table."""
-    schema = get_schema("szse_l3_orders")
+def test_get_schema_l3_orders():
+    """Test schema retrieval for l3_orders table."""
+    schema = get_schema("l3_orders")
 
     assert isinstance(schema, dict)
     assert "ts_local_us" in schema
     assert "symbol_id" in schema
+    assert "trading_phase" in schema
 
 
-def test_get_schema_szse_l3_ticks():
-    """Test schema retrieval for szse_l3_ticks table."""
-    schema = get_schema("szse_l3_ticks")
+def test_get_schema_l3_ticks():
+    """Test schema retrieval for l3_ticks table."""
+    schema = get_schema("l3_ticks")
 
     assert isinstance(schema, dict)
     assert "ts_local_us" in schema
     assert "symbol_id" in schema
+    assert "trading_phase" in schema
 
 
 def test_get_schema_invalid_table():

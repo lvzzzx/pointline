@@ -21,8 +21,8 @@ TABLE_PARTITIONS = {
     "liquidations": ["exchange", "date"],
     "options_chain": ["exchange", "date"],
     "kline_1h": ["exchange", "date"],
-    "szse_l3_orders": ["exchange", "date"],
-    "szse_l3_ticks": ["exchange", "date"],
+    "l3_orders": ["exchange", "date"],
+    "l3_ticks": ["exchange", "date"],
 }
 
 
@@ -157,33 +157,29 @@ def create_ingestion_service(data_type: str, manifest_repo, *, interval: str | N
     # SZSE L3 Orders
     if data_type == "l3_orders":
         repo = BaseDeltaRepository(
-            get_table_path("szse_l3_orders"),
+            get_table_path("l3_orders"),
             partition_by=["exchange", "date"],
         )
         strategy = TableStrategy(
-            encode_fixed_point=tables.szse_l3_orders.encode_fixed_point,
-            validate=tables.szse_l3_orders.validate_szse_l3_orders,
-            normalize_schema=tables.szse_l3_orders.normalize_szse_l3_orders_schema,
-            resolve_symbol_ids=tables.szse_l3_orders.resolve_symbol_ids,
+            encode_fixed_point=tables.l3_orders.encode_fixed_point,
+            validate=tables.l3_orders.validate_l3_orders,
+            normalize_schema=tables.l3_orders.normalize_l3_orders_schema,
+            resolve_symbol_ids=tables.l3_orders.resolve_symbol_ids,
         )
-        return GenericIngestionService(
-            "szse_l3_orders", strategy, repo, dim_symbol_repo, manifest_repo
-        )
+        return GenericIngestionService("l3_orders", strategy, repo, dim_symbol_repo, manifest_repo)
 
     # SZSE L3 Ticks
     if data_type == "l3_ticks":
         repo = BaseDeltaRepository(
-            get_table_path("szse_l3_ticks"),
+            get_table_path("l3_ticks"),
             partition_by=["exchange", "date"],
         )
         strategy = TableStrategy(
-            encode_fixed_point=tables.szse_l3_ticks.encode_fixed_point,
-            validate=tables.szse_l3_ticks.validate_szse_l3_ticks,
-            normalize_schema=tables.szse_l3_ticks.normalize_szse_l3_ticks_schema,
-            resolve_symbol_ids=tables.szse_l3_ticks.resolve_symbol_ids,
+            encode_fixed_point=tables.l3_ticks.encode_fixed_point,
+            validate=tables.l3_ticks.validate_l3_ticks,
+            normalize_schema=tables.l3_ticks.normalize_l3_ticks_schema,
+            resolve_symbol_ids=tables.l3_ticks.resolve_symbol_ids,
         )
-        return GenericIngestionService(
-            "szse_l3_ticks", strategy, repo, dim_symbol_repo, manifest_repo
-        )
+        return GenericIngestionService("l3_ticks", strategy, repo, dim_symbol_repo, manifest_repo)
 
     raise ValueError(f"Unsupported data type: {data_type}")

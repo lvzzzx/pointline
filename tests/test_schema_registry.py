@@ -123,12 +123,12 @@ def test_all_table_paths_registered():
     import pointline.tables.dim_trading_calendar  # noqa: F401
     import pointline.tables.dq_summary  # noqa: F401
     import pointline.tables.klines  # noqa: F401
+    import pointline.tables.l3_orders  # noqa: F401
+    import pointline.tables.l3_ticks  # noqa: F401
     import pointline.tables.liquidations  # noqa: F401
     import pointline.tables.options_chain  # noqa: F401
     import pointline.tables.quotes  # noqa: F401
     import pointline.tables.stock_basic_cn  # noqa: F401
-    import pointline.tables.szse_l3_orders  # noqa: F401
-    import pointline.tables.szse_l3_ticks  # noqa: F401
     import pointline.tables.trades  # noqa: F401
     import pointline.tables.validation_log  # noqa: F401
     from pointline.config import TABLE_PATHS

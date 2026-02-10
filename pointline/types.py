@@ -30,8 +30,8 @@ TableName = Literal[
     "options_chain",
     "kline_1h",
     "kline_1d",
-    "szse_l3_orders",
-    "szse_l3_ticks",
+    "l3_orders",
+    "l3_ticks",
 ]
 
 # Timestamp input type - accepts int microseconds, datetime objects, or ISO strings

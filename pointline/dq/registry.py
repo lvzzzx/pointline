@@ -67,15 +67,15 @@ TABLE_DQ_CONFIGS: dict[str, TableDQConfig] = {
         ),
         manifest_data_type="kline_1h",
     ),
-    "szse_l3_orders": TableDQConfig(
-        table_name="szse_l3_orders",
+    "l3_orders": TableDQConfig(
+        table_name="l3_orders",
         key_columns=("file_id", "file_line_number"),
         ts_column="ts_local_us",
         numeric_columns=("px_int", "order_qty_int"),
         manifest_data_type="l3_orders",
     ),
-    "szse_l3_ticks": TableDQConfig(
-        table_name="szse_l3_ticks",
+    "l3_ticks": TableDQConfig(
+        table_name="l3_ticks",
         key_columns=("file_id", "file_line_number"),
         ts_column="ts_local_us",
         numeric_columns=("px_int", "qty_int"),

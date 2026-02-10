@@ -1,6 +1,6 @@
-"""SZSE Level 3 tick executions and cancellations domain logic for parsing, validation, and transformation.
+"""CN Level 3 tick executions and cancellations domain logic for parsing, validation, and transformation.
 
-This module handles Quant360 SZSE tick stream data, which represents trade executions and
+This module handles Quant360 CN tick stream data, which represents trade executions and
 order cancellations. Each tick links back to the original orders via bid_appl_seq_num and
 offer_appl_seq_num, enabling full order book reconstruction.
 
@@ -23,12 +23,19 @@ from pointline.tables._base import (
     required_columns_validation_expr,
     timestamp_validation_expr,
 )
+from pointline.tables.cn_trading_phase import (
+    TRADING_PHASE_CLOSING_CALL,
+    TRADING_PHASE_CONTINUOUS,
+    TRADING_PHASE_OPENING_CALL,
+    TRADING_PHASE_UNKNOWN,
+    derive_cn_trading_phase_expr,
+)
 from pointline.validation_utils import with_expected_exchange_id
 
 # Required metadata fields for ingestion
 REQUIRED_METADATA_FIELDS: set[str] = set()
 
-# Schema definition for szse_l3_ticks Silver table
+# Schema definition for l3_ticks Silver table
 #
 # Delta Lake Integer Type Limitations:
 # - Delta Lake (via Parquet) does not support unsigned integer types UInt16 and UInt32
@@ -36,7 +43,7 @@ REQUIRED_METADATA_FIELDS: set[str] = set()
 # - Use Int32 for file_id, file_line_number, channel_no
 # - Use Int64 for symbol_id, appl_seq_num, bid_appl_seq_num, offer_appl_seq_num, px_int, qty_int
 # - UInt8 is supported (used for exec_type)
-SZSE_L3_TICKS_SCHEMA: dict[str, pl.DataType] = {
+L3_TICKS_SCHEMA: dict[str, pl.DataType] = {
     "date": pl.Date,
     "exchange": pl.Utf8,
     "exchange_id": pl.Int16,
@@ -49,6 +56,7 @@ SZSE_L3_TICKS_SCHEMA: dict[str, pl.DataType] = {
     "px_int": pl.Int64,  # Fixed-point encoded (price / price_increment), 0 for cancellations
     "qty_int": pl.Int64,  # Lot-based encoding (qty / 100 shares)
     "channel_no": pl.Int32,  # Exchange channel ID
+    "trading_phase": pl.UInt8,  # 0=unknown, 1=open call, 2=continuous, 3=close call
     "file_id": pl.Int32,
     "file_line_number": pl.Int32,
 }
@@ -58,18 +66,21 @@ EXEC_TYPE_FILL = 0
 EXEC_TYPE_CANCEL = 1
 
 
-def normalize_szse_l3_ticks_schema(df: pl.DataFrame) -> pl.DataFrame:
-    """Cast to the canonical szse_l3_ticks schema and select only schema columns."""
-    missing_required = [col for col in SZSE_L3_TICKS_SCHEMA if col not in df.columns]
+def normalize_l3_ticks_schema(df: pl.DataFrame) -> pl.DataFrame:
+    """Cast to the canonical l3_ticks schema and select only schema columns."""
+    if "trading_phase" not in df.columns:
+        df = df.with_columns(derive_cn_trading_phase_expr())
+
+    missing_required = [col for col in L3_TICKS_SCHEMA if col not in df.columns]
     if missing_required:
-        raise ValueError(f"szse_l3_ticks missing required columns: {missing_required}")
+        raise ValueError(f"l3_ticks missing required columns: {missing_required}")
 
-    casts = [pl.col(col).cast(dtype) for col, dtype in SZSE_L3_TICKS_SCHEMA.items()]
-    return df.with_columns(casts).select(list(SZSE_L3_TICKS_SCHEMA.keys()))
+    casts = [pl.col(col).cast(dtype) for col, dtype in L3_TICKS_SCHEMA.items()]
+    return df.with_columns(casts).select(list(L3_TICKS_SCHEMA.keys()))
 
 
-def validate_szse_l3_ticks(df: pl.DataFrame) -> pl.DataFrame:
-    """Apply quality checks to SZSE L3 tick data.
+def validate_l3_ticks(df: pl.DataFrame) -> pl.DataFrame:
+    """Apply quality checks to CN L3 tick data.
 
     Validates:
     - Non-negative px_int and qty_int
@@ -96,10 +107,11 @@ def validate_szse_l3_ticks(df: pl.DataFrame) -> pl.DataFrame:
         "exchange",
         "exchange_id",
         "symbol_id",
+        "trading_phase",
     ]
     missing = [c for c in required if c not in df.columns]
     if missing:
-        raise ValueError(f"validate_szse_l3_ticks: missing required columns: {missing}")
+        raise ValueError(f"validate_l3_ticks: missing required columns: {missing}")
 
     df_with_expected = with_expected_exchange_id(df)
 
@@ -122,6 +134,14 @@ def validate_szse_l3_ticks(df: pl.DataFrame) -> pl.DataFrame:
         & timestamp_validation_expr("ts_local_us")
         & (pl.col("appl_seq_num") > 0)
         & (pl.col("exec_type").is_in([EXEC_TYPE_FILL, EXEC_TYPE_CANCEL]))
+        & pl.col("trading_phase").is_in(
+            [
+                TRADING_PHASE_UNKNOWN,
+                TRADING_PHASE_OPENING_CALL,
+                TRADING_PHASE_CONTINUOUS,
+                TRADING_PHASE_CLOSING_CALL,
+            ]
+        )
         & required_columns_validation_expr(["exchange", "exchange_id", "symbol_id"])
         & exchange_id_validation_expr()
         & valid_tick_semantics
@@ -146,6 +166,18 @@ def validate_szse_l3_ticks(df: pl.DataFrame) -> pl.DataFrame:
         ("exchange_id", pl.col("exchange_id").is_null()),
         ("symbol_id", pl.col("symbol_id").is_null()),
         (
+            "trading_phase",
+            ~pl.col("trading_phase").is_in(
+                [
+                    TRADING_PHASE_UNKNOWN,
+                    TRADING_PHASE_OPENING_CALL,
+                    TRADING_PHASE_CONTINUOUS,
+                    TRADING_PHASE_CLOSING_CALL,
+                ]
+            )
+            | pl.col("trading_phase").is_null(),
+        ),
+        (
             "exchange_id_mismatch",
             pl.col("expected_exchange_id").is_null()
             | (pl.col("exchange_id") != pl.col("expected_exchange_id")),
@@ -156,7 +188,7 @@ def validate_szse_l3_ticks(df: pl.DataFrame) -> pl.DataFrame:
         ),
     ]
 
-    valid = generic_validate(df_with_expected, combined_filter, rules, "szse_l3_ticks")
+    valid = generic_validate(df_with_expected, combined_filter, rules, "l3_ticks")
     return valid.select(df.columns)
 
 
@@ -282,7 +314,7 @@ def resolve_symbol_ids(
     *,
     ts_col: str = "ts_local_us",
 ) -> pl.DataFrame:
-    """Resolve symbol_ids for SZSE L3 tick data using as-of join with dim_symbol.
+    """Resolve symbol_ids for CN L3 tick data using as-of join with dim_symbol.
 
     This is a wrapper around the generic symbol resolution function.
 
@@ -299,9 +331,9 @@ def resolve_symbol_ids(
     return generic_resolve_symbol_ids(data, dim_symbol, exchange_id, exchange_symbol, ts_col=ts_col)
 
 
-def required_szse_l3_ticks_columns() -> Sequence[str]:
-    """Columns required for a szse_l3_ticks DataFrame after normalization."""
-    return tuple(SZSE_L3_TICKS_SCHEMA.keys())
+def required_l3_ticks_columns() -> Sequence[str]:
+    """Columns required for a l3_ticks DataFrame after normalization."""
+    return tuple(L3_TICKS_SCHEMA.keys())
 
 
 # ---------------------------------------------------------------------------
@@ -309,6 +341,4 @@ def required_szse_l3_ticks_columns() -> Sequence[str]:
 # ---------------------------------------------------------------------------
 from pointline.schema_registry import register_schema as _register_schema  # noqa: E402
 
-_register_schema(
-    "szse_l3_ticks", SZSE_L3_TICKS_SCHEMA, partition_by=["exchange", "date"], has_date=True
-)
+_register_schema("l3_ticks", L3_TICKS_SCHEMA, partition_by=["exchange", "date"], has_date=True)
