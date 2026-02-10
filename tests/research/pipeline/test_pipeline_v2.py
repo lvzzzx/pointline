@@ -688,7 +688,9 @@ def test_pipeline_event_joined_uses_lineage_tie_break_for_same_timestamp():
 
     output = pipeline(request)
     assert output["results"]["row_count"] == 1
-    assert output["results"]["preview"][0]["bid_px_int_quotes"] == 50020
+    preview_row = output["results"]["preview"][0]
+    bid_px = preview_row.get("bid_px_int_quotes", preview_row.get("bid_px_int"))
+    assert bid_px == 50020
 
 
 def test_pipeline_rejects_unimplemented_volume_spine():

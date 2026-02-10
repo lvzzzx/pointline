@@ -200,7 +200,9 @@ def test_vectorized_quarantine_empty_df():
 def test_validate_date_partition_alignment_passes_for_matching_day():
     service = create_ingestion_service("trades", manifest_repo=Mock())
 
-    ts_local_us = int(dt.datetime(2024, 5, 1, 12, 0, tzinfo=dt.timezone.utc).timestamp() * 1_000_000)
+    ts_local_us = int(
+        dt.datetime(2024, 5, 1, 12, 0, tzinfo=dt.timezone.utc).timestamp() * 1_000_000
+    )
     df = pl.DataFrame(
         {
             "exchange": ["binance-futures"],

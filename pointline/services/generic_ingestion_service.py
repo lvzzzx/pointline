@@ -542,8 +542,7 @@ class GenericIngestionService(BaseService):
         missing = sorted(required - set(df.columns))
         if missing:
             return False, (
-                f"Date partition validation requires columns {sorted(required)}; "
-                f"missing {missing}"
+                f"Date partition validation requires columns {sorted(required)}; missing {missing}"
             )
 
         unique_pairs = df.select(["exchange", "date"]).unique()
@@ -566,8 +565,12 @@ class GenericIngestionService(BaseService):
                 {
                     "exchange": exchange_name,
                     "date": trading_date,
-                    "_day_start_us": int(day_start_local.astimezone(timezone.utc).timestamp() * 1_000_000),
-                    "_day_end_us": int(day_end_local.astimezone(timezone.utc).timestamp() * 1_000_000),
+                    "_day_start_us": int(
+                        day_start_local.astimezone(timezone.utc).timestamp() * 1_000_000
+                    ),
+                    "_day_end_us": int(
+                        day_end_local.astimezone(timezone.utc).timestamp() * 1_000_000
+                    ),
                 }
             )
 

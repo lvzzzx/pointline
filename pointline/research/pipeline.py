@@ -496,10 +496,7 @@ def _execute_event_joined(
         raise PipelineError("event_joined mode requires spine.type='trades'")
 
     primary = _primary_source_name(compiled)
-    prepared_sources = {
-        name: _ensure_event_join_order_columns(lf)
-        for name, lf in sources.items()
-    }
+    prepared_sources = {name: _ensure_event_join_order_columns(lf) for name, lf in sources.items()}
     primary_lf = prepared_sources[primary]
 
     spine = primary_lf.sort(_event_join_sort_columns(primary_lf)).select(

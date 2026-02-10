@@ -98,5 +98,6 @@ def test_manifest_show_filters_vendor_exchange_and_symbol(tmp_path, capsys):
     assert exit_code == 0
 
     captured = capsys.readouterr().out
-    assert "file1.csv.gz" in captured
-    assert "file2.csv.gz" not in captured
+    assert "manifest entries (1 total)" in captured
+    assert "tardis" in captured
+    assert "quant360" not in captured

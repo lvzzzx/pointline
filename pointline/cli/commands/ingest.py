@@ -272,11 +272,15 @@ def cmd_ingest_run(args: argparse.Namespace) -> int:
                     filtered_row_count=result.filtered_row_count,
                 )
 
-            if result.failure_reason in {
-                "missing_symbol",
-                "invalid_validity_window",
-                "all_symbols_quarantined",
-            } or result.filtered_symbol_count > 0:
+            if (
+                result.failure_reason
+                in {
+                    "missing_symbol",
+                    "invalid_validity_window",
+                    "all_symbols_quarantined",
+                }
+                or result.filtered_symbol_count > 0
+            ):
                 status = "quarantined"
                 quarantined_count += 1
             elif result.error_message:
