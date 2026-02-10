@@ -18,6 +18,7 @@ TABLE_PARTITIONS = {
     "quotes": ["exchange", "date"],
     "book_snapshot_25": ["exchange", "date"],
     "derivative_ticker": ["exchange", "date"],
+    "options_chain": ["exchange", "date"],
     "kline_1h": ["exchange", "date"],
     "szse_l3_orders": ["exchange", "date"],
     "szse_l3_ticks": ["exchange", "date"],
@@ -100,6 +101,22 @@ def create_ingestion_service(data_type: str, manifest_repo, *, interval: str | N
         )
         return GenericIngestionService(
             "derivative_ticker", strategy, repo, dim_symbol_repo, manifest_repo
+        )
+
+    # Options chain
+    if data_type == "options_chain":
+        repo = BaseDeltaRepository(
+            get_table_path("options_chain"),
+            partition_by=["exchange", "date"],
+        )
+        strategy = TableStrategy(
+            encode_fixed_point=tables.options_chain.encode_fixed_point,
+            validate=tables.options_chain.validate_options_chain,
+            normalize_schema=tables.options_chain.normalize_options_chain_schema,
+            resolve_symbol_ids=tables.options_chain.resolve_symbol_ids,
+        )
+        return GenericIngestionService(
+            "options_chain", strategy, repo, dim_symbol_repo, manifest_repo
         )
 
     # Klines

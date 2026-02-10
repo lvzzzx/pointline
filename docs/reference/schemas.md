@@ -394,6 +394,7 @@ Options chain data, typically cross-sectional and heavy. Store updates per contr
 | exchange_id | i16 | |
 | underlying_symbol_id | i64 | underlying |
 | option_symbol_id | i64 | contract |
+| underlying_index | string | raw underlying index from vendor |
 | ts_local_us | i64 | |
 | ts_exch_us | i64 | |
 | option_type | u8 | call/put |
@@ -401,12 +402,18 @@ Options chain data, typically cross-sectional and heavy. Store updates per contr
 | expiry_ts_us | i64 | |
 | bid_px_int | i64 | fixed-point |
 | ask_px_int | i64 | fixed-point |
-| iv | f32/f64 | implied volatility |
-| delta | f32/f64 | Greeks |
-| gamma | f32/f64 | Greeks |
-| vega | f32/f64 | Greeks |
-| theta | f32/f64 | Greeks |
-| open_interest | f64/i64 | |
+| bid_sz_int | i64 | fixed-point |
+| ask_sz_int | i64 | fixed-point |
+| mark_px_int | i64 | fixed-point (nullable) |
+| underlying_px_int | i64 | fixed-point (nullable) |
+| iv | f64 | implied volatility |
+| mark_iv | f64 | mark implied volatility (nullable) |
+| delta | f64 | Greeks |
+| gamma | f64 | Greeks |
+| vega | f64 | Greeks |
+| theta | f64 | Greeks |
+| rho | f64 | Greeks (nullable) |
+| open_interest | f64 | nullable |
 | file_id | i32 | lineage tracking |
 | file_line_number | i32 | lineage tracking |
 

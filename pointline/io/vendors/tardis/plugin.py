@@ -31,6 +31,7 @@ class TardisVendor:
     - quotes
     - book_snapshot_25
     - derivative_ticker
+    - options_chain
     """
 
     name = "tardis"
@@ -109,6 +110,7 @@ class TardisVendor:
             "quotes": "quotes",
             "book_snapshot_25": "book_snapshot_25",
             "derivative_ticker": "derivative_ticker",
+            "options_chain": "options_chain",
         }
 
     def get_parsers(self) -> dict[str, Callable[[pl.DataFrame], pl.DataFrame]]:
@@ -121,6 +123,7 @@ class TardisVendor:
         from pointline.io.vendors.tardis.parsers import (
             parse_tardis_book_snapshots_csv,
             parse_tardis_derivative_ticker_csv,
+            parse_tardis_options_chain_csv,
             parse_tardis_quotes_csv,
             parse_tardis_trades_csv,
         )
@@ -130,6 +133,7 @@ class TardisVendor:
             "quotes": parse_tardis_quotes_csv,
             "book_snapshot_25": parse_tardis_book_snapshots_csv,
             "derivative_ticker": parse_tardis_derivative_ticker_csv,
+            "options_chain": parse_tardis_options_chain_csv,
         }
 
     def get_api_snapshot_specs(self) -> dict[str, ApiSnapshotSpec]:
@@ -204,13 +208,17 @@ class TardisVendor:
         if exchange_raw is None or symbol_raw is None or trading_date is None:
             raise ValueError(f"Missing exchange/symbol/date in path: {path}")
 
-        return parsed_df.with_columns(
+        with_meta = parsed_df.with_columns(
             [
                 pl.lit(self.normalize_exchange(exchange_raw)).alias("exchange"),
-                pl.lit(self.normalize_symbol(symbol_raw, exchange_raw)).alias("exchange_symbol"),
                 pl.lit(trading_date).alias("date"),
             ]
         )
+        if "exchange_symbol" not in with_meta.columns:
+            with_meta = with_meta.with_columns(
+                pl.lit(self.normalize_symbol(symbol_raw, exchange_raw)).alias("exchange_symbol")
+            )
+        return with_meta
 
     def normalize_exchange(self, exchange: str) -> str:
         """Normalize vendor-specific exchange name."""

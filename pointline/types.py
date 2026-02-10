@@ -26,6 +26,7 @@ TableName = Literal[
     "quotes",
     "book_snapshot_25",
     "derivative_ticker",
+    "options_chain",
     "kline_1h",
     "kline_1d",
     "szse_l3_orders",

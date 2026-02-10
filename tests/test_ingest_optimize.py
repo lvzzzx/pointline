@@ -115,5 +115,8 @@ def test_ingestion_factory_uses_physical_table_names_for_logs():
     service_book = create_ingestion_service("book_snapshot_25", manifest_repo=object())
     assert service_book.table_name == "book_snapshot_25"
 
+    service_options = create_ingestion_service("options_chain", manifest_repo=object())
+    assert service_options.table_name == "options_chain"
+
     service_kline = create_ingestion_service("klines", manifest_repo=object(), interval="1h")
     assert service_kline.table_name == "kline_1h"

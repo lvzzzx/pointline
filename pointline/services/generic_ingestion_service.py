@@ -162,7 +162,12 @@ class GenericIngestionService(BaseService):
         start_time_ms = int(time.time() * 1000)
 
         # Validate required metadata for this table
-        table_module = importlib.import_module(f"pointline.tables.{self.table_name}")
+        table_module_name = self.table_name
+        if self.table_name == "book_snapshot_25":
+            table_module_name = "book_snapshots"
+        elif self.table_name.startswith("kline_"):
+            table_module_name = "klines"
+        table_module = importlib.import_module(f"pointline.tables.{table_module_name}")
         required_fields = {
             "vendor",
             "data_type",
