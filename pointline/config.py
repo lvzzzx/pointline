@@ -505,6 +505,7 @@ def get_coingecko_coin_id(base_asset: str) -> str | None:
 
 # Asset Class Taxonomy (canonical source: pointline.tables.asset_class)
 # Re-exported here for backward compatibility.
+from pointline.tables.asset_class import ASSET_CLASS_TAXONOMY as ASSET_CLASS_TAXONOMY  # noqa: E402
 
 # Exchange Metadata Registry
 # Extended metadata for data discovery and UI presentation
