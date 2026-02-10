@@ -439,35 +439,27 @@ class GenericIngestionService(BaseService):
             pl.Series("day_end_us", day_ends, dtype=pl.Int64),
         )
 
-        # 3. Join against dim_symbol to find covered pairs
-        # A pair is covered if there exists at least one dim_symbol row where:
-        #   exchange_id matches, exchange_symbol matches,
-        #   valid_from_ts < day_end_us, valid_until_ts > day_start_us
+        # 3. Evaluate full-window coverage per (exchange_id, exchange_symbol, date).
+        # A pair is covered only if dim_symbol has contiguous coverage for the
+        # entire trading-day window [day_start_us, day_end_us).
         dim_subset = dim_symbol.select(
             ["exchange_id", "exchange_symbol", "valid_from_ts", "valid_until_ts"]
         )
 
-        # Cross-join unique_pairs with dim_subset on (exchange_id, exchange_symbol)
-        # then filter for overlap
-        covered = (
-            unique_pairs.join(
+        coverage_flags = [
+            check_coverage(
                 dim_subset,
-                on=["exchange_id", "exchange_symbol"],
-                how="inner",
+                row["exchange_id"],
+                row["exchange_symbol"],
+                row["day_start_us"],
+                row["day_end_us"],
             )
-            .filter(
-                (pl.col("valid_from_ts") < pl.col("day_end_us"))
-                & (pl.col("valid_until_ts") > pl.col("day_start_us"))
-            )
-            .select(["exchange_id", "exchange_symbol", "date"])
-            .unique()
-        )
-
-        # 4. Anti-join to find uncovered pairs (quarantined)
-        quarantined = unique_pairs.join(
-            covered,
-            on=["exchange_id", "exchange_symbol", "date"],
-            how="anti",
+            for row in unique_pairs.iter_rows(named=True)
+        ]
+        quarantined = (
+            unique_pairs.with_columns(pl.Series("is_covered", coverage_flags, dtype=pl.Boolean))
+            .filter(~pl.col("is_covered"))
+            .drop(["day_start_us", "day_end_us", "is_covered"])
         )
 
         filtered_symbol_count = quarantined.height

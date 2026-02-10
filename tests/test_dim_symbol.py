@@ -295,6 +295,59 @@ def test_normalize_schema_missing_columns_raises_error():
         normalize_dim_symbol_schema(bad_df)
 
 
+def test_upsert_backdated_change_raises_error():
+    import pytest
+
+    dim = scd2_bootstrap(_base_updates(200, tick_size=1.0))
+    backdated = _base_updates(100, tick_size=0.5)
+
+    with pytest.raises(
+        ValueError, match="must have valid_from_ts greater than the current version"
+    ):
+        scd2_upsert(dim, backdated)
+
+
+def test_resolve_symbol_ids_respects_valid_until_ts_gap():
+    from pointline.dim_symbol import normalize_dim_symbol_schema, resolve_symbol_ids
+
+    dim_gap = pl.DataFrame(
+        {
+            "symbol_id": [1, 2],
+            "exchange_id": [1, 1],
+            "exchange": ["binance-futures", "binance-futures"],
+            "exchange_symbol": ["BTC-PERPETUAL", "BTC-PERPETUAL"],
+            "base_asset": ["BTC", "BTC"],
+            "quote_asset": ["USD", "USD"],
+            "asset_type": [1, 1],
+            "tick_size": [0.5, 1.0],
+            "lot_size": [1.0, 1.0],
+            "price_increment": [0.5, 1.0],
+            "amount_increment": [0.1, 0.1],
+            "contract_size": [1.0, 1.0],
+            "expiry_ts_us": [None, None],
+            "underlying_symbol_id": [None, None],
+            "strike": [None, None],
+            "put_call": [None, None],
+            "valid_from_ts": [100, 200],
+            "valid_until_ts": [150, DEFAULT_VALID_UNTIL_TS_US],
+            "is_current": [False, True],
+        }
+    )
+    dim_gap = normalize_dim_symbol_schema(dim_gap)
+
+    data = pl.DataFrame(
+        {
+            "exchange_id": [1, 1],
+            "exchange_symbol": ["BTC-PERPETUAL", "BTC-PERPETUAL"],
+            "ts_local_us": [175, 250],  # gap, valid
+        }
+    )
+
+    resolved = resolve_symbol_ids(data, dim_gap)
+    assert resolved.filter(pl.col("ts_local_us") == 175)["symbol_id"][0] is None
+    assert resolved.filter(pl.col("ts_local_us") == 250)["symbol_id"][0] == 2
+
+
 def test_check_coverage_logic():
     from pointline.dim_symbol import SCHEMA, check_coverage
 

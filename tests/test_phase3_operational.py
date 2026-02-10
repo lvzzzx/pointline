@@ -137,6 +137,46 @@ def test_vectorized_quarantine_multiple_dates():
     assert filtered["date"].to_list() == [dt.date(2024, 5, 1)]
 
 
+def test_vectorized_quarantine_filters_partial_day_coverage_gap():
+    """Partial overlap is not enough; full trading-day coverage is required."""
+    service = create_ingestion_service("trades", manifest_repo=Mock())
+
+    day_start = 1714521600000000  # 2024-05-01 00:00 UTC
+    one_hour = 3_600_000_000
+    day_end = day_start + 24 * one_hour
+    dim_symbol = _make_dim_symbol(
+        [
+            {
+                "symbol_id": 1,
+                "exchange_symbol": "BTCUSDT",
+                "valid_from_ts": day_start,
+                "valid_until_ts": day_start + one_hour,  # 00:00-01:00
+            },
+            {
+                "symbol_id": 2,
+                "exchange_symbol": "BTCUSDT",
+                "valid_from_ts": day_start + 23 * one_hour,  # 23:00-next day
+                "valid_until_ts": day_end + one_hour,
+            },
+        ]
+    )
+
+    df = pl.DataFrame(
+        {
+            "exchange": ["binance-futures"],
+            "exchange_id": [1],
+            "exchange_symbol": ["BTCUSDT"],
+            "date": [dt.date(2024, 5, 1)],
+            "ts_local_us": [day_start + 12 * one_hour],
+        }
+    )
+
+    filtered, frc, fsc = service._check_quarantine_vectorized(df, dim_symbol)
+    assert filtered.height == 0
+    assert frc == 1
+    assert fsc == 1
+
+
 def test_vectorized_quarantine_empty_df():
     """Empty DataFrame should pass through unchanged."""
     service = create_ingestion_service("trades", manifest_repo=Mock())

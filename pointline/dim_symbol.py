@@ -265,6 +265,19 @@ def scd2_upsert(
     is_new = pl.col("symbol_id_cur").is_null()
     is_changed = is_new | _as_boolean_change_mask(joined)
 
+    # Incremental upsert is append-forward only. Backdated or same-timestamp
+    # changes against an existing current row can invert/zero validity windows.
+    invalid_ordering = joined.filter(
+        pl.col("symbol_id_cur").is_not_null()
+        & is_changed
+        & (pl.col("valid_from_ts") <= pl.col("valid_from_ts_cur"))
+    )
+    if not invalid_ordering.is_empty():
+        raise ValueError(
+            "scd2_upsert: updates must have valid_from_ts greater than the current version. "
+            "Use rebuild_from_history for backfills/corrections."
+        )
+
     changed_updates = joined.filter(is_changed).select(updates.columns)
 
     if changed_updates.is_empty():
@@ -470,7 +483,7 @@ def resolve_symbol_ids(
     if "check_sortedness" in pl.DataFrame.join_asof.__code__.co_varnames:
         join_kwargs["check_sortedness"] = False
 
-    return data.sort(sort_cols).join_asof(
+    resolved = data.sort(sort_cols).join_asof(
         dim_symbol.sort([*NATURAL_KEY_COLS, "valid_from_ts"]),
         left_on=ts_col,
         right_on="valid_from_ts",
@@ -478,6 +491,29 @@ def resolve_symbol_ids(
         strategy="backward",
         **join_kwargs,
     )
+
+    # Guard against matching rows that are outside the SCD2 validity window.
+    # join_asof only enforces valid_from_ts <= ts, so we additionally require
+    # ts < valid_until_ts for matched rows.
+    if "valid_until_ts" in resolved.columns:
+        stale_match = pl.col("symbol_id").is_not_null() & (
+            pl.col(ts_col) >= pl.col("valid_until_ts")
+        )
+        right_side_cols = [col for col in resolved.columns if col not in data.columns]
+        if "symbol_id" in resolved.columns and "symbol_id" not in right_side_cols:
+            right_side_cols.append("symbol_id")
+        if right_side_cols:
+            resolved = resolved.with_columns(
+                [
+                    pl.when(stale_match)
+                    .then(pl.lit(None, dtype=resolved.schema[col]))
+                    .otherwise(pl.col(col))
+                    .alias(col)
+                    for col in right_side_cols
+                ]
+            )
+
+    return resolved
 
 
 def required_update_columns() -> Sequence[str]:
