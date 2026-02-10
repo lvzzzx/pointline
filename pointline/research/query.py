@@ -426,9 +426,74 @@ def derivative_ticker(
     )
 
 
+def kline_1d(
+    exchange: str,
+    symbol: str,
+    start: TimestampInput,
+    end: TimestampInput,
+    *,
+    ts_col: str = "ts_bucket_start_us",
+    columns: list[str] | tuple[str, ...] | None = None,
+    decoded: bool = False,
+    keep_ints: bool = False,
+    lazy: bool = True,
+) -> pl.LazyFrame | pl.DataFrame:
+    """Load daily klines with automatic symbol resolution.
+
+    Args:
+        exchange: Exchange name (e.g., "binance-futures")
+        symbol: Exchange symbol (e.g., "BTCUSDT")
+        start: Start time (datetime, ISO string, or int microseconds)
+        end: End time (datetime, ISO string, or int microseconds)
+        ts_col: Timestamp column to filter on (default: "ts_bucket_start_us")
+        columns: List of columns to select (default: all)
+        decoded: Decode fixed-point integer columns into floats (default: False)
+        keep_ints: Keep fixed-point integer columns when decoded=True (default: False)
+        lazy: Return LazyFrame (True) or DataFrame (False)
+
+    Returns:
+        Daily kline data (LazyFrame or DataFrame)
+
+    Examples:
+        >>> klines = query.kline_1d(
+        ...     "binance-futures",
+        ...     "BTCUSDT",
+        ...     "2024-01-01",
+        ...     "2024-12-31",
+        ...     decoded=True,
+        ...     lazy=False,
+        ... )
+    """
+    start_ts_us = core._normalize_timestamp(start, "start")
+    end_ts_us = core._normalize_timestamp(end, "end")
+
+    symbol_ids = _resolve_symbols_with_warning(exchange, symbol, start_ts_us, end_ts_us)
+
+    if decoded:
+        return core.load_kline_1d_decoded(
+            symbol_id=symbol_ids,
+            start_ts_us=start_ts_us,
+            end_ts_us=end_ts_us,
+            ts_col=ts_col,
+            columns=columns,
+            keep_ints=keep_ints,
+            lazy=lazy,
+        )
+
+    return core.scan_table(
+        "kline_1d",
+        symbol_id=symbol_ids,
+        start_ts_us=start_ts_us,
+        end_ts_us=end_ts_us,
+        ts_col=ts_col,
+        columns=columns,
+    )
+
+
 __all__ = [
     "trades",
     "quotes",
     "book_snapshot_25",
     "derivative_ticker",
+    "kline_1d",
 ]

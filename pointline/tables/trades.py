@@ -52,6 +52,11 @@ TRADES_SCHEMA: dict[str, pl.DataType] = {
     "px_int": pl.Int64,
     "qty_int": pl.Int64,
     "flags": pl.Int32,  # Delta Lake stores as Int32 (not UInt32)
+    # Multi-asset fields (Phase 2) — nullable, unused by crypto
+    "conditions": pl.Int32,  # Sale condition bitfield (nullable, equities)
+    "venue_id": pl.Int16,  # Reporting venue (nullable, equities)
+    "sequence_number": pl.Int64,  # SIP/exchange sequence (nullable, equities)
+    # Lineage
     "file_id": pl.Int32,  # Delta Lake stores as Int32 (not UInt32)
     "file_line_number": pl.Int32,  # Delta Lake stores as Int32 (not UInt32)
 }
@@ -69,8 +74,8 @@ def normalize_trades_schema(df: pl.DataFrame) -> pl.DataFrame:
     Optional columns (trade_id, flags) are filled with None if missing.
     Drops any extra columns (e.g., original float columns, dim_symbol metadata).
     """
-    # Optional columns that can be missing
-    optional_columns = {"trade_id", "flags"}
+    # Optional columns that can be missing (filled with null)
+    optional_columns = {"trade_id", "flags", "conditions", "venue_id", "sequence_number"}
 
     # Check for missing required (non-optional) columns
     missing_required = [

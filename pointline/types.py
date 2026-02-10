@@ -16,6 +16,7 @@ from typing import Literal
 TableName = Literal[
     "dim_symbol",
     "dim_exchange",
+    "dim_trading_calendar",
     "stock_basic_cn",
     "dim_asset_stats",
     "ingest_manifest",
@@ -26,6 +27,7 @@ TableName = Literal[
     "book_snapshot_25",
     "derivative_ticker",
     "kline_1h",
+    "kline_1d",
     "szse_l3_orders",
     "szse_l3_ticks",
 ]
