@@ -1,6 +1,6 @@
 # ADR: Research Framework v2 Clean Architecture
 
-- Status: Proposed
+- Status: ✅ Implemented
 - Date: 2026-02-08
 - Decision Makers: Research Engineer, Quant Researcher, Data Infra Engineer
 - Scope: `pointline/research` framework architecture

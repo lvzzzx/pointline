@@ -177,4 +177,4 @@ This architecture is a clean-break baseline.
 - Schema changes may require full local rebuilds.
 - Migration helpers are optional tooling, not architectural requirements.
 
-For schemas, see `/Users/zjx/.codex/worktrees/62ef/pointline/docs/reference/schemas.md`.
+For schemas, see [`docs/reference/schemas.md`](../reference/schemas.md).

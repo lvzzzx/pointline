@@ -58,7 +58,7 @@ Ingestion-specific protocols:
 All table paths resolve from `LAKE_ROOT` (config/env).
 
 Avoid hardcoded `/lake/...` assumptions in runtime logic. Use path helpers from:
-- `/Users/zjx/.codex/worktrees/62ef/pointline/pointline/config.py`
+- `pointline/config.py`
 
 Recommended structure:
 - `<LAKE_ROOT>/bronze/...`
