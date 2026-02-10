@@ -120,7 +120,7 @@ LLM agents:
 
 ## Related Documents
 
-- `docs/architecture/adr-research-framework-v2-clean-architecture.md`
-- `docs/architecture/resample-aggregate-design.md`
+- `docs/architecture/archive/adr-research-framework-v2-clean-architecture.md`
+- `docs/architecture/archive/resample-aggregate-design.md`
 - `docs/guides/research-pipeline-v2.md`
 - `docs/guides/research-workflow-hybrid.md`

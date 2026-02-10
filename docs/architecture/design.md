@@ -1,180 +1,73 @@
-# Local-Host Data Lake Design (Clean Break)
+# Pointline Architecture (One-Page Design)
 
-This document defines the **current target architecture** for Pointline on a single machine.
+**Status:** Live
+**Scope:** Local-host offline research data lake (single machine)
 
-Scope:
-- local filesystem only
-- Delta Lake + Polars + DuckDB only
-- deterministic ingestion/research workflows
-- **no backward compatibility guarantees**
+## 1) System Purpose
 
-Out of scope:
-- distributed storage
-- cloud object stores
-- legacy schema migrations
-- non-local execution backends
+Pointline provides deterministic, point-in-time-safe ingestion and research on market data using a local Delta Lake stack.
 
----
+Core goals:
+- PIT correctness for replay and feature computation.
+- Deterministic reruns with stable lineage.
+- Fast local iteration with operational simplicity.
 
-## 1) Design Goals
+## 2) Canonical Stack
 
-1. Point-in-time (PIT) correctness for replay and research.
-2. Deterministic re-runs with stable lineage keys.
-3. Fast local iteration for ingestion and query workloads.
-4. Operational simplicity over cross-platform compatibility.
+- Storage: Delta Lake (`delta-rs`)
+- Compute: Polars (primary), DuckDB (ad hoc SQL)
+- Runtime model: local filesystem only (no distributed/cloud backend)
 
----
+## 3) Data Lake Model
 
-## 2) Timeline and Ordering Semantics
+- **Bronze**: Immutable raw vendor files and API captures.
+- **Silver**: Typed normalized tables with lineage (`file_id`, `file_line_number`).
+- **Gold**: Optional derived tables when justified by query demand.
 
-Default replay timeline is `ts_local_us` (arrival/observation time).
+Default partitioning: `exchange`, `date`.
 
-Store both timestamps when available:
-- `ts_local_us` (required)
-- `ts_exch_us` (optional but recommended)
+## 4) Ingestion Contract
 
-Stable ordering key for event tables:
-- `(exchange_id, symbol_id, date, ts_local_us, file_id, file_line_number)`
-
-Lineage requirements:
-- every Silver row must include `file_id` and `file_line_number`
-- source file provenance is resolved via `silver.ingest_manifest`
-
----
-
-## 3) Lake Layout
-
-### Bronze
-Raw vendor files and API snapshots are stored as immutable artifacts.
-
-Layout:
-- `<LAKE_ROOT>/bronze/<vendor>/exchange=<exchange>/type=<data_type>/date=<date>/symbol=<symbol>/...`
-- `<LAKE_ROOT>/bronze/<vendor>/type=<dataset>_metadata/[exchange=<exchange>/]date=<date>/snapshot_ts=<ts>/...jsonl.gz`
-
-Notes:
-- vendor republish events are stored as new immutable files
-- checksums are tracked in `silver.ingest_manifest`
-- API snapshot envelopes include vendor, dataset, partitions, sanitized request context, and raw record payload
-
-### Silver
-Typed, normalized Delta tables used by ingestion and research.
-
-Core properties:
-- integer timestamp fields (`*_us`)
-- fixed-point numeric encoding where applicable
-- deterministic lineage columns
-
-### Gold
-Optional derived tables only when query demand justifies precomputation.
-
-Current default:
-- Bronze + Silver are mandatory
-- Gold is optional
-
----
-
-## 4) Storage Defaults (Local Delta)
-
-- Format: Delta Lake (`delta-rs`)
-- Compression: ZSTD
-- Typical file target: 256MB to 1GB
-- Partitioning (default): `exchange`, `date`
-
-Type conventions:
-- use signed integer types compatible with Delta/Parquet (`Int16`, `Int32`, `Int64`)
-- avoid unsigned types that downcast on write
-
-Within-partition data organization:
-- sort/z-order by `symbol_id`, `ts_local_us` when beneficial
-
----
-
-## 5) Symbol and Numeric Semantics
-
-### Symbol dimension
-Use `silver.dim_symbol` as SCD2 for metadata changes over time.
-
-Join rule (PIT-safe):
-- match on `exchange_id` + symbol key
-- constrain by validity window using event `ts_local_us`
-
-### Fixed-point encoding
-Preferred:
-- `px_int = round(price / price_increment)`
-- `qty_int = round(qty / amount_increment)`
-
-Fallback for poor metadata quality:
-- global multiplier (for example `1e8`) with explicit documentation
-
----
-
-## 6) Ingestion Pipeline Contract
-
-Stages:
+Pipeline stages:
 1. Discover Bronze files.
-2. Filter already-successful files via manifest.
-3. Parse + normalize into Silver schema (or build updates from API snapshot envelopes).
-4. Attach lineage (`file_id`, `file_line_number`).
-5. Validate table invariants.
-6. Write Silver partition(s).
-7. Update manifest status.
-8. Run table maintenance as needed (`delta optimize` / `delta vacuum`).
+2. Skip already successful files via `silver.ingest_manifest`.
+3. Parse/normalize to Silver schema.
+4. Resolve symbols via `dim_symbol` (SCD2, PIT validity windows).
+5. Apply validation + quarantine rules.
+6. Write Silver table (idempotent semantics).
+7. Record status in manifest and validation log.
 
-Idempotency expectations:
-- re-running the same input with same metadata should not duplicate successful files
-- ordering keys and lineage fields must remain stable
+Identity key for file-level tracking:
+`(vendor, data_type, bronze_file_name, sha256)`.
 
----
+## 5) Research Contract
 
-## 7) Manifest Contract (`silver.ingest_manifest`)
+Canonical APIs:
+- `research.pipeline(request: QuantResearchInputV2) -> QuantResearchOutputV2`
+- `research.workflow(request: QuantResearchWorkflowInputV2) -> QuantResearchWorkflowOutputV2`
 
-Purpose:
-- file-level ingest ledger
-- skip logic
-- provenance and audit trail
+Execution invariants:
+- Half-open windows: `[T_prev, T)`.
+- Backward-only feature direction (forward logic is label-only).
+- Deterministic sort/tie-break keys:
+  `exchange_id, symbol_id, ts_local_us, file_id, file_line_number`.
+- Registry-governed operators/rollups; fail-fast gates on PIT/determinism violations.
 
-Identity key:
-- `(vendor, data_type, bronze_file_name, sha256)`
+## 6) Layering Rules
 
-Required operational behavior:
-- `created_at_us` records first discovery and must remain stable
-- `processed_at_us` records latest ingest attempt
-- status values are explicit (`pending`, `success`, `failed`, `quarantined`)
+- **Domain (`pointline/tables/*`)**: pure schema/transform logic, no IO side effects.
+- **Services (`pointline/services/*`)**: orchestration and sequencing.
+- **IO (`pointline/io/*`)**: Delta read/write/merge, maintenance, physical layout.
 
----
+## 7) Operational Defaults
 
-## 8) Local Operations
+- Correctness over throughput.
+- Explicit operator-driven maintenance (`optimize`, `vacuum`).
+- No backward compatibility guarantee for legacy contracts in this clean-break architecture.
 
-Use local commands only:
-- ingest: `pointline bronze ingest ...`
-- api snapshots: `pointline bronze api-capture ...`, `pointline bronze api-replay ...`
-- maintenance: `pointline delta optimize ...`, `pointline delta vacuum ...`
-- checks: `pointline dq run --table all`, `pointline dq summary`
+## 8) Out of Scope
 
-For local-host deployments, do not assume background schedulers.
-Maintenance cadence is explicit and operator-driven.
-
----
-
-## 9) Research Access Patterns
-
-Primary interfaces:
-- Polars: `pl.scan_delta(...)` for lazy pipelines
-- DuckDB: `delta_scan(...)` for ad hoc SQL
-
-Safe default patterns:
-- filter early on `date` and `exchange`
-- use as-of joins on `ts_local_us`
-- preserve tie-break keys (`file_id`, `file_line_number`) in replay workflows
-
----
-
-## 10) Versioning Policy
-
-This architecture is a clean-break baseline.
-
-- No compatibility promise with previous manifest/table contracts.
-- Schema changes may require full local rebuilds.
-- Migration helpers are optional tooling, not architectural requirements.
-
-For schemas, see [`docs/reference/schemas.md`](../reference/schemas.md).
+- Live execution/routing.
+- Cloud object storage.
+- Distributed compute/storage backends.
+- Automatic migration of historical legacy formats.
