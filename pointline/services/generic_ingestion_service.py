@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import importlib
 import logging
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
@@ -16,7 +17,7 @@ from zoneinfo import ZoneInfo
 
 import polars as pl
 
-from pointline.config import get_bronze_root, get_exchange_id, get_exchange_timezone
+from pointline.config import get_bronze_root, get_exchange_id, get_exchange_timezone, get_table_path
 from pointline.dim_symbol import check_coverage
 from pointline.io.protocols import (
     BronzeFileMetadata,
@@ -26,6 +27,7 @@ from pointline.io.protocols import (
 )
 from pointline.io.vendors import get_vendor
 from pointline.services.base_service import BaseService
+from pointline.tables.validation_log import create_ingestion_record
 
 logger = logging.getLogger(__name__)
 
@@ -142,6 +144,7 @@ class GenericIngestionService(BaseService):
         file_id: int,
         *,
         bronze_root: Path | None = None,
+        dry_run: bool = False,
     ) -> IngestionResult:
         """Ingest a single CSV file from Bronze to Silver with runtime vendor dispatch.
 
@@ -149,10 +152,13 @@ class GenericIngestionService(BaseService):
             meta: Metadata about the bronze file (includes vendor field)
             file_id: File ID from manifest repository
             bronze_root: Root path for bronze files (default: auto-detected from vendor)
+            dry_run: Walk the full pipeline but skip write. No side effects.
 
         Returns:
             IngestionResult with row count and timestamp ranges
         """
+        start_time_ms = int(time.time() * 1000)
+
         # Validate required metadata for this table
         table_module = importlib.import_module(f"pointline.tables.{self.table_name}")
         required_fields = {
@@ -177,12 +183,14 @@ class GenericIngestionService(BaseService):
                 f"Vendor: {meta.vendor}, Data Type: {meta.data_type}"
             )
             logger.error(error_msg)
-            return IngestionResult(
+            result = IngestionResult(
                 row_count=0,
                 ts_local_min_us=0,
                 ts_local_max_us=0,
                 error_message=error_msg,
             )
+            self._write_validation_log(meta, file_id, result, start_time_ms)
+            return result
 
         # Detect vendor from metadata and get bronze root
         vendor = meta.vendor
@@ -193,12 +201,14 @@ class GenericIngestionService(BaseService):
         if not bronze_path.exists():
             error_msg = f"Bronze file not found: {bronze_path}"
             logger.error(error_msg)
-            return IngestionResult(
+            result = IngestionResult(
                 row_count=0,
                 ts_local_min_us=0,
                 ts_local_max_us=0,
                 error_message=error_msg,
             )
+            self._write_validation_log(meta, file_id, result, start_time_ms)
+            return result
 
         try:
             # 1. Vendor reads and parses file (returns DataFrame with metadata columns)
@@ -206,12 +216,14 @@ class GenericIngestionService(BaseService):
 
             if df.is_empty():
                 logger.info(f"Empty file (no data): {bronze_path}")
-                return IngestionResult(
+                result = IngestionResult(
                     row_count=0,
                     ts_local_min_us=0,
                     ts_local_max_us=0,
                     error_message=None,
                 )
+                self._write_validation_log(meta, file_id, result, start_time_ms)
+                return result
 
             # 2. Validate required metadata columns
             required_cols = ["exchange", "exchange_symbol", "date", "file_line_number"]
@@ -222,22 +234,26 @@ class GenericIngestionService(BaseService):
                     "Vendors must add metadata columns during read_and_parse()."
                 )
                 logger.error(error_msg)
-                return IngestionResult(
+                result = IngestionResult(
                     row_count=0,
                     ts_local_min_us=0,
                     ts_local_max_us=0,
                     error_message=error_msg,
                 )
+                self._write_validation_log(meta, file_id, result, start_time_ms)
+                return result
             null_cols = [col for col in required_cols if df[col].null_count() > 0]
             if null_cols:
                 error_msg = f"Required metadata columns contain nulls: {null_cols}"
                 logger.error(error_msg)
-                return IngestionResult(
+                result = IngestionResult(
                     row_count=0,
                     ts_local_min_us=0,
                     ts_local_max_us=0,
                     error_message=error_msg,
                 )
+                self._write_validation_log(meta, file_id, result, start_time_ms)
+                return result
 
             # 3. Map exchange -> exchange_id (vectorized)
             unique_exchanges = df["exchange"].unique().to_list()
@@ -252,12 +268,14 @@ class GenericIngestionService(BaseService):
             if invalid_exchanges:
                 error_msg = f"Unknown exchanges: {sorted(set(invalid_exchanges))}"
                 logger.error(error_msg)
-                return IngestionResult(
+                result = IngestionResult(
                     row_count=0,
                     ts_local_min_us=0,
                     ts_local_max_us=0,
                     error_message=error_msg,
                 )
+                self._write_validation_log(meta, file_id, result, start_time_ms)
+                return result
 
             df = df.with_columns(
                 pl.col("exchange").replace_strict(exchange_map).cast(pl.Int16).alias("exchange_id")
@@ -266,44 +284,13 @@ class GenericIngestionService(BaseService):
             # 4. Load dim_symbol for quarantine check
             dim_symbol = self.dim_symbol_repo.read_all()
 
-            # 5. Quarantine check per (exchange_id, exchange_symbol, date)
-            unique_pairs = df.select(
-                ["exchange", "exchange_id", "exchange_symbol", "date"]
-            ).unique()
-            quarantined_pairs: list[tuple[str, int, str, date]] = []
-            original_row_count = df.height
-
-            for row in unique_pairs.iter_rows(named=True):
-                exchange_id = row["exchange_id"]
-                exchange = row["exchange"]
-                symbol = row["exchange_symbol"]
-                trading_date = row["date"]
-                is_valid, error_msg = self._check_quarantine(
-                    dim_symbol, exchange_id, symbol, trading_date, exchange=exchange
-                )
-                if not is_valid:
-                    logger.warning(
-                        "Symbol quarantined: exchange=%s, exchange_id=%s, symbol=%s, date=%s, reason=%s",
-                        exchange,
-                        exchange_id,
-                        symbol,
-                        trading_date,
-                        error_msg,
-                    )
-                    quarantined_pairs.append((exchange, exchange_id, symbol, trading_date))
-                    df = df.filter(
-                        ~(
-                            (pl.col("exchange_id") == exchange_id)
-                            & (pl.col("exchange_symbol") == symbol)
-                            & (pl.col("date") == trading_date)
-                        )
-                    )
-
-            filtered_row_count = original_row_count - df.height
-            filtered_symbol_count = len(quarantined_pairs)
+            # 5. Vectorized quarantine check
+            df, filtered_row_count, filtered_symbol_count = self._check_quarantine_vectorized(
+                df, dim_symbol
+            )
 
             if df.is_empty():
-                return IngestionResult(
+                result = IngestionResult(
                     row_count=0,
                     ts_local_min_us=0,
                     ts_local_max_us=0,
@@ -312,6 +299,8 @@ class GenericIngestionService(BaseService):
                     filtered_symbol_count=filtered_symbol_count,
                     filtered_row_count=filtered_row_count,
                 )
+                self._write_validation_log(meta, file_id, result, start_time_ms)
+                return result
 
             if filtered_symbol_count:
                 logger.warning(
@@ -346,7 +335,7 @@ class GenericIngestionService(BaseService):
                 filtered_row_count += filtered_by_validation
                 if validated_df.is_empty():
                     logger.warning(f"No valid rows after validation: {bronze_path}")
-                    return IngestionResult(
+                    result = IngestionResult(
                         row_count=0,
                         ts_local_min_us=0,
                         ts_local_max_us=0,
@@ -355,9 +344,17 @@ class GenericIngestionService(BaseService):
                         filtered_symbol_count=filtered_symbol_count,
                         filtered_row_count=filtered_row_count,
                     )
+                    self._write_validation_log(meta, file_id, result, start_time_ms)
+                    return result
 
-            # 11. Append to Delta table
-            self.write(validated_df)
+            # 11. Append to Delta table (skip in dry-run mode)
+            if dry_run:
+                logger.info(
+                    f"DRY RUN: would ingest {validated_df.height} rows from "
+                    f"{meta.bronze_file_path} [vendor={vendor}, data_type={meta.data_type}]"
+                )
+            else:
+                self.write(validated_df)
 
             # 12. Compute result stats
             ts_min = validated_df[self.strategy.ts_col].min()
@@ -369,7 +366,7 @@ class GenericIngestionService(BaseService):
                 f"(ts range: {ts_min} - {ts_max})"
             )
 
-            return IngestionResult(
+            result = IngestionResult(
                 row_count=validated_df.height,
                 ts_local_min_us=ts_min,
                 ts_local_max_us=ts_max,
@@ -378,16 +375,125 @@ class GenericIngestionService(BaseService):
                 filtered_symbol_count=filtered_symbol_count,
                 filtered_row_count=filtered_row_count,
             )
+            if not dry_run:
+                self._write_validation_log(meta, file_id, result, start_time_ms)
+            return result
 
         except Exception as e:
             error_msg = f"Error ingesting {bronze_path}: {str(e)}"
             logger.error(error_msg, exc_info=True)
-            return IngestionResult(
+            result = IngestionResult(
                 row_count=0,
                 ts_local_min_us=0,
                 ts_local_max_us=0,
                 error_message=error_msg,
             )
+            self._write_validation_log(meta, file_id, result, start_time_ms)
+            return result
+
+    def _check_quarantine_vectorized(
+        self,
+        df: pl.DataFrame,
+        dim_symbol: pl.DataFrame,
+    ) -> tuple[pl.DataFrame, int, int]:
+        """Vectorized quarantine check using anti-join against dim_symbol coverage.
+
+        Replaces the previous row-by-row loop with a single vectorized operation.
+
+        Args:
+            df: Input DataFrame with exchange, exchange_id, exchange_symbol, date columns
+            dim_symbol: Symbol dimension table
+
+        Returns:
+            (filtered_df, filtered_row_count, filtered_symbol_count) tuple
+        """
+        # 1. Build unique (exchange, exchange_id, exchange_symbol, date) pairs
+        unique_pairs = df.select(["exchange", "exchange_id", "exchange_symbol", "date"]).unique()
+
+        if unique_pairs.is_empty():
+            return df, 0, 0
+
+        # 2. Compute day boundaries per exchange timezone (vectorized by exchange)
+        exchange_tz_cache: dict[str, ZoneInfo] = {}
+        day_starts: list[int] = []
+        day_ends: list[int] = []
+
+        for row in unique_pairs.iter_rows(named=True):
+            exchange_name = row["exchange"]
+            trading_date = row["date"]
+
+            if exchange_name not in exchange_tz_cache:
+                tz_name = get_exchange_timezone(str(exchange_name), strict=True)
+                exchange_tz_cache[exchange_name] = ZoneInfo(tz_name)
+
+            tz = exchange_tz_cache[exchange_name]
+            day_start = datetime.combine(trading_date, datetime.min.time(), tzinfo=tz)
+            day_end = datetime.combine(
+                trading_date + timedelta(days=1), datetime.min.time(), tzinfo=tz
+            )
+            day_starts.append(int(day_start.astimezone(timezone.utc).timestamp() * 1_000_000))
+            day_ends.append(int(day_end.astimezone(timezone.utc).timestamp() * 1_000_000))
+
+        unique_pairs = unique_pairs.with_columns(
+            pl.Series("day_start_us", day_starts, dtype=pl.Int64),
+            pl.Series("day_end_us", day_ends, dtype=pl.Int64),
+        )
+
+        # 3. Join against dim_symbol to find covered pairs
+        # A pair is covered if there exists at least one dim_symbol row where:
+        #   exchange_id matches, exchange_symbol matches,
+        #   valid_from_ts < day_end_us, valid_until_ts > day_start_us
+        dim_subset = dim_symbol.select(
+            ["exchange_id", "exchange_symbol", "valid_from_ts", "valid_until_ts"]
+        )
+
+        # Cross-join unique_pairs with dim_subset on (exchange_id, exchange_symbol)
+        # then filter for overlap
+        covered = (
+            unique_pairs.join(
+                dim_subset,
+                on=["exchange_id", "exchange_symbol"],
+                how="inner",
+            )
+            .filter(
+                (pl.col("valid_from_ts") < pl.col("day_end_us"))
+                & (pl.col("valid_until_ts") > pl.col("day_start_us"))
+            )
+            .select(["exchange_id", "exchange_symbol", "date"])
+            .unique()
+        )
+
+        # 4. Anti-join to find uncovered pairs (quarantined)
+        quarantined = unique_pairs.join(
+            covered,
+            on=["exchange_id", "exchange_symbol", "date"],
+            how="anti",
+        )
+
+        filtered_symbol_count = quarantined.height
+
+        if filtered_symbol_count == 0:
+            return df, 0, 0
+
+        # Log quarantined symbols
+        for row in quarantined.iter_rows(named=True):
+            logger.warning(
+                "Symbol quarantined: exchange=%s, exchange_id=%s, symbol=%s, date=%s",
+                row["exchange"],
+                row["exchange_id"],
+                row["exchange_symbol"],
+                row["date"],
+            )
+
+        # 5. Filter DataFrame in one pass using anti-join
+        filtered_df = df.join(
+            quarantined.select(["exchange_id", "exchange_symbol", "date"]),
+            on=["exchange_id", "exchange_symbol", "date"],
+            how="anti",
+        )
+
+        filtered_row_count = df.height - filtered_df.height
+        return filtered_df, filtered_row_count, filtered_symbol_count
 
     def _check_quarantine(
         self,
@@ -397,7 +503,10 @@ class GenericIngestionService(BaseService):
         trading_date: date,
         exchange: str | None = None,
     ) -> tuple[bool, str]:
-        """Check if file should be quarantined based on symbol metadata coverage.
+        """Check if a single symbol-date pair should be quarantined.
+
+        Retained for backward compatibility with unit tests and direct callers.
+        The main ingestion pipeline uses _check_quarantine_vectorized instead.
 
         Args:
             dim_symbol: Symbol dimension table
@@ -409,11 +518,8 @@ class GenericIngestionService(BaseService):
         Returns:
             (is_valid, error_message) tuple
         """
-        # Calculate day boundaries using exchange-local trading date.
-        # This keeps quarantine checks aligned with the partitioning/date semantics.
         exchange_name = exchange
         if exchange_name is None:
-            # Fallback for direct unit tests/callers that only provide exchange_id.
             exchange_name = next(
                 (
                     val
@@ -440,7 +546,6 @@ class GenericIngestionService(BaseService):
         )
         day_end_us = int(day_end_local.astimezone(timezone.utc).timestamp() * 1_000_000)
 
-        # Check coverage using normalized symbol
         has_coverage = check_coverage(
             dim_symbol,
             exchange_id,
@@ -450,7 +555,6 @@ class GenericIngestionService(BaseService):
         )
 
         if not has_coverage:
-            # Determine specific reason (also use normalized symbol)
             rows = dim_symbol.filter(
                 (pl.col("exchange_id") == exchange_id)
                 & (pl.col("exchange_symbol") == exchange_symbol)
@@ -462,6 +566,59 @@ class GenericIngestionService(BaseService):
                 return False, "invalid_validity_window"
 
         return True, ""
+
+    def _write_validation_log(
+        self,
+        meta: BronzeFileMetadata,
+        file_id: int,
+        result: IngestionResult,
+        start_time_ms: int,
+    ) -> None:
+        """Write an ingestion record to the validation_log table.
+
+        Best-effort: logs errors but does not raise on failure.
+        """
+        duration_ms = int(time.time() * 1000) - start_time_ms
+
+        if result.error_message:
+            if "quarantined" in (result.error_message or "").lower():
+                status = "quarantined"
+            else:
+                status = "error"
+        else:
+            status = "ingested"
+
+        # Extract exchange from bronze path (best effort)
+        exchange = None
+        for part in Path(meta.bronze_file_path).parts:
+            if part.startswith("exchange="):
+                exchange = part.split("=", 1)[1]
+                break
+
+        try:
+            record = create_ingestion_record(
+                file_id=file_id,
+                table_name=self.table_name,
+                vendor=meta.vendor,
+                data_type=meta.data_type,
+                exchange=exchange,
+                date=meta.date,
+                status=status,
+                row_count=result.row_count,
+                filtered_row_count=result.filtered_row_count,
+                filtered_symbol_count=result.filtered_symbol_count,
+                error_message=result.error_message,
+                duration_ms=duration_ms,
+            )
+
+            log_path = get_table_path("validation_log")
+            if log_path.exists():
+                record.write_delta(str(log_path), mode="append")
+            else:
+                record.write_delta(str(log_path), mode="overwrite")
+
+        except Exception:
+            logger.debug("Failed to write validation_log record", exc_info=True)
 
     def _add_lineage(self, df: pl.DataFrame, file_id: int) -> pl.DataFrame:
         """Add lineage tracking columns: file_id and file_line_number."""

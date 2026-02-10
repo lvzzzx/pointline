@@ -567,6 +567,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Skip vendor-specific prehooks (e.g., archive reorganization)",
     )
     bronze_ingest.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Walk the full pipeline but skip writes (no side effects)",
+    )
+    bronze_ingest.add_argument(
         "--optimize-after-ingest",
         action="store_true",
         help="Run delta optimize for touched exchange/date partitions after successful ingestion",

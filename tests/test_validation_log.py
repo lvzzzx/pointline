@@ -7,6 +7,7 @@ import pytest
 
 from pointline.tables.validation_log import (
     VALIDATION_LOG_SCHEMA,
+    create_ingestion_record,
     create_validation_record,
     normalize_validation_log_schema,
     required_validation_log_columns,
@@ -15,6 +16,7 @@ from pointline.tables.validation_log import (
 
 def test_validation_log_schema():
     """Test that VALIDATION_LOG_SCHEMA has expected columns and types."""
+    # Original columns
     assert "validation_id" in VALIDATION_LOG_SCHEMA
     assert "file_id" in VALIDATION_LOG_SCHEMA
     assert "table_name" in VALIDATION_LOG_SCHEMA
@@ -27,6 +29,15 @@ def test_validation_log_schema():
     assert "mismatched_rows" in VALIDATION_LOG_SCHEMA
     assert "mismatch_sample" in VALIDATION_LOG_SCHEMA
     assert "validation_duration_ms" in VALIDATION_LOG_SCHEMA
+
+    # Ingestion-specific columns (Phase 3)
+    assert "vendor" in VALIDATION_LOG_SCHEMA
+    assert "data_type" in VALIDATION_LOG_SCHEMA
+    assert "exchange" in VALIDATION_LOG_SCHEMA
+    assert "date" in VALIDATION_LOG_SCHEMA
+    assert "filtered_row_count" in VALIDATION_LOG_SCHEMA
+    assert "filtered_symbol_count" in VALIDATION_LOG_SCHEMA
+    assert "error_message" in VALIDATION_LOG_SCHEMA
 
     # Check types
     assert VALIDATION_LOG_SCHEMA["validation_id"] == pl.Int64
@@ -41,6 +52,13 @@ def test_validation_log_schema():
     assert VALIDATION_LOG_SCHEMA["mismatched_rows"] == pl.Int64
     assert VALIDATION_LOG_SCHEMA["mismatch_sample"] == pl.Utf8
     assert VALIDATION_LOG_SCHEMA["validation_duration_ms"] == pl.Int64
+    assert VALIDATION_LOG_SCHEMA["vendor"] == pl.Utf8
+    assert VALIDATION_LOG_SCHEMA["data_type"] == pl.Utf8
+    assert VALIDATION_LOG_SCHEMA["exchange"] == pl.Utf8
+    assert VALIDATION_LOG_SCHEMA["date"] == pl.Date
+    assert VALIDATION_LOG_SCHEMA["filtered_row_count"] == pl.Int64
+    assert VALIDATION_LOG_SCHEMA["filtered_symbol_count"] == pl.Int64
+    assert VALIDATION_LOG_SCHEMA["error_message"] == pl.Utf8
 
 
 def test_create_validation_record_passed():
@@ -202,7 +220,7 @@ def test_required_validation_log_columns():
     """Test that required_validation_log_columns returns all schema columns."""
     required = required_validation_log_columns()
     assert required == tuple(VALIDATION_LOG_SCHEMA.keys())
-    assert len(required) == 12
+    assert len(required) == 19  # 12 original + 7 ingestion-specific
 
 
 def test_validation_record_persistence(tmp_path: Path):
@@ -282,3 +300,136 @@ def test_validation_record_with_large_mismatch_sample():
     assert record.item(0, "mismatch_sample") is not None
     # Verify it's serialized as JSON string
     assert isinstance(record.item(0, "mismatch_sample"), str)
+
+
+def test_create_ingestion_record():
+    """Test creating an ingestion record with all fields."""
+    import datetime as dt
+
+    record = create_ingestion_record(
+        file_id=42,
+        table_name="trades",
+        vendor="tardis",
+        data_type="trades",
+        exchange="binance-futures",
+        date=dt.date(2024, 5, 1),
+        status="ingested",
+        row_count=10000,
+        filtered_row_count=50,
+        filtered_symbol_count=2,
+        error_message=None,
+        duration_ms=1500,
+    )
+
+    assert record.height == 1
+    assert record.columns == list(VALIDATION_LOG_SCHEMA.keys())
+    assert record.item(0, "file_id") == 42
+    assert record.item(0, "table_name") == "trades"
+    assert record.item(0, "validation_status") == "ingested"
+    assert record.item(0, "vendor") == "tardis"
+    assert record.item(0, "data_type") == "trades"
+    assert record.item(0, "exchange") == "binance-futures"
+    assert record.item(0, "date") == dt.date(2024, 5, 1)
+    assert record.item(0, "ingested_rows") == 10000
+    assert record.item(0, "expected_rows") == 10050  # row_count + filtered_row_count
+    assert record.item(0, "filtered_row_count") == 50
+    assert record.item(0, "filtered_symbol_count") == 2
+    assert record.item(0, "error_message") is None
+    assert record.item(0, "validation_duration_ms") == 1500
+
+
+def test_create_ingestion_record_error():
+    """Test creating an ingestion error record."""
+    record = create_ingestion_record(
+        file_id=99,
+        table_name="quotes",
+        vendor="quant360",
+        data_type="quotes",
+        status="error",
+        row_count=0,
+        error_message="Bronze file not found",
+        duration_ms=10,
+    )
+
+    assert record.height == 1
+    assert record.item(0, "validation_status") == "error"
+    assert record.item(0, "error_message") == "Bronze file not found"
+    assert record.item(0, "exchange") is None
+    assert record.item(0, "date") is None
+
+
+def test_normalize_schema_with_ingestion_optional_cols():
+    """Test that ingestion-specific optional columns are handled during normalize."""
+    # DataFrame with only the original 12 columns (no ingestion cols)
+    df = pl.DataFrame(
+        {
+            "validation_id": [1714557600000000],
+            "file_id": [123],
+            "table_name": ["trades"],
+            "validated_at": [1714557600000000],
+            "validation_status": ["passed"],
+            "expected_rows": [10000],
+            "ingested_rows": [10000],
+            "missing_rows": [0],
+            "extra_rows": [0],
+            "mismatched_rows": [0],
+            "mismatch_sample": [None],
+            "validation_duration_ms": [1234],
+        }
+    )
+
+    normalized = normalize_validation_log_schema(df)
+    assert normalized.columns == list(VALIDATION_LOG_SCHEMA.keys())
+    # All ingestion-specific columns should be None
+    assert normalized.item(0, "vendor") is None
+    assert normalized.item(0, "data_type") is None
+    assert normalized.item(0, "exchange") is None
+    assert normalized.item(0, "date") is None
+    assert normalized.item(0, "filtered_row_count") is None
+    assert normalized.item(0, "filtered_symbol_count") is None
+    assert normalized.item(0, "error_message") is None
+
+
+def test_ingestion_record_persistence(tmp_path: Path):
+    """Test writing ingestion records alongside validation records."""
+    import datetime as dt
+
+    log_path = tmp_path / "validation_log"
+
+    # Write a validation record
+    val_record = create_validation_record(
+        file_id=1,
+        table_name="trades",
+        validation_status="passed",
+        expected_rows=100,
+        ingested_rows=100,
+        missing_rows=0,
+        extra_rows=0,
+        mismatched_rows=0,
+        validation_duration_ms=50,
+    )
+    val_record.write_delta(str(log_path), mode="overwrite")
+
+    # Write an ingestion record
+    ing_record = create_ingestion_record(
+        file_id=2,
+        table_name="trades",
+        vendor="tardis",
+        data_type="trades",
+        exchange="binance-futures",
+        date=dt.date(2024, 5, 1),
+        status="ingested",
+        row_count=500,
+        duration_ms=200,
+    )
+    ing_record.write_delta(str(log_path), mode="append")
+
+    # Read back and verify both types coexist
+    df = pl.read_delta(str(log_path))
+    assert df.height == 2
+    assert df.filter(pl.col("validation_status") == "passed").height == 1
+    assert df.filter(pl.col("validation_status") == "ingested").height == 1
+
+    ingestion_row = df.filter(pl.col("validation_status") == "ingested")
+    assert ingestion_row.item(0, "vendor") == "tardis"
+    assert ingestion_row.item(0, "exchange") == "binance-futures"
