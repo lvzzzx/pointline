@@ -252,7 +252,6 @@ uv pip install -e ".[dev]"
 
 ## 📖 Additional Resources
 
-- [Product Vision](../../conductor/product.md) - Goals and target audience
 - [Architecture](../architecture/design.md) - System design
 - [Researcher's Guide](../guides/researcher-guide.md) - User perspective
 

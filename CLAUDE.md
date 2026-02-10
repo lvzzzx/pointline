@@ -1,6 +1,32 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+PIT-correct, deterministic, reproducible data for quantitative trading research — on a single machine, as fast as possible.
+
+## Workflow Protocol
+
+**Reference:** `docs/development/collaboration-playbook.md`
+
+**Autonomy levels — always assess before starting:**
+- **L0 (Auto):** Formatting, typos, non-semantic refactors. Just do it.
+- **L1 (Guarded, default):** Code/test changes. Requires clear goal + constraints. Tests must pass.
+- **L2 (Approval Required):** Schema contracts, PIT semantics, storage/replay behavior. Stop and confirm the contract with the user before writing implementation code.
+
+**Before implementing L2 changes:**
+1. State what contract is changing (schema, timestamps, ordering, partitioning)
+2. Get explicit user approval on the contract
+3. Only then write implementation code
+
+**Self-review before presenting changes:**
+- Ingestion: deterministic? idempotent? failure recovery?
+- Schema: contract documented? breaking changes?
+- Research: no lookahead bias? `ts_local_us` for replay? as-of joins?
+- General: no hallucinated APIs, no over-engineering, no "just in case" code
+
+**LLM-specific failure modes to watch for:**
+- Verify every function/method call exists in the codebase
+- Double-check fixed-point encoding, timestamp conversions, bitwise operations
+- Don't use patterns from older code that has been refactored
+- Don't add abstractions, feature flags, or error handling beyond what's needed
 
 ## Project Overview
 
@@ -21,8 +47,6 @@ Pointline is a high-performance, point-in-time (PIT) accurate offline data lake 
 
 **IMPORTANT:** Before querying data, ALWAYS use the discovery API to check what's available.
 
-### Quick Discovery Workflow
-
 ```python
 from pointline import research
 
@@ -34,7 +58,6 @@ symbols = research.list_symbols(exchange="binance-futures", base_asset="BTC")
 
 # 3. Check data coverage for a symbol
 coverage = research.data_coverage("binance-futures", "BTCUSDT")
-print(f"Trades available: {coverage['trades']['available']}")
 
 # 4. Load data
 from pointline.research import query
@@ -43,209 +66,87 @@ trades = query.trades("binance-futures", "BTCUSDT", "2024-05-01", "2024-05-02", 
 
 ### Discovery API Reference
 
-**`research.list_exchanges(asset_class=None, active_only=True)`**
-- Lists all exchanges with data
-- Filter by asset_class: "crypto", "crypto-spot", "crypto-derivatives", "stocks-cn", or list
-- Returns DataFrame with: exchange, exchange_id, asset_class, description, is_active
+**`research.list_exchanges(asset_class=None, active_only=True)`** — Lists exchanges. Filter by: "crypto", "crypto-spot", "crypto-derivatives", "stocks-cn".
 
-**`research.list_symbols(exchange=None, asset_class=None, base_asset=None, search=None)`**
-- Lists symbols with flexible filters
-- Use `search="BTC"` for fuzzy matching
-- Returns DataFrame with symbol metadata
+**`research.list_symbols(exchange=None, asset_class=None, base_asset=None, search=None)`** — Lists symbols. Use `search="BTC"` for fuzzy matching.
 
-**`research.list_tables(layer="silver")`**
-- Lists available tables
-- Returns DataFrame with: table_name, layer, has_date_partition, description
+**`research.list_tables(layer="silver")`** — Lists available tables.
 
-**`research.data_coverage(exchange, symbol)`**
-- Checks what data exists for a symbol
-- Returns dict: `{"trades": {"available": True, "symbol_id": 12345}, ...}`
+**`research.data_coverage(exchange, symbol)`** — Checks what data exists. Returns dict with availability per table.
 
-**`research.summarize_symbol(symbol, exchange=None)`**
-- Prints rich summary with metadata and coverage
-- Use when user asks "tell me about BTCUSDT"
+**`research.summarize_symbol(symbol, exchange=None)`** — Rich summary with metadata and coverage.
 
 ## API Selection Guide (CRITICAL FOR LLM AGENTS)
 
-### Default Workflow: Query API
-
-**ALWAYS use the query API for exploration, analysis, and user questions:**
+### Default: Query API (use this 90% of the time)
 
 ```python
 from pointline.research import query
 
-# One-liner - automatic symbol resolution + decoding
 trades = query.trades("binance-futures", "BTCUSDT", "2024-05-01", "2024-05-02", decoded=True)
 quotes = query.quotes("binance-futures", "BTCUSDT", "2024-05-01", "2024-05-02", decoded=True)
 book = query.book_snapshot_25("binance-futures", "BTCUSDT", "2024-05-01", "2024-05-02", decoded=True)
 ```
 
-**When user asks:** "Show me BTC trades on Binance"
-- ✅ **Correct:** Use `query.trades()` directly
-- ❌ **Incorrect:** Multi-step workflow with `registry.find_symbol()` + manual extraction
+### Advanced: Core API (only when explicitly requested)
 
-### Advanced Workflow: Core API
+Use only for: explicit symbol_id control, production reproducibility, SCD Type 2 handling.
 
-**ONLY use when user explicitly requests:**
-- Production research requiring reproducibility
-- Explicit symbol_id control
-- Performance-critical queries with custom optimization
-- Handling SCD Type 2 symbol changes explicitly
+### Anti-Patterns
 
-### Anti-Patterns for LLM Agents
+| Don't | Do |
+|-------|-----|
+| `registry.find_symbol()` + manual symbol_id extraction | `query.trades("binance-futures", "BTCUSDT", ...)` |
+| `int(dt.timestamp() * 1_000_000)` manual timestamp conversion | ISO strings: `start="2024-05-01"` |
+| `decode_fixed_point(trades, dim_symbol)` manual decoding | `decoded=True` parameter |
+| Multi-step core API for simple queries | One-liner query API |
 
-#### ❌ DON'T: Use core API for simple queries
-
-```python
-# ❌ BAD - Unnecessary complexity
-from pointline import registry, research
-
-symbols = registry.find_symbol("BTCUSDT", exchange="binance-futures")
-symbol_id = symbols["symbol_id"][0]  # Manual extraction
-trades = research.load_trades(
-    symbol_id=symbol_id,
-    start_ts_us=1714521600000000,
-    end_ts_us=1714608000000000,
-)
-```
-
-#### ✅ DO: Use query API
-
-```python
-# ✅ GOOD - Simple and correct
-from pointline.research import query
-
-trades = query.trades(
-    "binance-futures",
-    "BTCUSDT",
-    "2024-05-01",
-    "2024-05-02",
-    decoded=True,
-)
-```
-
-#### ❌ DON'T: Manually convert timestamps
-
-```python
-# ❌ BAD - Error-prone
-from datetime import datetime, timezone
-
-start = datetime(2024, 5, 1, tzinfo=timezone.utc)
-start_ts_us = int(start.timestamp() * 1_000_000)  # Easy to mess up
-```
-
-#### ✅ DO: Use ISO strings or datetime objects directly
-
-```python
-# ✅ GOOD - ISO string (simplest)
-trades = query.trades(..., start="2024-05-01", end="2024-05-02")
-
-# ✅ GOOD - datetime object (query API accepts both)
-from datetime import datetime, timezone
-trades = query.trades(
-    ...,
-    start=datetime(2024, 5, 1, tzinfo=timezone.utc),
-    end=datetime(2024, 5, 2, tzinfo=timezone.utc),
-)
-```
-
-#### ❌ DON'T: Manually decode fixed-point
-
-```python
-# ❌ BAD - Verbose and unnecessary
-trades = research.load_trades(...)
-from pointline.tables.trades import decode_fixed_point
-from pointline.dim_symbol import read_dim_symbol_table
-
-dim_symbol = read_dim_symbol_table()
-trades = decode_fixed_point(trades, dim_symbol)
-```
-
-#### ✅ DO: Use decoded=True parameter
-
-```python
-# ✅ GOOD - Automatic decoding
-trades = query.trades(..., decoded=True)
-```
-
-### Decision Tree for LLM Agents
+### Decision Tree
 
 ```
 User asks to load data?
-│
-├─ Is this exploration/analysis/quick check? ──> Use query API
-│   └─ query.trades(..., decoded=True)
-│
-├─ Is this production research? ──> Ask if they need explicit symbol_id control
-│   ├─ Yes ──> Use core API
-│   │   └─ research.load_trades(symbol_id=..., start_ts_us=..., end_ts_us=...)
-│   └─ No ──> Use query API
-│
-└─ User explicitly mentions "symbol_id" or "reproducibility"?
-    └─ Yes ──> Use core API
+├─ Exploration/analysis/quick check? ──> query API
+├─ User says "symbol_id" or "reproducibility"? ──> core API
+└─ Otherwise? ──> query API
 ```
-
-**Summary for agents:**
-- **Default:** Query API (90% of use cases)
-- **Advanced:** Core API (10% of use cases, when explicitly needed)
-- **Never:** Multi-step workflows when query API exists
 
 ## Commands
 
 ### Setup
 ```bash
-# Install Python dependencies with uv (required)
-uv venv
-source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+uv venv && source .venv/bin/activate
 uv pip install -e ".[dev]"
-
-# IMPORTANT: Install pre-commit hooks for your worktree
-# (Required when creating/switching worktrees)
 pre-commit install
-
-# Verify pre-commit is working
-pre-commit run --all-files
 ```
-
-**Note for Git Worktrees:** You MUST run `pre-commit install` in each worktree. See [Worktree Setup Guide](docs/development/worktree-setup.md) for details.
-
-**Why uv?** This project uses [uv](https://github.com/astral-sh/uv) for fast, deterministic dependency management. The `uv.lock` file ensures reproducible builds across all environments.
 
 ### Testing
 ```bash
-# Run all tests
-pytest
-
-# Run specific test file
-pytest tests/test_trades.py
-
-# Run with verbose output
-pytest -v
-
-# Run specific test function
-pytest tests/test_trades.py::test_parse_tardis_trades_csv
+pytest                                              # all tests
+pytest tests/test_trades.py                         # specific file
+pytest tests/test_trades.py::test_parse_tardis_trades_csv  # specific test
 ```
 
-### CLI Usage
+### Linting
+```bash
+ruff check .        # lint
+ruff format .       # format
+pre-commit run --all-files  # all hooks
+```
+
+### CLI
 ```bash
 # Symbol management
 pointline symbol search BTCUSDT --exchange binance-futures
-pointline symbol sync --file ./symbols.csv
 
-# Bronze layer (raw vendor data)
-# Simple: just specify vendor
-pointline bronze discover --vendor quant360 --pending-only
+# Bronze layer
 pointline bronze discover --vendor tardis --pending-only
+pointline bronze discover --vendor quant360 --pending-only
 
-# Or explicitly specify bronze-root (for non-standard layouts)
-pointline bronze reorganize --source-dir ~/archives --bronze-root ~/data/lake/bronze
-
-# Silver layer (ETL ingestion)
+# Silver layer (ETL)
 pointline ingest discover --pending-only
 pointline ingest run --table trades --exchange binance-futures --date 2024-05-01
 
-# Manifest and maintenance
-pointline manifest show
+# Maintenance
 pointline delta optimize --table trades --partition exchange=binance-futures/date=2024-05-01
 pointline delta vacuum --table trades --retention-hours 168
 
@@ -253,277 +154,90 @@ pointline delta vacuum --table trades --retention-hours 168
 pointline validate trades --exchange binance-futures --date 2024-05-01
 ```
 
-### Linting
-```bash
-# Ruff is configured in pyproject.toml (line-length = 100)
-ruff check .
-ruff format .
-
-# Pre-commit hooks (recommended for development)
-# Install pre-commit hooks (one-time setup)
-pip install pre-commit
-pre-commit install
-
-# Hooks will now run automatically on git commit
-# To run manually on all files:
-pre-commit run --all-files
-
-# To skip hooks for a specific commit (use sparingly):
-git commit --no-verify
-```
-
 ## Architecture
 
 ### Data Pipeline: Bronze → Silver → Gold
 
-**Bronze Layer** (Immutable Vendor Truth)
-- Path: `/lake/bronze/{vendor}/exchange={exchange}/type={data_type}/date={date}/symbol={symbol}/`
-- Format: Raw vendor files (CSV.gz, ZIP) exactly as downloaded
-- Purpose: Preserve original data with checksums for reproducibility
-- **Vendor-specific preprocessing:**
-  - **Tardis**: Direct downloads already in Hive-partitioned format
-  - **Quant360**: Requires reorganization from `.7z` archives → use `pointline bronze reorganize`
-  - Archives (`.7z`, `.zip`) must be reorganized before ingestion
+**Bronze** (Immutable Vendor Truth)
+- Path: `bronze/{vendor}/exchange={exchange}/type={data_type}/date={date}/symbol={symbol}/`
+- Raw vendor files (CSV.gz, ZIP) exactly as downloaded
 
-**Silver Layer** (Canonical Research Foundation)
-- Path: `/lake/silver/{table_name}/exchange={exchange}/date={date}/`
-- Format: Delta Lake (Parquet + ACID transactions)
-- Compression: ZSTD
-- Schema: Integer timestamps, dictionary-encoded IDs, fixed-point prices
-- Key tables:
-  - `dim_symbol` - SCD Type 2 symbol master (unpartitioned)
-  - `trades`, `quotes`, `book_snapshot_25` - Market data events
-  - `derivative_ticker` - Funding, OI, mark/index prices
-  - `kline_1h` - OHLCV candles
-  - `szse_l3_orders`, `szse_l3_ticks` - SZSE Level 3 order book events
-  - `ingest_manifest` - ETL tracking ledger
+**Silver** (Canonical Research Foundation)
+- Path: `silver/{table_name}/exchange={exchange}/date={date}/`
+- Delta Lake (Parquet + ACID), ZSTD compression
+- Integer timestamps, dictionary-encoded IDs, fixed-point prices
+- Tables: `dim_symbol`, `trades`, `quotes`, `book_snapshot_25`, `derivative_ticker`, `kline_1h`, `szse_l3_orders`, `szse_l3_ticks`, `ingest_manifest`
 
-**Gold Layer** (Derived Research Tables)
-- Path: `/lake/gold/{table_name}/`
-- Purpose: Pre-computed fast paths for specific workflows
-- Status: Deferred until concrete needs identified
+**Gold** (Derived Research Tables) — deferred until concrete needs identified.
 
 ### Vendor Plugin System
 
-**NEW (2026-02-03):** All vendors are now self-contained plugins with capability-based architecture.
+All vendors are self-contained plugins at `pointline/io/vendors/`.
 
-**Location:** `pointline/io/vendors/`
-
-**Key Concepts:**
 - **Plugin Protocol:** Each vendor implements `VendorPlugin` interface
 - **Capability Flags:** `supports_download`, `supports_parsers`, `supports_prehooks`
-- **Auto-Discovery:** Vendors register automatically on import
-- **Runtime Dispatch:** Services get parsers via `get_parser(vendor, data_type)`
+- **Runtime Dispatch:** `get_parser(vendor, data_type)` for parser lookup
 
-**Vendor Types:**
-1. **Self-Download:** We download from APIs (tardis, binance_vision)
-2. **External Bronze:** Vendor delivers archives, we reorganize (quant360)
-3. **API-Only:** Direct to dimension tables (coingecko, tushare)
+Vendor types: self-download (tardis, binance_vision), external bronze (quant360), API-only (coingecko, tushare).
 
-**Quick Reference:**
 ```python
 from pointline.io.vendors import get_vendor, get_parser, list_vendors
-
-# List all vendors
-vendors = list_vendors()
-# → ['binance_vision', 'coingecko', 'quant360', 'tardis', 'tushare']
-
-# Get vendor capabilities
-tardis = get_vendor("tardis")
-print(tardis.supports_download)   # True
-print(tardis.supports_parsers)    # True
-print(tardis.supports_prehooks)   # False
-
-# Get parser (runtime dispatch)
-parse_trades = get_parser("tardis", "trades")
-parsed_df = parse_trades(raw_csv_df)
 ```
 
-**Documentation:**
-- **Full Guide:** [Vendor Plugin System](docs/vendor-plugin-system.md)
-- **Quick Reference:** [Vendor Plugin Quick Reference](docs/vendor-plugin-quick-reference.md)
+Docs: [Vendor Plugin System](docs/vendor-plugin-system.md) | [Quick Reference](docs/vendor-plugin-quick-reference.md)
 
-**Adding New Vendors:**
-1. Create plugin directory: `io/vendors/my_vendor/`
-2. Implement `MyVendorPlugin` class with capability flags
-3. Implement parsers (if `supports_parsers=True`)
-4. Implement download client (if `supports_download=True`)
-5. Implement prehook (if `supports_prehooks=True`)
-6. Register via `register_vendor(MyVendorPlugin())`
+### Key Modules
 
-See documentation for complete implementation guide.
+**`config.py`** — `LAKE_ROOT`, `BRONZE_ROOT`, `TABLE_PATHS`, `EXCHANGE_MAP`, `EXCHANGE_TIMEZONES`, `TYPE_MAP`
 
-### Key Python Modules
+**`research.py`** — `scan_table()`, `read_table()`, `load_trades()`, `load_quotes()`, `load_book_snapshot_25()`. Requires explicit symbol_id + time range.
 
-**`config.py`** - Global configuration registry
-- `LAKE_ROOT`, `BRONZE_ROOT`, `TABLE_PATHS`
-- Exchange registry: `EXCHANGE_MAP` (exchange name → exchange_id)
-- Exchange timezone registry: `EXCHANGE_TIMEZONES` (exchange → IANA timezone)
-- Type registry: `TYPE_MAP` (instrument type → asset_type)
+**`registry.py` + `dim_symbol.py`** — SCD Type 2 symbol management. `resolve_symbol()`, `find_symbol()`. Always resolve symbol_id upfront.
 
-**`research.py`** - Primary researcher API
-- `scan_table()` - LazyFrame with partition pruning
-- `read_table()` - Eager DataFrame loading
-- `load_trades()`, `load_quotes()`, `load_book_snapshot_25()` - Type-safe loaders
-- **Safety:** Requires explicit symbol_id + time range to prevent accidental full scans
+**`tables/*.py`** — Schema definitions, validation, fixed-point encoding. Vendor-specific parsing lives in `io/vendors/<vendor>/parsers/`.
 
-**`registry.py` + `dim_symbol.py`** - SCD Type 2 symbol management
-- `resolve_symbol()` - symbol_id → (exchange, exchange_id, exchange_symbol)
-- `resolve_symbols()` - Batch resolution for partition pruning
-- `find_symbol()` - Fuzzy search with filters
-- **Critical:** Always resolve symbol_id upfront; don't use raw exchange symbols
+**`services/generic_ingestion_service.py`** — Unified vendor-agnostic ETL. Runtime parser dispatch, 12-step pipeline. Base class: `services/base_service.py`.
 
-**`tables/*.py`** - Domain logic per table type
-- Schema definition (canonical Polars schema)
-- Validation and normalization
-- Fixed-point encoding: `px_int = round(price / price_increment)`
-- Example: `tables/trades.py` defines `TRADES_SCHEMA`, side constants, encoding/decoding
-- **NOTE:** Vendor-specific parsing now moved to `io/vendors/<vendor>/parsers/`
+**`io/vendors/`** — Vendor plugins: `base.py` (protocol), `registry.py` (dispatch), `<vendor>/` (plugin + parsers + client).
 
-**`services/*.py`** - ETL orchestration
-- **`GenericIngestionService`** - Unified vendor-agnostic service (NEW)
-  - Runtime parser dispatch via `get_parser(vendor, data_type)`
-  - Table-specific strategies (encoding, validation, schema normalization)
-  - Handles all vendors through same 12-step pipeline
-- Base class: `BaseService` (validate → compute_state → write)
-- **Legacy services removed:** TradesIngestionService, QuotesIngestionService, etc. (consolidated into GenericIngestionService)
+**`io/*.py`** — Data access: `TableRepository`, `AppendableTableRepository`, `BronzeSource` protocols. `BaseDeltaRepository`, `DeltaManifestRepo`, `LocalSource` implementations.
 
-**`io/vendors/`** - Vendor plugin system (NEW)
-- **`base.py`** - VendorPlugin protocol definition
-- **`registry.py`** - Vendor and parser registry with auto-discovery
-- **`<vendor>/`** - Self-contained vendor plugins:
-  - `plugin.py` - Plugin class implementing VendorPlugin protocol
-  - `client.py` - Download/API client (if supports_download)
-  - `parsers/` - Data format parsers (if supports_parsers)
-  - `reorganize.py` or similar - Prehook logic (if supports_prehooks)
-- See [Vendor Plugin System](docs/vendor-plugin-system.md) for details
-
-**`io/*.py`** - Data access layer
-- Protocols: `TableRepository`, `AppendableTableRepository`, `BronzeSource`
-- Implementations: `BaseDeltaRepository`, `DeltaManifestRepo`, `LocalSource`
-
-**`cli/*.py`** - Command-line interface
-- Entry point: `pointline.cli:main()` (installed as `pointline` command)
-- Nested argparse subcommands for all ETL operations
+**`cli/*.py`** — Entry point: `pointline.cli:main()`. Nested argparse subcommands.
 
 ## Critical Design Principles
 
-1. **Point-in-Time Correctness:** Always use `ts_local_us` for replay (arrival time, not exchange time); joins are as-of joins
-2. **Deterministic Ordering:** `(ts_local_us, file_id, file_line_number)` ascending
-3. **Immutability:** Bronze never modified; Silver is append-only for events
-4. **Lineage:** Every silver row traces back to bronze file via `file_id` + `file_line_number`
-5. **Symbol Resolution:** Always resolve symbol_id upfront via `dim_symbol`
-6. **Fixed-Point Integers:** Keep integers until final decode to avoid floating-point errors
-7. **Partition Pruning:** Require symbol_id + time range to leverage Delta Lake statistics
-8. **Idempotent ETL:** Same inputs + metadata → same outputs
+1. **Point-in-Time Correctness:** Always use `ts_local_us` (arrival time) for replay, not `ts_exch_us`. Joins are as-of joins.
+2. **Deterministic Ordering:** `(ts_local_us, file_id, file_line_number)` ascending.
+3. **Immutability:** Bronze never modified; Silver is append-only for events.
+4. **Lineage:** Every silver row traces to bronze via `file_id` + `file_line_number`.
+5. **Symbol Resolution:** Always resolve symbol_id upfront via `dim_symbol`.
+6. **Fixed-Point Integers:** Keep integers until final decode to avoid floating-point errors.
+7. **Partition Pruning:** Require symbol_id + time range to leverage Delta Lake statistics.
+8. **Idempotent ETL:** Same inputs + metadata → same outputs.
 
 ## Timezone Handling
 
-**Timestamp Storage:**
-- All timestamps stored in UTC (`ts_local_us`, `ts_exch_us`)
-- Microsecond precision (Int64)
-
-**Partition Date Semantics:** Exchange-local trading date
-- **Crypto (24/7):** `date` = UTC date from `ts_local_us`
-  - Example: binance-futures, coinbase, okx
-- **SZSE/SSE:** `date` = CST (Asia/Shanghai) date from `ts_local_us`
-  - Example: 2024-09-30 00:30 CST → date=2024-09-30 (not 2024-09-29)
-- **Future US exchanges:** `date` = ET (America/New_York) date
-
-**Rationale:**
-- Ensures one trading day = one partition for efficient queries
-- Researchers query by trading day, not UTC day
-- Aligns with bronze layer structure (bronze already uses exchange-local dates)
-
-**Cross-Exchange Queries:**
-- Use `ts_local_us` for precise timestamp filtering across exchanges
-- Do not filter by `date` across exchanges with different timezones
-- Each exchange partition has its own timezone semantics
-
-**Configuration:**
-- Timezone registry: `pointline.config.EXCHANGE_TIMEZONES`
-- Lookup function: `get_exchange_timezone(exchange)` → IANA timezone string
-- Default: "UTC" for unlisted exchanges
-6. **Fixed-Point Integers:** Keep integers until final decode to avoid floating-point errors
-7. **Partition Pruning:** Require symbol_id + time range to leverage Delta Lake statistics
-8. **Idempotent ETL:** Same inputs + metadata → same outputs
-
-## Timeline Semantics
-
-**Default replay timeline:** `ts_local_us` (arrival time), **not** `ts_exch_us` (exchange time)
-
-**Rationale:** Live trading reacts to arrival time; using exchange time creates lookahead bias. This is a fundamental correctness requirement.
+- All timestamps stored in UTC microseconds (Int64): `ts_local_us`, `ts_exch_us`
+- Partition `date` = exchange-local trading date:
+  - **Crypto:** UTC date
+  - **SZSE/SSE:** CST (Asia/Shanghai) date
+  - **Future US exchanges:** ET (America/New_York) date
+- Cross-exchange queries: filter by `ts_local_us`, not `date`
+- Config: `EXCHANGE_TIMEZONES`, `get_exchange_timezone(exchange)` → IANA string, default "UTC"
 
 ## Schema Constraints
 
-**Delta Lake Type Limitations:**
-- No `UInt16`, `UInt32` support
-- Use `Int16` for `exchange_id`
-- Use `Int32` for `file_id`, `file_line_number`, `flags`
-- Use `Int64` for `symbol_id` (matches dim_symbol)
-- `UInt8` is supported (used for `side`, `asset_type`)
+- Delta Lake type limitations: no `UInt16`/`UInt32`. Use `Int16` (exchange_id), `Int32` (file_id, file_line_number, flags), `Int64` (symbol_id). `UInt8` is supported (side, asset_type).
+- Partitioning: `exchange` + `date`. Z-order by `(symbol_id, ts_local_us)`. Dimension tables (`dim_symbol`, `dim_asset_stats`) are unpartitioned.
 
-**Partitioning Strategy:**
-- Most tables: `exchange` + `date`
-- Within partitions: Z-order by `(symbol_id, ts_local_us)` for pruning
-- No partitioning: `dim_symbol`, `dim_asset_stats` (small dimension tables)
+## Vendor-Specific Notes
 
-## Vendor-Specific Workflows
-
-### Quant360 (SZSE Level 3 Data)
-
-**Data Source:** Chinese stock exchanges (SZSE, SSE) Level 3 market data
-- Individual order placements (`l3_orders`)
-- Trade executions and cancellations (`l3_ticks`)
-
-**Bronze Reorganization (Required Pre-ingestion Step):**
-```bash
-# Quant360 delivers data as monolithic .7z archives (one archive per date/type)
-# Archives contain ~3000 per-symbol CSV files that must be reorganized
-
-# Automatic (default): prehook auto-detects and reorganizes during discovery
-pointline bronze discover --vendor quant360 --pending-only
-
-# Manual (for batch operations or debugging):
-pointline bronze reorganize \
-  --source-dir ~/data/archives/quant360 \
-  --bronze-root ~/data/lake/bronze \
-  --vendor quant360
-
-# Transforms: order_new_STK_SZ_20240930.7z
-# Into: bronze/quant360/exchange=szse/type=l3_orders/date=2024-09-30/symbol={XXXXXX}/{XXXXXX}.csv.gz
-```
-
-**Ingestion Workflow:**
-```bash
-# Step 1: Discover reorganized files (prehook auto-reorganizes if needed)
-pointline bronze discover --vendor quant360 --pending-only
-
-# Step 2: Ingest to silver tables
-pointline ingest run --table l3_orders --exchange szse --date 2024-09-30
-pointline ingest run --table l3_ticks --exchange szse --date 2024-09-30
-
-# Step 3: Validate (optional)
-pointline validate l3_orders --exchange szse --date 2024-09-30
-```
-
-**Key Implementation Files:**
-- `pointline/io/vendor/quant360/reorganize.py` - Python reorganization utilities
-- `scripts/reorganize_quant360.sh` - Fast bash reorganization (preferred)
-- `pointline/tables/szse_l3_orders.py` - Order schema and parsing
-- `pointline/tables/szse_l3_ticks.py` - Tick schema and parsing
-- `pointline/services/szse_l3_orders_service.py` - Order ingestion service
-- `pointline/services/szse_l3_ticks_service.py` - Tick ingestion service
-
-**Schema Specifics:**
-- Timestamps: Asia/Shanghai (CST) → UTC conversion via `parse_quant360_timestamp()`
-- Fixed-point encoding: Lot-based (100 shares/lot) for Chinese A-shares
-- Side/Type remapping: Quant360 uses 1/2 codes → remapped to 0/1 for consistency
-- Tick semantics: Fills (price>0) vs Cancellations (price=0)
+**Quant360 (SZSE L3):** Archives must be reorganized before ingestion. Use `pointline bronze discover --vendor quant360` (auto-reorganizes) or `pointline bronze reorganize` (manual). See `pointline/io/vendors/quant360/` for parsers and reorganization logic.
 
 ## Research Experiment Structure
 
-**Template:** `research/03_experiments/_template/`
+Template: `research/03_experiments/_template/`
+
 ```
 exp_YYYY-MM-DD_name/
 ├── README.md        # Hypothesis, method, results
@@ -534,63 +248,21 @@ exp_YYYY-MM-DD_name/
 └── plots/           # Figures
 ```
 
-**Run Logging** (`logs/runs.jsonl`):
-Each run appends a single JSON object with: run_id, git_commit, lake_root, symbol_ids, tables, start_ts_us, end_ts_us, ts_col, params, metrics.
-
-**Reproducibility Requirements:**
-- Symbol IDs resolved and recorded
-- Timestamp column recorded (default: `ts_local_us`)
-- Lake root recorded
-- Git commit hash recorded
-- All parameters recorded
-- Metrics recorded
+Reproducibility: record symbol_ids, timestamp column (`ts_local_us`), lake_root, git commit, all params, metrics.
 
 ## Code Standards
 
-**Type Safety:**
-- Use strict Python type hints throughout
-- Leverage Polars schema validation in table modules
-
-**Error Handling:**
-- Fail fast on data anomalies (e.g., crossed book, missing symbols)
-- Flag issues immediately rather than silently propagating bad data
-
-**Documentation Style:**
-- Technical and precise (use industry terminology: "SCD Type 2", "Z-Ordering")
-- Concise: Explain "why" and "how" without unnecessary fluff
-- Example-driven for complex logic (bitwise flags, fixed-point math)
-
-**Testing Requirements:**
-- Test-driven development (TDD): Write failing tests first (Red phase)
-- Minimum 80% code coverage target
-- Test both success and failure cases
-- Use fixtures and mocks for external dependencies
-- See `tests/test_trades.py` for example test structure
+- **Type hints:** Strict Python type hints throughout. Polars schema validation in table modules.
+- **Error handling:** Fail fast on data anomalies. Flag issues immediately.
+- **Docs style:** Technical, concise, example-driven. Industry terminology ("SCD Type 2", "Z-Ordering").
+- **Testing:** TDD (write failing tests first). 80% coverage target. Test success and failure cases. Fixtures/mocks for external dependencies.
 
 ## Key Entry Points
 
-**For Data Engineering:**
-- CLI parser: `pointline/cli/parser.py`
-- Service templates: `pointline/services/base_service.py`
-- Table schemas: `docs/schemas.md`
-
-**For Research:**
-- Research API: `pointline/research.py`
-- Experiment template: `research/03_experiments/_template/`
-- Symbol resolution: `pointline/registry.py`
-
-**For Architecture Understanding:**
-- Design document: `docs/architecture/design.md`
-- Schema reference: `docs/schemas.md`
-- Product vision: `conductor/product.md`
+- **Data Engineering:** `pointline/cli/parser.py`, `pointline/services/base_service.py`, `docs/reference/schemas.md`
+- **Research:** `pointline/research.py`, `research/03_experiments/_template/`, `pointline/registry.py`
+- **Architecture:** `docs/architecture/design.md`, `docs/reference/schemas.md`
 
 ## Technology Stack
 
-- **Python 3.10+** - Primary language
-- **uv** - Fast Python package installer and resolver (required)
-- **Polars** - Vectorized data processing
-- **Delta Lake (delta-rs)** - Storage layer with ACID
-- **Apache Parquet** - Columnar format
-- **ZSTD** - Compression
-- **Pytest** - Testing framework
-- **Ruff** - Linting/formatting (100 char line length)
+- **Python 3.10+**, **uv** (package management), **Polars** (data processing), **Delta Lake** (storage), **Parquet** + **ZSTD** (format/compression), **Pytest** (testing), **Ruff** (lint/format, 100 char line length)

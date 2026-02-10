@@ -1,165 +1,147 @@
 # Collaboration Playbook
 
-This playbook defines how Pointline teams collaborate when humans and LLM agents work together.
+How Pointline gets built: one human (DRI for everything) + LLM agents as execution partners.
 
-It is operational guidance for day-to-day delivery and should be used with:
-- `docs/roles-and-responsibilities.md` (role ownership and PR routing)
-- `docs/architecture/design.md` (architecture constraints)
+Read with: `docs/architecture/design.md` (architecture constraints).
 
-## Purpose
+## Principles
 
-- Move faster without losing correctness.
-- Make cross-role handoffs explicit and repeatable.
-- Use LLM agents safely as collaborators and consumers.
+- You own all decisions. LLM agents accelerate execution, not judgment.
+- LLM outputs are proposals until you approve.
+- Contract-first for risky changes: define semantics before implementation.
+- Quality gates are non-negotiable regardless of who wrote the code.
 
-## Operating Model
+## Workflow
 
-- One human DRI per initiative is required.
-- Humans own decisions; LLM agents accelerate execution.
-- Contract-first delivery: define semantics before implementation.
-- PR is the integration gate, not the full collaboration process.
+### 1) Decide scope and risk level
 
-## End-to-End Workflow
+Before starting, decide the autonomy level:
 
-### 1) Intake and Task Envelope
+| Level | What | Task brief needed | Your involvement |
+|-------|------|-------------------|------------------|
+| L0 (Auto) | Formatting, typo fixes, non-semantic refactors | None | Review diff |
+| L1 (Guarded) | Code/test changes with clear requirements | Goal + constraints | Review direction early, verify tests pass |
+| L2 (Approval) | Schema contracts, PIT semantics, storage/replay behavior | Full envelope | Approve contract before implementation starts |
 
-Before implementation, create a short task brief with:
-- `Context`: affected modules/tables, links to existing docs
+**Default is L1.**
+
+### 2) Task brief (L1 and L2)
+
+**L1 (short form):** State the goal and any constraints inline. Example:
+> Add kline_1h ingestion for tardis. Follow existing trades ingestion pattern. Must be idempotent. Tests required.
+
+**L2 (full envelope):** Required fields:
+- `Context`: affected modules/tables, current behavior
 - `Goal`: exact expected outcome
-- `Inputs/Outputs`: schema/API/CLI expectations and artifact paths
-- `Constraints`: PIT, determinism/idempotency, performance bounds
-- `Acceptance Checks`: tests, sample queries, expected pass criteria
-- `Failure + Rollback`: abort/recovery plan
+- `Constraints`: PIT, determinism, performance bounds
+- `Acceptance`: tests and quality gates that must pass
+- `Rollback`: what to do if it breaks
 
-If this envelope is incomplete, work is not ready.
+If the envelope is incomplete for an L2 change, stop and fill it in first.
 
-### 2) Ownership and Routing
-
-Assign one DRI and required reviewer roles up front:
-- Ingestion/storage semantics: lead `Data Infra`, reviewer `Data Quality`
-- Validation/schema contracts: lead `Data Quality`, reviewer `Data Infra`
-- Research API/features: lead `Research Engineer`, reviewer `Quant Researcher`
-- Tooling/CI: lead `Platform/DevEx`
-
-When scope crosses domains, the DRI remains single-threaded, with required co-reviewers.
-
-### 3) Contract-First Design
-
-Before writing implementation code, publish a minimal contract:
-- schema and field requirements (required/optional)
-- timestamp semantics (`ts_local_us`, `ts_exch_us`)
-- deterministic ordering/tie-break keys
-- data quality invariants and caveats
-- compatibility and breaking-change notes
-
-Any unresolved contract question blocks implementation.
-
-### 4) Implementation and Collaboration
-
-Use short execution cycles:
-- LLM agent drafts code/tests/docs from the task envelope
-- Human DRI reviews direction early (not only at final PR)
-- Required reviewer role validates domain semantics continuously
+### 3) Build
 
 Preferred split:
-- LLM: scaffolding, test drafting, docs updates, repetitive refactors
-- Human: risk tradeoffs, contract decisions, release-critical calls
+- **LLM:** scaffolding, test drafting, docs, repetitive refactors, exploratory analysis
+- **You:** risk tradeoffs, contract decisions, release-critical calls, final review
 
-### 5) Validation Gates
+For L1+, review direction early (not only at final diff).
 
-A change is not ready without all applicable gates:
-- Infra gate: deterministic rerun/replay behavior
-- DQ gate: contract checks, validation rule coverage, drift checks
-- Research gate: PIT-safe behavior and no-lookahead assertions
-- Quant gate: feature semantics and experiment usability
-- DevEx gate: CI reliability and local developer ergonomics
+### 4) Validate
 
-Repository quality gates remain mandatory (`pytest`, lint, type checks, and required pre-commit hooks).
+Every change must pass applicable gates before merge:
 
-### 6) PR Integration Gate
+- **Always:** `pytest`, `ruff check`, `ruff format`, pre-commit hooks
+- **Ingestion/storage changes:** deterministic rerun produces identical output
+- **Schema/validation changes:** contract checks, edge-case coverage
+- **Research API changes:** PIT-safe behavior, no lookahead bias
+- **Feature/signal changes:** leakage checks, regime robustness
 
-PR must include:
-- task envelope summary
-- contract deltas (if any)
-- test evidence and acceptance query results
-- required role approvals
+### 5) Post-merge
 
-Merge only after all required role approvals and checks are green.
+- Monitor ingestion/backfill and DQ signals
+- If something breaks, classify the root cause: missing contract, missing test, or tooling gap
+- Update contracts/tests/docs accordingly
 
-### 7) Post-Merge Feedback Loop
+## Self-Review Checklists
 
-After merge:
-- monitor ingestion/backfill and DQ signals
-- validate research usability with canonical examples
-- capture incidents and update contracts/tests/docs
+Since there's no second reviewer, use these checklists to catch domain-specific issues.
 
-Every incident should map to one of: missing contract, missing test, unclear ownership, or tooling gap.
+### Ingestion & Storage
+- [ ] Deterministic: same inputs + metadata produce same outputs?
+- [ ] Idempotent: safe to re-run without duplicates or corruption?
+- [ ] Failure recovery: what happens on partial failure mid-write?
+- [ ] Data layout: partition strategy and Z-ordering still optimal?
+- [ ] Performance: acceptable for full historical backfill?
 
-## LLM Autonomy Levels
+### Data Quality & Schema
+- [ ] Schema contract documented and matches implementation?
+- [ ] Validation rules cover known bad-data paths?
+- [ ] Breaking change: any downstream consumer affected?
+- [ ] False positive/negative risk in validation rules?
 
-Default to `Level 1` unless explicitly raised/lowered.
+### Research & PIT Correctness
+- [ ] No lookahead bias: uses `ts_local_us` (arrival time) for replay?
+- [ ] Joins are as-of joins, not exact joins?
+- [ ] Symbol resolution via `dim_symbol`, not raw exchange symbols?
+- [ ] Fixed-point decoded only at final output, not mid-pipeline?
+- [ ] Reproducible: symbol_ids, timestamp column, and params recorded?
 
-- `Level 0 (Auto)`:
-  - docs fixes, formatting, non-semantic cleanups
-- `Level 1 (Guarded)`:
-  - implementation allowed with tests and mandatory quality gates
-- `Level 2 (Approval Required)`:
-  - schema contracts, PIT semantics, storage/replay behavior, release-critical logic
+### Signal & Feature
+- [ ] Signal definition is leakage-free?
+- [ ] Tested across multiple regimes?
+- [ ] Practical tradability assumptions documented?
 
-For `Level 2`, explicit owner approval is required before merge.
+### Tooling & DevEx
+- [ ] CI still passes?
+- [ ] Local dev workflow unbroken?
+- [ ] Pre-commit hooks still work?
 
-## Escalation Rules
+## LLM-Specific Review Items
 
-Escalate immediately when:
-- ownership is ambiguous
-- contract text conflicts with implementation
-- required envelope context is missing
-- a reviewer identifies PIT/leakage or determinism risk
+LLM agents have specific failure modes. Watch for these:
+- **Hallucinated APIs:** Verify every function call exists in the codebase
+- **Plausible but wrong math:** Double-check fixed-point encoding, timestamp conversions, bitwise operations
+- **Over-engineering:** Reject unnecessary abstractions, feature flags, or "just in case" error handling
+- **Stale patterns:** LLM may use patterns from older code that has since been refactored
 
-Escalation path:
-1. Pause implementation.
-2. Assign/confirm DRI using `Decision Guidelines` in `docs/roles-and-responsibilities.md`.
-3. Resolve contract ambiguity in writing.
-4. Resume with updated acceptance checks.
+## Escalation
 
-## Working Example: New Options Table Request
+Stop and think before proceeding when:
+- You're unsure about PIT/determinism implications
+- A change touches schema contracts or storage layout
+- LLM output conflicts with documented contracts
+- The task feels underspecified for its risk level
 
-Use this flow when `Quant Researcher` requests options data.
+Escalation for a solo team means: pause, write down the ambiguity, resolve it in docs, then resume.
 
-1. Intake (`Quant Researcher`)
-- Provide hypothesis, required fields/granularity, PIT constraints, acceptance queries.
+## Research Personas
 
-2. Ownership
-- Lead: `Data Infra`
-- Required reviewers: `Data Quality`, `Research Engineer`, `Quant Researcher`
+Design APIs and contracts with these personas in mind.
 
-3. Contract
-- Define schema, timestamps, ordering keys, partition/backfill strategy, caveats.
+### HFT Researcher
+- Microsecond timestamp fidelity and deterministic event ordering
+- Replay correctness for high message-rate streams
+- Queue-position and fill-quality proxies
+- **Implication:** preserve strict ordering (`ts_local_us`, tie-break keys), keep lineage first-class
 
-4. Build
-- LLM assists with ingestion/table plumbing/tests/docs under `Level 1`.
-- Human owner approves any `Level 2` contract decisions.
+### MFT Researcher
+- PIT-correct multi-stream alignment over longer horizons
+- Cost-aware alpha signals (spread, slippage, funding, fees)
+- Cross-venue dislocation analysis
+- **Implication:** composable PIT-safe feature pipelines, ergonomic cross-table joins
 
-5. Validate
-- Determinism + DQ + PIT/no-lookahead + research usability checks all pass.
+### Shared
+- No lookahead bias
+- Reproducible and idempotent pipelines
+- Stable, explicit schema contracts
+- Actionable data quality diagnostics
 
-6. Merge + Follow-up
-- Merge with required approvals.
-- Run initial backfill monitoring and update docs from learnings.
+## Working Example: New Table Request
 
-## Cadence and Metrics
-
-Weekly (30 min):
-- ingestion reliability, DQ incidents, research blockers, DevEx regressions
-
-Monthly:
-- contract drift review
-- routing/approval bottleneck review
-- autonomy policy tuning
-
-Track:
-- review turnaround time
-- handoff cycle time
-- rework/reopen rate
-- incident rate from boundary ambiguity
-- first-pass CI success for LLM-assisted changes
+1. **Scope it:** Is this L1 (follows existing pattern) or L2 (new schema contract)?
+2. **Brief:** Write goal + constraints (L1) or full envelope (L2)
+3. **Contract first (L2):** Define schema, timestamps, ordering keys, partition strategy, caveats
+4. **Build:** LLM drafts ingestion/table/tests/docs. You review direction early.
+5. **Validate:** Run all applicable gates from the checklist above
+6. **Merge + monitor:** Watch first backfill, update docs from learnings
