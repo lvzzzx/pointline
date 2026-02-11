@@ -26,12 +26,12 @@ from typing import Any
 import polars as pl
 
 from pointline.config import (
-    EXCHANGE_METADATA,
     TABLE_HAS_DATE,
     TABLE_PATHS,
     get_asset_class_exchanges,
     get_asset_type_name,
     get_exchange_metadata,
+    get_exchange_supported_tables,
     get_table_path,
     normalize_exchange,
 )
@@ -79,19 +79,10 @@ def list_exchanges(
         >>> # List Chinese stocks + crypto spot
         >>> combined = list_exchanges(asset_class=["stocks-cn", "crypto-spot"])
     """
-    # Try dim_exchange first, fall back to EXCHANGE_METADATA
-    from pointline.config import _load_dim_exchange
+    from pointline.config import _ensure_dim_exchange
 
-    dim_ex = _load_dim_exchange()
-    source_items: list[tuple[str, dict]] = []
-
-    if dim_ex is not None:
-        source_items = list(dim_ex.items())
-    else:
-        source_items = [
-            (name, {**meta, "timezone": meta.get("timezone", "UTC")})
-            for name, meta in EXCHANGE_METADATA.items()
-        ]
+    dim_ex = _ensure_dim_exchange()
+    source_items: list[tuple[str, dict]] = list(dim_ex.items())
 
     exchanges_data = []
 
@@ -469,15 +460,13 @@ def data_coverage(
 
     for table_name in check_tables:
         # Check if table is supported by this exchange
-        exchange_meta = get_exchange_metadata(normalized_exchange)
-        if exchange_meta:
-            supported_tables = exchange_meta.get("supported_tables", [])
-            if table_name not in supported_tables:
-                result[table_name] = {
-                    "available": False,
-                    "reason": f"Table '{table_name}' not supported for exchange '{exchange}'",
-                }
-                continue
+        supported_tables = get_exchange_supported_tables(normalized_exchange)
+        if supported_tables is not None and table_name not in supported_tables:
+            result[table_name] = {
+                "available": False,
+                "reason": f"Table '{table_name}' not supported for exchange '{exchange}'",
+            }
+            continue
 
         # Check if table exists
         if table_name not in TABLE_PATHS:

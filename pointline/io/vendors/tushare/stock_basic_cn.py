@@ -6,7 +6,7 @@ from datetime import date, datetime, timezone
 
 import polars as pl
 
-from pointline.config import EXCHANGE_MAP
+from pointline.config import get_exchange_id
 from pointline.tables.stock_basic_cn import normalize_stock_basic_cn_schema
 
 _STOCK_BASIC_FIELDS = (
@@ -38,8 +38,8 @@ def _parse_yyyymmdd_to_date(expr: pl.Expr) -> pl.Expr:
 
 
 def _exchange_mappings() -> tuple[pl.Expr, pl.Expr]:
-    szse_id = EXCHANGE_MAP.get("szse", 30)
-    sse_id = EXCHANGE_MAP.get("sse", 31)
+    szse_id = get_exchange_id("szse")
+    sse_id = get_exchange_id("sse")
     exchange_raw = pl.col("exchange").cast(pl.Utf8, strict=False).str.to_uppercase()
     exchange_expr = (
         pl.when(exchange_raw == "SZSE")

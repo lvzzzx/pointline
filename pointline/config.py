@@ -156,10 +156,10 @@ STORAGE_OPTIONS = {
     "compression": "zstd",
 }
 
-# Exchange Registry
+# Exchange Registry (seed data — canonical source is dim_exchange table)
 # Maps exchange names (as used by Tardis API) to internal exchange_id (u16)
 # IDs should be stable within the active local deployment.
-EXCHANGE_MAP = {
+_SEED_EXCHANGE_MAP = {
     # Major Spot Exchanges
     "binance": 1,
     "binance-futures": 2,
@@ -190,7 +190,7 @@ EXCHANGE_MAP = {
 }
 
 # Pre-computed reverse mapping: exchange_id -> exchange name (O(1) lookup)
-_REVERSE_EXCHANGE_MAP: dict[int, str] = {eid: name for name, eid in EXCHANGE_MAP.items()}
+_REVERSE_EXCHANGE_MAP: dict[int, str] = {eid: name for name, eid in _SEED_EXCHANGE_MAP.items()}
 
 
 # ---------------------------------------------------------------------------
@@ -251,7 +251,7 @@ def normalize_exchange(exchange: str) -> str:
     Normalize exchange name for consistent lookup.
 
     Normalizes by lowercasing and trimming whitespace.
-    This is the canonical normalization used before EXCHANGE_MAP lookup.
+    This is the canonical normalization used before exchange lookup.
 
     Args:
         exchange: Raw exchange name (may have mixed case, whitespace)
@@ -265,8 +265,6 @@ def normalize_exchange(exchange: str) -> str:
 def get_exchange_id(exchange: str) -> int:
     """Get exchange_id for a given exchange name.
 
-    Tries dim_exchange table first, falls back to hardcoded EXCHANGE_MAP.
-
     Args:
         exchange: Exchange name (will be normalized before lookup)
 
@@ -277,24 +275,15 @@ def get_exchange_id(exchange: str) -> int:
         ValueError: If exchange is not found
     """
     normalized = normalize_exchange(exchange)
-
-    # Try dim_exchange first
-    dim_ex = _load_dim_exchange()
-    if dim_ex is not None and normalized in dim_ex:
+    dim_ex = _ensure_dim_exchange()
+    if normalized in dim_ex:
         return dim_ex[normalized]["exchange_id"]
 
-    # Fallback to hardcoded
-    if normalized in EXCHANGE_MAP:
-        return EXCHANGE_MAP[normalized]
-
-    all_keys = list(dim_ex.keys()) if dim_ex else list(EXCHANGE_MAP.keys())
-    raise ValueError(exchange_not_found_error(exchange, all_keys))
+    raise ValueError(exchange_not_found_error(exchange, list(dim_ex.keys())))
 
 
 def get_exchange_name(exchange_id: int) -> str:
     """Get normalized exchange name for a given exchange_id.
-
-    Tries dim_exchange table first, falls back to hardcoded reverse map.
 
     Args:
         exchange_id: Exchange ID to look up
@@ -305,27 +294,20 @@ def get_exchange_name(exchange_id: int) -> str:
     Raises:
         ValueError: If exchange_id is not found
     """
-    # Try dim_exchange first
-    dim_ex = _load_dim_exchange()
-    if dim_ex is not None:
-        for name, row in dim_ex.items():
-            if row["exchange_id"] == exchange_id:
-                return normalize_exchange(name)
+    dim_ex = _ensure_dim_exchange()
+    for name, row in dim_ex.items():
+        if row["exchange_id"] == exchange_id:
+            return normalize_exchange(name)
 
-    # Fallback to hardcoded
-    if exchange_id in _REVERSE_EXCHANGE_MAP:
-        return normalize_exchange(_REVERSE_EXCHANGE_MAP[exchange_id])
-
-    raise ValueError(
-        f"Exchange ID {exchange_id} not found. Available IDs: {sorted(EXCHANGE_MAP.values())}"
-    )
+    available_ids = sorted(row["exchange_id"] for row in dim_ex.values())
+    raise ValueError(f"Exchange ID {exchange_id} not found. Available IDs: {available_ids}")
 
 
-# Exchange Timezone Registry
+# Exchange Timezone Registry (seed data — canonical source is dim_exchange table)
 # Maps exchange names to their timezone for exchange-local date partitioning
 # Rationale: Partition date represents the trading day in exchange-local time,
 # ensuring "one trading day = one partition" for efficient queries
-EXCHANGE_TIMEZONES = {
+_SEED_EXCHANGE_TIMEZONES = {
     # Crypto (24/7, use UTC as default)
     "binance": "UTC",
     "binance-futures": "UTC",
@@ -358,8 +340,6 @@ def get_exchange_timezone(exchange: str, *, strict: bool = True) -> str:
     """
     Get timezone for exchange-local date partitioning.
 
-    Tries dim_exchange table first, falls back to hardcoded EXCHANGE_TIMEZONES.
-
     Args:
         exchange: Exchange name (will be normalized before lookup)
         strict: If True, raise ValueError when exchange not in registry.
@@ -378,39 +358,29 @@ def get_exchange_timezone(exchange: str, *, strict: bool = True) -> str:
         'Asia/Shanghai'
     """
     normalized = normalize_exchange(exchange)
+    dim_ex = _ensure_dim_exchange()
 
-    # Try dim_exchange first
-    dim_ex = _load_dim_exchange()
-    if dim_ex is not None and normalized in dim_ex:
+    if normalized in dim_ex:
         return dim_ex[normalized].get("timezone", "UTC")
 
-    # Fallback to hardcoded
-    if normalized in EXCHANGE_TIMEZONES:
-        return EXCHANGE_TIMEZONES[normalized]
-
-    if normalized not in EXCHANGE_TIMEZONES:
-        if strict:
-            raise ValueError(
-                f"Exchange '{exchange}' (normalized: '{normalized}') not found in "
-                f"EXCHANGE_TIMEZONES registry. This could cause incorrect date partitioning. "
-                f"Please add the exchange to EXCHANGE_TIMEZONES in pointline/config.py with "
-                f"its correct IANA timezone (e.g., 'UTC', 'Asia/Shanghai', 'America/New_York'). "
-                f"Available exchanges: {sorted(EXCHANGE_TIMEZONES.keys())}"
-            )
-        else:
-            import warnings
-
-            warnings.warn(
-                f"Exchange '{exchange}' (normalized: '{normalized}') not found in "
-                f"EXCHANGE_TIMEZONES registry. Falling back to UTC default. "
-                f"This may cause incorrect date partitioning for regional exchanges. "
-                f"Add to EXCHANGE_TIMEZONES to fix.",
-                UserWarning,
-                stacklevel=2,
-            )
-            return "UTC"
-
-    return EXCHANGE_TIMEZONES[normalized]
+    if strict:
+        raise ValueError(
+            f"Exchange '{exchange}' (normalized: '{normalized}') not found in "
+            f"dim_exchange registry. This could cause incorrect date partitioning. "
+            f"Run `pointline exchange init` or add the exchange to dim_exchange with "
+            f"its correct IANA timezone (e.g., 'UTC', 'Asia/Shanghai', 'America/New_York'). "
+            f"Available exchanges: {sorted(dim_ex.keys())}"
+        )
+    else:
+        warnings.warn(
+            f"Exchange '{exchange}' (normalized: '{normalized}') not found in "
+            f"dim_exchange registry. Falling back to UTC default. "
+            f"This may cause incorrect date partitioning for regional exchanges. "
+            f"Run `pointline exchange init` to bootstrap.",
+            UserWarning,
+            stacklevel=2,
+        )
+        return "UTC"
 
 
 # Asset Type Registry
@@ -524,10 +494,10 @@ def get_coingecko_coin_id(base_asset: str) -> str | None:
 # Re-exported here for backward compatibility.
 from pointline.tables.asset_class import ASSET_CLASS_TAXONOMY as ASSET_CLASS_TAXONOMY  # noqa: E402
 
-# Exchange Metadata Registry
+# Exchange Metadata Registry (seed data — canonical source is dim_exchange table)
 # Extended metadata for data discovery and UI presentation
 # Maps exchange name → metadata dict
-EXCHANGE_METADATA = {
+_SEED_EXCHANGE_METADATA = {
     # Crypto Spot Exchanges
     "binance": {
         "exchange_id": 1,
@@ -726,11 +696,102 @@ EXCHANGE_METADATA = {
     },
 }
 
+# Supported tables per exchange — data coverage hint, NOT exchange metadata.
+# Extracted from _SEED_EXCHANGE_METADATA to keep dim_exchange lean.
+_EXCHANGE_SUPPORTED_TABLES: dict[str, list[str]] = {
+    name: meta["supported_tables"]
+    for name, meta in _SEED_EXCHANGE_METADATA.items()
+    if "supported_tables" in meta
+}
+
+
+def get_exchange_supported_tables(exchange: str) -> list[str] | None:
+    """Get list of tables supported by an exchange (data coverage hint).
+
+    Args:
+        exchange: Exchange name (will be normalized before lookup)
+
+    Returns:
+        List of supported table names, or None if not found
+    """
+    return _EXCHANGE_SUPPORTED_TABLES.get(normalize_exchange(exchange))
+
+
+# ---------------------------------------------------------------------------
+# Auto-bootstrap dim_exchange from seed data on first access
+# ---------------------------------------------------------------------------
+_dim_exchange_bootstrap_lock = threading.Lock()
+_dim_exchange_bootstrapped = False
+
+
+def _ensure_dim_exchange() -> dict[str, dict]:
+    """Return dim_exchange dict, auto-bootstrapping from seed data if needed.
+
+    Thread-safe. If the dim_exchange table does not exist on disk, it is
+    created from _SEED_* dicts and written to silver/dim_exchange/.
+    """
+    global _dim_exchange_bootstrapped
+
+    cached = _load_dim_exchange()
+    if cached is not None:
+        return cached
+
+    if _dim_exchange_bootstrapped:
+        # Already tried once; avoid infinite retry. Fall back to seed data.
+        return _seed_as_dim_exchange_dict()
+
+    with _dim_exchange_bootstrap_lock:
+        # Double-check after acquiring lock
+        cached = _load_dim_exchange()
+        if cached is not None:
+            return cached
+
+        if _dim_exchange_bootstrapped:
+            return _seed_as_dim_exchange_dict()
+
+        try:
+            from pointline.tables.dim_exchange import bootstrap_from_config
+
+            df = bootstrap_from_config()
+            table_path = get_table_path("dim_exchange")
+            table_path.parent.mkdir(parents=True, exist_ok=True)
+            df.write_delta(str(table_path), mode="overwrite")
+            logger.info("Auto-bootstrapped dim_exchange at %s (%d rows)", table_path, len(df))
+            _dim_exchange_bootstrapped = True
+            invalidate_exchange_cache()
+            result = _load_dim_exchange()
+            if result is not None:
+                return result
+        except Exception as exc:
+            logger.debug("dim_exchange auto-bootstrap failed: %s", exc)
+            _dim_exchange_bootstrapped = True
+
+        return _seed_as_dim_exchange_dict()
+
+
+def _seed_as_dim_exchange_dict() -> dict[str, dict]:
+    """Build a dim_exchange-shaped dict from seed data (last resort fallback)."""
+    result: dict[str, dict] = {}
+    for name, eid in _SEED_EXCHANGE_MAP.items():
+        meta = _SEED_EXCHANGE_METADATA.get(name, {})
+        result[name] = {
+            "exchange": name,
+            "exchange_id": eid,
+            "asset_class": meta.get("asset_class", "unknown"),
+            "timezone": _SEED_EXCHANGE_TIMEZONES.get(name, "UTC"),
+            "description": meta.get("description", ""),
+            "is_active": meta.get("is_active", True),
+        }
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Public get_*() functions — read from dim_exchange (no fallback paths)
+# ---------------------------------------------------------------------------
+
 
 def get_exchange_metadata(exchange: str) -> dict | None:
     """Get metadata for a given exchange.
-
-    Tries dim_exchange table first, falls back to hardcoded EXCHANGE_METADATA.
 
     Args:
         exchange: Exchange name (will be normalized before lookup)
@@ -744,10 +805,8 @@ def get_exchange_metadata(exchange: str) -> dict | None:
         'crypto-derivatives'
     """
     normalized = normalize_exchange(exchange)
-
-    # Try dim_exchange first
-    dim_ex = _load_dim_exchange()
-    if dim_ex is not None and normalized in dim_ex:
+    dim_ex = _ensure_dim_exchange()
+    if normalized in dim_ex:
         row = dim_ex[normalized]
         return {
             "exchange_id": row["exchange_id"],
@@ -755,16 +814,11 @@ def get_exchange_metadata(exchange: str) -> dict | None:
             "description": row.get("description", ""),
             "is_active": row.get("is_active", True),
         }
-
-    # Fallback to hardcoded
-    return EXCHANGE_METADATA.get(normalized)
+    return None
 
 
 def get_asset_class_exchanges(asset_class: str) -> list[str]:
     """Get all exchanges belonging to an asset class.
-
-    Tries dim_exchange table first (filter by asset_class column).
-    Falls back to hardcoded ASSET_CLASS_TAXONOMY.
 
     Args:
         asset_class: Asset class name (e.g., "crypto", "crypto-spot", "stocks-cn")
@@ -778,22 +832,13 @@ def get_asset_class_exchanges(asset_class: str) -> list[str]:
         >>> get_asset_class_exchanges("crypto")  # includes spot + derivatives
         ['binance', 'coinbase', ..., 'binance-futures', 'deribit', ...]
     """
-    # Try dim_exchange first
-    dim_ex = _load_dim_exchange()
-    if dim_ex is not None:
-        # Handle parent class (e.g., "crypto" matches "crypto-spot", "crypto-derivatives")
-        result = []
-        for name, row in dim_ex.items():
-            row_class = row.get("asset_class", "")
-            if row_class == asset_class or row_class.startswith(asset_class + "-"):
-                result.append(name)
-        if result:
-            return result
-
-    # Fallback to static taxonomy
-    from pointline.tables.asset_class import taxonomy_exchanges
-
-    return taxonomy_exchanges(asset_class)
+    dim_ex = _ensure_dim_exchange()
+    result = []
+    for name, row in dim_ex.items():
+        row_class = row.get("asset_class", "")
+        if row_class == asset_class or row_class.startswith(asset_class + "-"):
+            result.append(name)
+    return result
 
 
 def get_table_path(table_name: str) -> Path:

@@ -148,14 +148,15 @@ def normalize_dim_symbol_schema(df: pl.DataFrame) -> pl.DataFrame:
     """Cast to the canonical dim_symbol schema where possible.
 
     If exchange column is missing, it will be derived from exchange_id
-    using EXCHANGE_MAP.
+    using dim_exchange.
     """
-    from pointline.config import EXCHANGE_MAP, get_exchange_name
+    from pointline.config import _ensure_dim_exchange
 
     # Derive exchange from exchange_id if missing
     if "exchange" not in df.columns and "exchange_id" in df.columns:
         # Create reverse mapping: exchange_id -> exchange name
-        id_to_exchange = {v: get_exchange_name(v) for v in EXCHANGE_MAP.values()}
+        dim_ex = _ensure_dim_exchange()
+        id_to_exchange = {row["exchange_id"]: name for name, row in dim_ex.items()}
         exchange_map = pl.DataFrame(
             {
                 "exchange_id": list(id_to_exchange.keys()),
@@ -245,9 +246,10 @@ def scd2_upsert(
 
     # Derive exchange from exchange_id if missing in updates
     if "exchange" not in updates.columns and "exchange_id" in updates.columns:
-        from pointline.config import EXCHANGE_MAP, get_exchange_name
+        from pointline.config import _ensure_dim_exchange
 
-        id_to_exchange = {v: get_exchange_name(v) for v in EXCHANGE_MAP.values()}
+        dim_ex = _ensure_dim_exchange()
+        id_to_exchange = {row["exchange_id"]: name for name, row in dim_ex.items()}
         exchange_map = pl.DataFrame(
             {
                 "exchange_id": list(id_to_exchange.keys()),

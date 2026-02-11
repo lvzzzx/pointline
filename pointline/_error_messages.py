@@ -43,7 +43,7 @@ def timestamp_required_error() -> str:
 
 
 def exchange_not_found_error(exchange: str, available_exchanges: list[str]) -> str:
-    """Error message when exchange is not found in EXCHANGE_MAP.
+    """Error message when exchange is not found in dim_exchange.
 
     Includes fuzzy matching suggestions for common typos.
 
@@ -65,7 +65,7 @@ def exchange_not_found_error(exchange: str, available_exchanges: list[str]) -> s
                 suggestions_original_case.append(orig)
                 break
 
-    msg = f"Exchange '{exchange}' not found in EXCHANGE_MAP.\n"
+    msg = f"Exchange '{exchange}' not found in dim_exchange.\n"
 
     if suggestions_original_case:
         msg += "\nDid you mean one of these?\n"
@@ -80,7 +80,7 @@ def exchange_not_found_error(exchange: str, available_exchanges: list[str]) -> s
     if len(available_exchanges) > 10:
         msg += f"  ... and {len(available_exchanges) - 10} more\n"
 
-    msg += "\nUse `from pointline.config import EXCHANGE_MAP` to see all exchanges."
+    msg += "\nRun `pointline exchange list` to see all exchanges."
 
     return msg
 

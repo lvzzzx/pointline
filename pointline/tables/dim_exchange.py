@@ -34,17 +34,21 @@ def bootstrap_from_config() -> pl.DataFrame:
     This is used for initial seeding. After migration, exchanges are managed
     by inserting rows into the dim_exchange table directly.
     """
-    from pointline.config import EXCHANGE_MAP, EXCHANGE_METADATA, EXCHANGE_TIMEZONES
+    from pointline.config import (
+        _SEED_EXCHANGE_MAP,
+        _SEED_EXCHANGE_METADATA,
+        _SEED_EXCHANGE_TIMEZONES,
+    )
 
     rows = []
-    for exchange, exchange_id in EXCHANGE_MAP.items():
-        meta = EXCHANGE_METADATA.get(exchange, {})
+    for exchange, exchange_id in _SEED_EXCHANGE_MAP.items():
+        meta = _SEED_EXCHANGE_METADATA.get(exchange, {})
         rows.append(
             {
                 "exchange": exchange,
                 "exchange_id": exchange_id,
                 "asset_class": meta.get("asset_class", "unknown"),
-                "timezone": EXCHANGE_TIMEZONES.get(exchange, "UTC"),
+                "timezone": _SEED_EXCHANGE_TIMEZONES.get(exchange, "UTC"),
                 "description": meta.get("description", ""),
                 "is_active": meta.get("is_active", True),
             }

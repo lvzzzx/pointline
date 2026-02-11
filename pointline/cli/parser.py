@@ -28,6 +28,7 @@ from pointline.cli.commands.dq import (
     cross_table_check_choices,
     dq_table_choices,
 )
+from pointline.cli.commands.exchange import cmd_exchange_init, cmd_exchange_list
 from pointline.cli.commands.ingest import cmd_ingest_discover, cmd_ingest_run
 from pointline.cli.commands.manifest import cmd_manifest_backfill_sha256, cmd_manifest_show
 from pointline.cli.commands.stock_basic_cn import cmd_stock_basic_cn_sync
@@ -51,6 +52,21 @@ def build_parser() -> argparse.ArgumentParser:
     config_set = config_sub.add_parser("set", help="Set configuration values")
     config_set.add_argument("--lake-root", required=True, help="Root path to the data lake")
     config_set.set_defaults(func=cmd_config_set)
+
+    # --- Exchange ---
+    exchange = subparsers.add_parser("exchange", help="Exchange registry utilities")
+    exchange_sub = exchange.add_subparsers(dest="exchange_command")
+
+    exchange_init = exchange_sub.add_parser("init", help="Bootstrap dim_exchange from seed data")
+    exchange_init.add_argument(
+        "--force",
+        action="store_true",
+        help="Overwrite existing dim_exchange table",
+    )
+    exchange_init.set_defaults(func=cmd_exchange_init)
+
+    exchange_list = exchange_sub.add_parser("list", help="List all exchanges")
+    exchange_list.set_defaults(func=cmd_exchange_list)
 
     # --- Symbol ---
     symbol = subparsers.add_parser("symbol", help="Symbol registry utilities")

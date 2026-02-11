@@ -25,12 +25,12 @@ class TestExchangeTimezoneRegistry:
 
     def test_unknown_exchange_raises_in_strict_mode(self):
         """Verify unknown exchanges raise ValueError in strict mode (default)."""
-        with pytest.raises(ValueError, match="not found in EXCHANGE_TIMEZONES"):
+        with pytest.raises(ValueError, match="not found in dim_exchange"):
             get_exchange_timezone("unknown-exchange")
 
     def test_unknown_exchange_defaults_to_utc_in_non_strict_mode(self):
         """Verify unknown exchanges default to UTC in non-strict mode."""
-        with pytest.warns(UserWarning, match="not found in EXCHANGE_TIMEZONES"):
+        with pytest.warns(UserWarning, match="not found in dim_exchange"):
             result = get_exchange_timezone("unknown-exchange", strict=False)
         assert result == "UTC"
 
