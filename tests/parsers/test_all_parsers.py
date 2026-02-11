@@ -13,6 +13,8 @@ def test_all_parsers_registered():
         ("tardis", "quotes"),
         ("tardis", "book_snapshot_25"),
         ("tardis", "derivative_ticker"),
+        ("tardis", "liquidations"),
+        ("tardis", "options_chain"),
         ("quant360", "l3_orders"),
         ("quant360", "l3_ticks"),
         ("binance_vision", "klines"),
@@ -32,6 +34,8 @@ def test_tardis_parsers():
     assert get_parser("tardis", "quotes") is not None
     assert get_parser("tardis", "book_snapshot_25") is not None
     assert get_parser("tardis", "derivative_ticker") is not None
+    assert get_parser("tardis", "liquidations") is not None
+    assert get_parser("tardis", "options_chain") is not None
 
 
 def test_quant360_parsers():

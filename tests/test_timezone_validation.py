@@ -15,13 +15,13 @@ def test_get_exchange_timezone_strict_mode_known_exchange():
 
 def test_get_exchange_timezone_strict_mode_unknown_exchange():
     """Unknown exchanges should raise ValueError in strict mode."""
-    with pytest.raises(ValueError, match="not found in EXCHANGE_TIMEZONES"):
+    with pytest.raises(ValueError, match="not found in dim_exchange"):
         get_exchange_timezone("unknown-exchange", strict=True)
 
 
 def test_get_exchange_timezone_non_strict_mode_unknown_exchange():
     """Unknown exchanges should warn and return UTC in non-strict mode."""
-    with pytest.warns(UserWarning, match="not found in EXCHANGE_TIMEZONES"):
+    with pytest.warns(UserWarning, match="not found in dim_exchange"):
         result = get_exchange_timezone("unknown-exchange", strict=False)
     assert result == "UTC"
 

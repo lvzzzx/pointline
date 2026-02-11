@@ -77,3 +77,11 @@ def normalize_dim_asset_stats_schema(df: pl.DataFrame) -> pl.DataFrame:
 def required_dim_asset_stats_columns() -> tuple[str, ...]:
     """Columns required for a dim_asset_stats DataFrame."""
     return tuple(SCHEMA.keys())
+
+
+# ---------------------------------------------------------------------------
+# Schema registry registration
+# ---------------------------------------------------------------------------
+from pointline.schema_registry import register_schema as _register_schema  # noqa: E402
+
+_register_schema("dim_asset_stats", SCHEMA, has_date=True)

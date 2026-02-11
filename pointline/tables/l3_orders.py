@@ -1,8 +1,31 @@
-"""SZSE Level 3 order placements domain logic for parsing, validation, and transformation.
+"""CN Level 3 order placements domain logic for parsing, validation, and transformation.
 
-This module handles Quant360 SZSE order stream data, which represents new limit and market
+This module handles SZSE/SSE order stream data, which represents new limit and market
 orders entering the matching engine. This is fundamentally different from L2 aggregated
-data - each row represents an individual order with a unique order ID (appl_seq_num).
+data — each row represents an individual order with a unique order ID (appl_seq_num).
+
+Restricted to Chinese stock exchanges (SZSE, SSE) only. These tables are structurally
+coupled to Chinese market microstructure and cannot be used for other exchanges.
+
+Deterministic Ordering
+----------------------
+The replay key for L3 orders is ``(channel_no, appl_seq_num)``, NOT ``ts_local_us``.
+
+``appl_seq_num`` properties:
+- Scope: per-channel (SZSE stocks, convertible bonds, and funds each use separate
+  channels; SSE convertible bonds use yet another channel)
+- Starts at 1 each trading day
+- Unique and contiguous within a channel for a given trading day — gaps indicate
+  message loss
+- NOT unique across channels — two channels can both have appl_seq_num=1
+
+``channel_no`` identifies the independent exchange channel. Within a single channel,
+``appl_seq_num`` provides a total order over all events (orders and ticks share the
+same sequence space). Cross-channel ordering falls back to ``ts_local_us``.
+
+For intra-channel, single day:  sort by ``(channel_no, appl_seq_num)``
+For intra-channel, multi-day:   sort by ``(date, channel_no, appl_seq_num)``
+For cross-channel merge:        sort by ``(ts_local_us, file_id, file_line_number)``
 """
 
 from __future__ import annotations
@@ -19,12 +42,24 @@ from pointline.tables._base import (
     required_columns_validation_expr,
     timestamp_validation_expr,
 )
+from pointline.tables.cn_trading_phase import (
+    TRADING_PHASE_CLOSING_CALL,
+    TRADING_PHASE_CONTINUOUS,
+    TRADING_PHASE_OPENING_CALL,
+    TRADING_PHASE_UNKNOWN,
+    derive_cn_trading_phase_expr,
+)
 from pointline.validation_utils import with_expected_exchange_id
+
+# L3 tables are exclusive to Chinese stock exchanges (SZSE, SSE).
+# These tables use channel_no, appl_seq_num sequencing, and CN trading phases
+# that are structurally coupled to Chinese market microstructure.
+ALLOWED_EXCHANGES: frozenset[str] = frozenset({"szse", "sse"})
 
 # Required metadata fields for ingestion
 REQUIRED_METADATA_FIELDS: set[str] = set()
 
-# Schema definition for szse_l3_orders Silver table
+# Schema definition for l3_orders Silver table
 #
 # Delta Lake Integer Type Limitations:
 # - Delta Lake (via Parquet) does not support unsigned integer types UInt16 and UInt32
@@ -32,18 +67,19 @@ REQUIRED_METADATA_FIELDS: set[str] = set()
 # - Use Int32 for file_id, file_line_number, channel_no
 # - Use Int64 for symbol_id, appl_seq_num, px_int, order_qty_int
 # - UInt8 is supported (used for side, ord_type)
-SZSE_L3_ORDERS_SCHEMA: dict[str, pl.DataType] = {
+L3_ORDERS_SCHEMA: dict[str, pl.DataType] = {
     "date": pl.Date,
     "exchange": pl.Utf8,
     "exchange_id": pl.Int16,
     "symbol_id": pl.Int64,
     "ts_local_us": pl.Int64,  # Arrival time in UTC (converted from Asia/Shanghai TransactTime)
-    "appl_seq_num": pl.Int64,  # Order ID (unique per day per symbol)
+    "appl_seq_num": pl.Int64,  # Order ID (unique per channel per day, starts at 1)
     "side": pl.UInt8,  # 0=buy, 1=sell
     "ord_type": pl.UInt8,  # 0=market, 1=limit
     "px_int": pl.Int64,  # Fixed-point encoded (price / price_increment)
     "order_qty_int": pl.Int64,  # Lot-based encoding (qty / 100 shares)
     "channel_no": pl.Int32,  # Exchange channel ID
+    "trading_phase": pl.UInt8,  # 0=unknown, 1=open call, 2=continuous, 3=close call
     "file_id": pl.Int32,
     "file_line_number": pl.Int32,
 }
@@ -57,18 +93,21 @@ ORD_TYPE_MARKET = 0
 ORD_TYPE_LIMIT = 1
 
 
-def normalize_szse_l3_orders_schema(df: pl.DataFrame) -> pl.DataFrame:
-    """Cast to the canonical szse_l3_orders schema and select only schema columns."""
-    missing_required = [col for col in SZSE_L3_ORDERS_SCHEMA if col not in df.columns]
+def normalize_l3_orders_schema(df: pl.DataFrame) -> pl.DataFrame:
+    """Cast to the canonical l3_orders schema and select only schema columns."""
+    if "trading_phase" not in df.columns:
+        df = df.with_columns(derive_cn_trading_phase_expr())
+
+    missing_required = [col for col in L3_ORDERS_SCHEMA if col not in df.columns]
     if missing_required:
-        raise ValueError(f"szse_l3_orders missing required columns: {missing_required}")
+        raise ValueError(f"l3_orders missing required columns: {missing_required}")
 
-    casts = [pl.col(col).cast(dtype) for col, dtype in SZSE_L3_ORDERS_SCHEMA.items()]
-    return df.with_columns(casts).select(list(SZSE_L3_ORDERS_SCHEMA.keys()))
+    casts = [pl.col(col).cast(dtype) for col, dtype in L3_ORDERS_SCHEMA.items()]
+    return df.with_columns(casts).select(list(L3_ORDERS_SCHEMA.keys()))
 
 
-def validate_szse_l3_orders(df: pl.DataFrame) -> pl.DataFrame:
-    """Apply quality checks to SZSE L3 order data.
+def validate_l3_orders(df: pl.DataFrame) -> pl.DataFrame:
+    """Apply quality checks to CN L3 order data.
 
     Validates:
     - Non-negative px_int and order_qty_int
@@ -93,10 +132,19 @@ def validate_szse_l3_orders(df: pl.DataFrame) -> pl.DataFrame:
         "exchange",
         "exchange_id",
         "symbol_id",
+        "trading_phase",
     ]
     missing = [c for c in required if c not in df.columns]
     if missing:
-        raise ValueError(f"validate_szse_l3_orders: missing required columns: {missing}")
+        raise ValueError(f"validate_l3_orders: missing required columns: {missing}")
+
+    # Reject non-Chinese exchanges (l3_orders is SZSE/SSE only)
+    bad_exchanges = set(df["exchange"].unique().to_list()) - ALLOWED_EXCHANGES
+    if bad_exchanges:
+        raise ValueError(
+            f"validate_l3_orders: exchange(s) {sorted(bad_exchanges)} not allowed. "
+            f"l3_orders is restricted to {sorted(ALLOWED_EXCHANGES)}"
+        )
 
     df_with_expected = with_expected_exchange_id(df)
 
@@ -107,6 +155,14 @@ def validate_szse_l3_orders(df: pl.DataFrame) -> pl.DataFrame:
         & (pl.col("appl_seq_num") > 0)
         & (pl.col("side").is_in([SIDE_BUY, SIDE_SELL]))
         & (pl.col("ord_type").is_in([ORD_TYPE_MARKET, ORD_TYPE_LIMIT]))
+        & pl.col("trading_phase").is_in(
+            [
+                TRADING_PHASE_UNKNOWN,
+                TRADING_PHASE_OPENING_CALL,
+                TRADING_PHASE_CONTINUOUS,
+                TRADING_PHASE_CLOSING_CALL,
+            ]
+        )
         & required_columns_validation_expr(["exchange", "exchange_id", "symbol_id"])
         & exchange_id_validation_expr()
     )
@@ -131,13 +187,25 @@ def validate_szse_l3_orders(df: pl.DataFrame) -> pl.DataFrame:
         ("exchange_id", pl.col("exchange_id").is_null()),
         ("symbol_id", pl.col("symbol_id").is_null()),
         (
+            "trading_phase",
+            ~pl.col("trading_phase").is_in(
+                [
+                    TRADING_PHASE_UNKNOWN,
+                    TRADING_PHASE_OPENING_CALL,
+                    TRADING_PHASE_CONTINUOUS,
+                    TRADING_PHASE_CLOSING_CALL,
+                ]
+            )
+            | pl.col("trading_phase").is_null(),
+        ),
+        (
             "exchange_id_mismatch",
             pl.col("expected_exchange_id").is_null()
             | (pl.col("exchange_id") != pl.col("expected_exchange_id")),
         ),
     ]
 
-    valid = generic_validate(df_with_expected, combined_filter, rules, "szse_l3_orders")
+    valid = generic_validate(df_with_expected, combined_filter, rules, "l3_orders")
     return valid.select(df.columns)
 
 
@@ -268,7 +336,7 @@ def resolve_symbol_ids(
     *,
     ts_col: str = "ts_local_us",
 ) -> pl.DataFrame:
-    """Resolve symbol_ids for SZSE L3 order data using as-of join with dim_symbol.
+    """Resolve symbol_ids for CN L3 order data using as-of join with dim_symbol.
 
     This is a wrapper around the generic symbol resolution function.
 
@@ -285,6 +353,14 @@ def resolve_symbol_ids(
     return generic_resolve_symbol_ids(data, dim_symbol, exchange_id, exchange_symbol, ts_col=ts_col)
 
 
-def required_szse_l3_orders_columns() -> Sequence[str]:
-    """Columns required for a szse_l3_orders DataFrame after normalization."""
-    return tuple(SZSE_L3_ORDERS_SCHEMA.keys())
+def required_l3_orders_columns() -> Sequence[str]:
+    """Columns required for a l3_orders DataFrame after normalization."""
+    return tuple(L3_ORDERS_SCHEMA.keys())
+
+
+# ---------------------------------------------------------------------------
+# Schema registry registration
+# ---------------------------------------------------------------------------
+from pointline.schema_registry import register_schema as _register_schema  # noqa: E402
+
+_register_schema("l3_orders", L3_ORDERS_SCHEMA, partition_by=["exchange", "date"], has_date=True)

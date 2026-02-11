@@ -492,14 +492,17 @@ def _execute_event_joined(
             "event_joined mode does not support operators in v2. "
             "Provide operators only for bar_then_feature or tick_then_bar."
         )
+    if compiled["spine"].get("type") != "trades":
+        raise PipelineError("event_joined mode requires spine.type='trades'")
 
     primary = _primary_source_name(compiled)
-    primary_lf = sources[primary]
+    prepared_sources = {name: _ensure_event_join_order_columns(lf) for name, lf in sources.items()}
+    primary_lf = prepared_sources[primary]
 
-    spine = primary_lf.select(["ts_local_us", "exchange_id", "symbol_id"]).sort(
-        ["exchange_id", "symbol_id", "ts_local_us"]
+    spine = primary_lf.sort(_event_join_sort_columns(primary_lf)).select(
+        ["ts_local_us", "exchange_id", "symbol_id", "file_id", "file_line_number"]
     )
-    others = {name: lf for name, lf in sources.items() if name != primary}
+    others = {name: lf for name, lf in prepared_sources.items() if name != primary}
     aligned = pit_align(spine, others)
     return aligned, 0, 0
 
@@ -508,11 +511,20 @@ def _build_spine(compiled: dict[str, Any], source: pl.LazyFrame) -> pl.LazyFrame
     spine_cfg = compiled["spine"]
     spine_type = spine_cfg["type"]
 
-    if spine_type != "clock":
-        # For non-clock in v2 bootstrap, use event timestamps as-is.
-        return source.select(["ts_local_us", "exchange_id", "symbol_id"]).sort(
-            ["exchange_id", "symbol_id", "ts_local_us"]
+    if spine_type == "trades":
+        trade_spine = _ensure_event_join_order_columns(source)
+        return trade_spine.sort(_event_join_sort_columns(trade_spine)).select(
+            ["ts_local_us", "exchange_id", "symbol_id", "file_id", "file_line_number"]
         )
+
+    if spine_type in {"volume", "dollar"}:
+        raise PipelineError(
+            f"spine.type='{spine_type}' is not implemented in pipeline v2. "
+            "Use spine.type='clock' or 'trades'."
+        )
+
+    if spine_type != "clock":
+        raise PipelineError(f"Unsupported spine.type for pipeline v2: {spine_type}")
 
     step_ms = int(spine_cfg.get("step_ms", 60_000))
     if step_ms <= 0:
@@ -727,6 +739,29 @@ def _count_pit_violations(bucketed: pl.LazyFrame) -> int:
 def _count_unassigned_rows(bucketed: pl.LazyFrame) -> int:
     missing = bucketed.filter(pl.col("bucket_ts").is_null())
     return int(missing.select(pl.len().alias("_n")).collect()["_n"][0])
+
+
+def _ensure_event_join_order_columns(lf: pl.LazyFrame) -> pl.LazyFrame:
+    """Add deterministic lineage columns used for tie-breaking in as-of joins."""
+    missing_exprs = []
+    schema_names = set(lf.collect_schema().names())
+    if "file_id" not in schema_names:
+        missing_exprs.append(pl.lit(0).cast(pl.Int64).alias("file_id"))
+    if "file_line_number" not in schema_names:
+        missing_exprs.append(pl.lit(0).cast(pl.Int64).alias("file_line_number"))
+    if not missing_exprs:
+        return lf
+    return lf.with_columns(missing_exprs)
+
+
+def _event_join_sort_columns(lf: pl.LazyFrame) -> list[str]:
+    schema_names = set(lf.collect_schema().names())
+    sort_cols = ["exchange_id", "symbol_id", "ts_local_us"]
+    if "file_id" in schema_names:
+        sort_cols.append("file_id")
+    if "file_line_number" in schema_names:
+        sort_cols.append("file_line_number")
+    return sort_cols
 
 
 def _research_mode_from_mode(mode: str) -> str:

@@ -1,7 +1,10 @@
 # ADR: Research Framework v2 Clean Architecture
 
-- Status: Proposed
+- Status: ✅ Implemented (see NOTE below)
 - Date: 2026-02-08
+- Archived: 2026-02-10
+
+> **📚 HISTORICAL NOTE:** This ADR documents the v2 architecture decisions. The design phase used "v1" schema naming convention, but the actual implementation evolved to use "v2" schemas (`quant_research_input.v2.json`). The decisions and principles remain valid; only the version numbers changed during implementation.
 - Decision Makers: Research Engineer, Quant Researcher, Data Infra Engineer
 - Scope: `pointline/research` framework architecture
 
@@ -31,7 +34,7 @@ Adopt a contract-first, pipeline-first architecture where all production researc
 
 Use a single official API for production execution:
 
-- `research.pipeline(request: InputSchemaV1) -> OutputSchemaV1`
+- `research.pipeline(request: QuantResearchInputV2) -> QuantResearchOutputV2` (implemented as v2)
 
 No alternate production path is supported.
 
@@ -39,8 +42,8 @@ No alternate production path is supported.
 
 All runs must use explicit versioned schemas:
 
-- `input.v1` for request and configuration
-- `output.v1` for results, diagnostics, gates, and artifacts
+- `quant_research_input.v2` for request and configuration
+- `quant_research_output.v2` for results, diagnostics, gates, and artifacts
 
 Implicit defaults that change behavior are disallowed.
 

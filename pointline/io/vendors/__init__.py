@@ -33,6 +33,7 @@ from pointline.io.vendors.registry import (
     list_supported_combinations,
     list_vendors,
     register_vendor,
+    resolve_table_name,
 )
 
 # Import all vendor plugins (triggers auto-registration)
@@ -46,6 +47,7 @@ __all__ = [
     "list_vendors",
     "get_parser",
     "list_supported_combinations",
+    "resolve_table_name",
     # Vendor plugins
     "TardisVendor",
     "BinanceVisionVendor",

@@ -1,4 +1,6 @@
-import fcntl
+import logging
+import struct
+import time
 from pathlib import Path
 
 import polars as pl
@@ -7,161 +9,168 @@ from deltalake import DeltaTable
 from pointline.io.base_repository import BaseDeltaRepository
 from pointline.io.protocols import BronzeFileMetadata, IngestionResult
 
+logger = logging.getLogger(__name__)
+
+# Manifest schema (single source of truth)
+MANIFEST_SCHEMA: dict[str, pl.DataType] = {
+    "file_id": pl.Int32,
+    "vendor": pl.Utf8,
+    "data_type": pl.Utf8,
+    "bronze_file_name": pl.Utf8,
+    "sha256": pl.Utf8,
+    "file_size_bytes": pl.Int64,
+    "last_modified_ts": pl.Int64,
+    "date": pl.Date,
+    "status": pl.Utf8,
+    "created_at_us": pl.Int64,
+    "processed_at_us": pl.Int64,
+    "row_count": pl.Int64,
+    "ts_local_min_us": pl.Int64,
+    "ts_local_max_us": pl.Int64,
+    "error_message": pl.Utf8,
+}
+
+
+class _FileIdCounter:
+    """Cross-platform monotonic counter backed by a binary file.
+
+    Stores a single 4-byte little-endian integer outside the Delta table directory.
+    Uses advisory file locking that works on both POSIX and Windows.
+    """
+
+    def __init__(self, counter_path: Path):
+        self.counter_path = counter_path
+        self.counter_path.parent.mkdir(parents=True, exist_ok=True)
+
+    def next_id(self) -> int:
+        """Atomically read, increment, and return the next file_id."""
+        import filelock
+
+        lock_path = self.counter_path.with_suffix(".lock")
+        lock = filelock.FileLock(lock_path, timeout=30)
+
+        with lock:
+            if self.counter_path.exists():
+                raw = self.counter_path.read_bytes()
+                current = struct.unpack("<i", raw)[0] if len(raw) >= 4 else 0
+            else:
+                current = 0
+
+            next_val = current + 1
+            self.counter_path.write_bytes(struct.pack("<i", next_val))
+            return next_val
+
+    def sync_from_manifest(self, manifest_df: pl.DataFrame) -> None:
+        """Sync counter to be at least max(file_id) from existing manifest."""
+        if manifest_df.is_empty():
+            return
+
+        max_id = manifest_df.select(pl.col("file_id").max()).item()
+        if max_id is None:
+            return
+
+        import filelock
+
+        lock_path = self.counter_path.with_suffix(".lock")
+        lock = filelock.FileLock(lock_path, timeout=30)
+
+        with lock:
+            if self.counter_path.exists():
+                raw = self.counter_path.read_bytes()
+                current = struct.unpack("<i", raw)[0] if len(raw) >= 4 else 0
+            else:
+                current = 0
+
+            if max_id > current:
+                self.counter_path.write_bytes(struct.pack("<i", max_id))
+
 
 class DeltaManifestRepository(BaseDeltaRepository):
     """
     Implementation of IngestionManifestRepository using Delta Lake.
+
+    Uses a cross-platform file counter for monotonic file_id assignment
+    instead of fcntl-based locking.
     """
 
     def __init__(self, table_path: str | Path):
         super().__init__(table_path)
         self._ensure_initialized()
 
+        # Counter file lives alongside (not inside) the Delta table directory
+        counter_dir = Path(self.table_path).parent
+        self._counter = _FileIdCounter(counter_dir / ".file_id_counter")
+        self._identity_lock_path = counter_dir / ".manifest_identity.lock"
+
     def _ensure_initialized(self):
         """Creates the manifest table with correct schema if it doesn't exist."""
         if not Path(self.table_path).exists():
-            # Define schema according to flexible bronze layer architecture
-            # Delta Lake doesn't support UInt32, stores as Int32
-            # Schema definition is single source of truth
-            #
-            # Primary identity: (vendor, data_type, bronze_file_name, sha256)
-            # Optional fields: date (nullable for non-symbol data)
-            schema = {
-                "file_id": pl.Int32,
-                "vendor": pl.Utf8,
-                "data_type": pl.Utf8,
-                "bronze_file_name": pl.Utf8,  # Renamed from bronze_file_path
-                "sha256": pl.Utf8,
-                "file_size_bytes": pl.Int64,
-                "last_modified_ts": pl.Int64,
-                "date": pl.Date,  # NOW NULLABLE
-                "status": pl.Utf8,
-                "created_at_us": pl.Int64,  # When discovered
-                "processed_at_us": pl.Int64,  # When ingested (nullable)
-                "row_count": pl.Int64,
-                "ts_local_min_us": pl.Int64,
-                "ts_local_max_us": pl.Int64,
-                "error_message": pl.Utf8,
-            }
-            df = pl.DataFrame(schema=schema)
+            df = pl.DataFrame(schema=MANIFEST_SCHEMA)
             self.write_full(df)
             return
 
-        # No migration logic - clean break with new schema
-        # Users should run scripts/reset_manifest.py before deploying new code
-
     def resolve_file_id(self, meta: BronzeFileMetadata) -> int:
-        """Gets existing ID or mints a new one based on new identity key.
+        """Gets existing ID or mints a new one based on identity key.
 
         Identity: (vendor, data_type, bronze_file_name, sha256)
 
         Persists 'pending' state if minting new ID to ensure stability.
-        Uses file locking to prevent race conditions when multiple processes
-        mint IDs concurrently.
 
         Returns:
             file_id: Integer file ID for this bronze file
         """
-        try:
-            DeltaTable(self.table_path)
-            # Use SQL-like filter for efficiency if supported by engine,
-            # but for robust Polars interop:
-            df = pl.read_delta(self.table_path)
-        except Exception:
-            # Should exist due to _ensure_initialized, but safety net
-            df = pl.DataFrame()
+        import filelock
 
-        # 1. Check existing (outside lock - read-only operation)
-        # Filter by new composite key: (vendor, data_type, bronze_file_name, sha256)
-        existing = df.filter(
-            (pl.col("vendor") == meta.vendor)
-            & (pl.col("data_type") == meta.data_type)
-            & (pl.col("bronze_file_name") == meta.bronze_file_path)
-            & (pl.col("sha256") == meta.sha256)
-        )
-
-        if not existing.is_empty():
-            return existing.item(0, "file_id")
-
-        # 2. Mint New ID (with file lock to prevent concurrent minting)
-        lock_file = Path(self.table_path) / ".file_id_lock"
-        lock_file.parent.mkdir(parents=True, exist_ok=True)
-
-        with open(lock_file, "w") as lockf:
-            # Acquire exclusive lock (blocks until available)
-            fcntl.flock(lockf.fileno(), fcntl.LOCK_EX)
-
+        lock = filelock.FileLock(self._identity_lock_path, timeout=30)
+        with lock:
             try:
-                # Re-read inside lock (another process may have added it)
+                DeltaTable(self.table_path)
                 df = pl.read_delta(self.table_path)
-                existing = df.filter(
-                    (pl.col("vendor") == meta.vendor)
-                    & (pl.col("data_type") == meta.data_type)
-                    & (pl.col("bronze_file_name") == meta.bronze_file_path)
-                    & (pl.col("sha256") == meta.sha256)
-                )
+            except Exception:
+                df = pl.DataFrame(schema=MANIFEST_SCHEMA)
 
-                if not existing.is_empty():
-                    return existing.item(0, "file_id")
+            # Check existing by composite key
+            existing = df.filter(
+                (pl.col("vendor") == meta.vendor)
+                & (pl.col("data_type") == meta.data_type)
+                & (pl.col("bronze_file_name") == meta.bronze_file_path)
+                & (pl.col("sha256") == meta.sha256)
+            )
 
-                # Compute next ID
-                if df.is_empty():
-                    next_id = 1
-                else:
-                    # Handle nulls if any
-                    max_id = df.select(pl.col("file_id").max()).item()
-                    next_id = (max_id if max_id is not None else 0) + 1
+            if not existing.is_empty():
+                return existing.item(0, "file_id")
 
-                # 3. Reserve (Write Pending)
-                # We write a minimal record to reserve the ID
-                # Schema definition is single source of truth - use explicit schema with Int32
-                import time
+            # Ensure counter is synced with manifest (handles first run or counter reset)
+            self._counter.sync_from_manifest(df)
 
-                current_ts_us = int(time.time() * 1_000_000)
+            # Mint new ID using cross-platform counter
+            next_id = self._counter.next_id()
 
-                pending_record = pl.DataFrame(
-                    {
-                        "file_id": [next_id],
-                        "vendor": [meta.vendor],
-                        "data_type": [meta.data_type],
-                        "bronze_file_name": [meta.bronze_file_path],
-                        "sha256": [meta.sha256],
-                        "file_size_bytes": [meta.file_size_bytes],
-                        "last_modified_ts": [meta.last_modified_ts],
-                        "date": [meta.date],  # Can be NULL
-                        "status": ["pending"],
-                        "created_at_us": [current_ts_us],
-                        "processed_at_us": [None],
-                        "row_count": [None],
-                        "ts_local_min_us": [None],
-                        "ts_local_max_us": [None],
-                        "error_message": [None],
-                    },
-                    schema={
-                        "file_id": pl.Int32,
-                        "vendor": pl.Utf8,
-                        "data_type": pl.Utf8,
-                        "bronze_file_name": pl.Utf8,
-                        "sha256": pl.Utf8,
-                        "file_size_bytes": pl.Int64,
-                        "last_modified_ts": pl.Int64,
-                        "date": pl.Date,  # Nullable
-                        "status": pl.Utf8,
-                        "created_at_us": pl.Int64,
-                        "processed_at_us": pl.Int64,  # Nullable
-                        "row_count": pl.Int64,  # Nullable
-                        "ts_local_min_us": pl.Int64,  # Nullable
-                        "ts_local_max_us": pl.Int64,  # Nullable
-                        "error_message": pl.Utf8,  # Nullable
-                    },
-                )
+            current_ts_us = int(time.time() * 1_000_000)
 
-                self.append(pending_record)
-                return next_id
+            pending_record = pl.DataFrame(
+                {
+                    "file_id": [next_id],
+                    "vendor": [meta.vendor],
+                    "data_type": [meta.data_type],
+                    "bronze_file_name": [meta.bronze_file_path],
+                    "sha256": [meta.sha256],
+                    "file_size_bytes": [meta.file_size_bytes],
+                    "last_modified_ts": [meta.last_modified_ts],
+                    "date": [meta.date],
+                    "status": ["pending"],
+                    "created_at_us": [current_ts_us],
+                    "processed_at_us": [None],
+                    "row_count": [None],
+                    "ts_local_min_us": [None],
+                    "ts_local_max_us": [None],
+                    "error_message": [None],
+                },
+                schema=MANIFEST_SCHEMA,
+            )
 
-            finally:
-                # Release lock (happens automatically when file closes, but explicit for clarity)
-                fcntl.flock(lockf.fileno(), fcntl.LOCK_UN)
+            self.append(pending_record)
+            return next_id
 
     def filter_pending(self, candidates: list[BronzeFileMetadata]) -> list[BronzeFileMetadata]:
         """Returns only files that need processing (efficient batch anti-join).
@@ -192,7 +201,7 @@ class DeltaManifestRepository(BaseDeltaRepository):
                 ["vendor", "data_type", "bronze_file_name", "sha256"]
             ).iter_rows()
         )
-        fallback_success_keys = set(
+        fallback_success_keys_all = set(
             success_manifest.select(
                 [
                     "vendor",
@@ -202,6 +211,21 @@ class DeltaManifestRepository(BaseDeltaRepository):
                     "last_modified_ts",
                 ]
             ).iter_rows()
+        )
+        # Fallback matching for checksum-present candidates is only safe against
+        # legacy success rows that were recorded without checksums.
+        fallback_success_keys_no_sha = set(
+            success_manifest.filter(pl.col("sha256") == "")
+            .select(
+                [
+                    "vendor",
+                    "data_type",
+                    "bronze_file_name",
+                    "file_size_bytes",
+                    "last_modified_ts",
+                ]
+            )
+            .iter_rows()
         )
 
         pending: list[BronzeFileMetadata] = []
@@ -215,6 +239,15 @@ class DeltaManifestRepository(BaseDeltaRepository):
                 )
                 if strict_key in strict_success_keys:
                     continue
+                fallback_key = (
+                    candidate.vendor,
+                    candidate.data_type,
+                    candidate.bronze_file_path,
+                    candidate.file_size_bytes,
+                    candidate.last_modified_ts,
+                )
+                if fallback_key in fallback_success_keys_no_sha:
+                    continue
             else:
                 fallback_key = (
                     candidate.vendor,
@@ -223,7 +256,7 @@ class DeltaManifestRepository(BaseDeltaRepository):
                     candidate.file_size_bytes,
                     candidate.last_modified_ts,
                 )
-                if fallback_key in fallback_success_keys:
+                if fallback_key in fallback_success_keys_all:
                     continue
 
             pending.append(candidate)
@@ -238,19 +271,24 @@ class DeltaManifestRepository(BaseDeltaRepository):
         result: IngestionResult | None = None,
     ) -> None:
         """Records success/failure with new schema."""
-        # Create the updated row
         row_count = result.row_count if result else None
         min_ts = result.ts_local_min_us if result else None
         max_ts = result.ts_local_max_us if result else None
         err_msg = result.error_message if result else None
 
-        # If error passed directly or via result
         if status == "failed" and err_msg is None:
             err_msg = "Unknown error"
 
-        import time
-
         processed_ts_us = int(time.time() * 1_000_000)
+        created_at_us = processed_ts_us
+        try:
+            current = pl.read_delta(self.table_path).filter(pl.col("file_id") == file_id)
+            if not current.is_empty():
+                existing_created = current.item(0, "created_at_us")
+                if existing_created is not None:
+                    created_at_us = int(existing_created)
+        except Exception:
+            pass
 
         update_df = pl.DataFrame(
             {
@@ -261,34 +299,24 @@ class DeltaManifestRepository(BaseDeltaRepository):
                 "sha256": [meta.sha256],
                 "file_size_bytes": [meta.file_size_bytes],
                 "last_modified_ts": [meta.last_modified_ts],
-                "date": [meta.date],  # Can be NULL
+                "date": [meta.date],
                 "status": [status],
-                "created_at_us": [None],  # Preserve existing created_at_us (will be merged)
+                "created_at_us": [created_at_us],
                 "processed_at_us": [processed_ts_us],
                 "row_count": [row_count],
                 "ts_local_min_us": [min_ts],
                 "ts_local_max_us": [max_ts],
                 "error_message": [err_msg],
             },
-            schema={
-                "file_id": pl.Int32,
-                "vendor": pl.Utf8,
-                "data_type": pl.Utf8,
-                "bronze_file_name": pl.Utf8,
-                "sha256": pl.Utf8,
-                "file_size_bytes": pl.Int64,
-                "last_modified_ts": pl.Int64,
-                "date": pl.Date,  # Nullable
-                "status": pl.Utf8,
-                "created_at_us": pl.Int64,  # Nullable (preserve existing)
-                "processed_at_us": pl.Int64,  # Nullable
-                "row_count": pl.Int64,  # Nullable
-                "ts_local_min_us": pl.Int64,  # Nullable
-                "ts_local_max_us": pl.Int64,  # Nullable
-                "error_message": pl.Utf8,  # Nullable
-            },
+            schema=MANIFEST_SCHEMA,
         )
 
-        # Schema definition is single source of truth - no dynamic schema reading
-        # We use merge to update the existing 'pending' (or previous failed) record
         self.merge(update_df, keys=["file_id"])
+
+
+# ---------------------------------------------------------------------------
+# Schema registry registration
+# ---------------------------------------------------------------------------
+from pointline.schema_registry import register_schema as _register_schema  # noqa: E402
+
+_register_schema("ingest_manifest", MANIFEST_SCHEMA, has_date=True)

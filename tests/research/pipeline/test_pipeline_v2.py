@@ -606,6 +606,101 @@ def test_pipeline_event_joined_end_to_end():
     assert output["results"]["row_count"] == 2
 
 
+def test_pipeline_event_joined_fills_missing_lineage_columns():
+    request = _base_request("event_joined")
+    request["spine"] = {"type": "trades", "source": "trades"}
+    request["operators"] = []
+    request["labels"] = []
+    request["sources"][0]["inline_rows"] = [
+        {
+            "ts_local_us": 10_000_000,
+            "exchange_id": 1,
+            "symbol_id": 12345,
+            "qty_int": 100,
+            "px_int": 50000,
+            "side": 0,
+        }
+    ]
+    request["sources"].append(
+        {
+            "name": "quotes",
+            "inline_rows": [
+                {
+                    "ts_local_us": 9_000_000,
+                    "exchange_id": 1,
+                    "symbol_id": 12345,
+                    "bid_px_int": 49990,
+                    "ask_px_int": 50010,
+                }
+            ],
+        }
+    )
+
+    output = pipeline(request)
+    assert output["results"]["row_count"] == 1
+    assert "file_id" in output["results"]["columns"]
+    assert "file_line_number" in output["results"]["columns"]
+
+
+def test_pipeline_event_joined_uses_lineage_tie_break_for_same_timestamp():
+    request = _base_request("event_joined")
+    request["spine"] = {"type": "trades", "source": "trades"}
+    request["operators"] = []
+    request["labels"] = []
+    request["sources"][0]["inline_rows"] = [
+        {
+            "ts_local_us": 10_000_000,
+            "exchange_id": 1,
+            "symbol_id": 12345,
+            "qty_int": 100,
+            "px_int": 50000,
+            "side": 0,
+            "file_id": 1,
+            "file_line_number": 10,
+        }
+    ]
+    request["sources"].append(
+        {
+            "name": "quotes",
+            "inline_rows": [
+                {
+                    # Intentionally reverse source order: line 2 first, then line 1.
+                    "ts_local_us": 10_000_000,
+                    "exchange_id": 1,
+                    "symbol_id": 12345,
+                    "bid_px_int": 50020,
+                    "ask_px_int": 50030,
+                    "file_id": 2,
+                    "file_line_number": 2,
+                },
+                {
+                    "ts_local_us": 10_000_000,
+                    "exchange_id": 1,
+                    "symbol_id": 12345,
+                    "bid_px_int": 50000,
+                    "ask_px_int": 50010,
+                    "file_id": 2,
+                    "file_line_number": 1,
+                },
+            ],
+        }
+    )
+
+    output = pipeline(request)
+    assert output["results"]["row_count"] == 1
+    preview_row = output["results"]["preview"][0]
+    bid_px = preview_row.get("bid_px_int_quotes", preview_row.get("bid_px_int"))
+    assert bid_px == 50020
+
+
+def test_pipeline_rejects_unimplemented_volume_spine():
+    request = _base_request("bar_then_feature")
+    request["spine"] = {"type": "volume"}
+
+    with pytest.raises(ValueError, match="not implemented in pipeline v2"):
+        pipeline(request)
+
+
 def test_quality_gate_blocks_forward_feature_operator():
     request = _base_request("bar_then_feature")
     request["operators"][0]["pit_policy"] = {

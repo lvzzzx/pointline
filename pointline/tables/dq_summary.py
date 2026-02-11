@@ -94,3 +94,11 @@ def normalize_dq_summary_schema(df: pl.DataFrame) -> pl.DataFrame:
 def required_dq_summary_columns() -> tuple[str, ...]:
     """Columns required for a dq_summary DataFrame."""
     return tuple(DQ_SUMMARY_SCHEMA.keys())
+
+
+# ---------------------------------------------------------------------------
+# Schema registry registration
+# ---------------------------------------------------------------------------
+from pointline.schema_registry import register_schema as _register_schema  # noqa: E402
+
+_register_schema("dq_summary", DQ_SUMMARY_SCHEMA, has_date=True)

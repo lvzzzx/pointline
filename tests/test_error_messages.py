@@ -36,7 +36,7 @@ def test_exchange_not_found_with_suggestions():
     error = exchange_not_found_error("binance", exchanges)
 
     assert "binance" in error
-    assert "not found in EXCHANGE_MAP" in error
+    assert "not found in dim_exchange" in error
     assert "Did you mean" in error
     # Should suggest binance-futures or binance-us
     assert any(exch in error for exch in ["binance-futures", "binance-us"])
@@ -48,7 +48,7 @@ def test_exchange_not_found_no_suggestions():
     error = exchange_not_found_error("xyzzyx", exchanges)
 
     assert "xyzzyx" in error
-    assert "not found in EXCHANGE_MAP" in error
+    assert "not found in dim_exchange" in error
     # Should list available exchanges
     assert "binance-futures" in error
     assert "coinbase" in error

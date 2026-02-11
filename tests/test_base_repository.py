@@ -61,3 +61,18 @@ def test_base_delta_repository_merge_interface(tmp_path):
 
     read_df = repo.read_all()
     assert read_df.filter(pl.col("id") == 1)["val"][0] == "b"
+
+
+def test_base_delta_repository_merge_antijoin_creates_table_when_missing(tmp_path):
+    from pointline.io.base_repository import BaseDeltaRepository
+
+    table_path = tmp_path / "test_merge_missing_table"
+    repo = BaseDeltaRepository(table_path)
+
+    updates = pl.DataFrame({"id": [1], "val": ["a"]})
+    repo.merge(updates, keys=["id"], use_native_merge=False)
+
+    read_df = repo.read_all()
+    assert read_df.height == 1
+    assert read_df["id"][0] == 1
+    assert read_df["val"][0] == "a"

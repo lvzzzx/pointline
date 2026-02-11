@@ -15,6 +15,8 @@ from typing import Literal
 # A CI test (test_type_registry_sync.py) ensures this stays in sync.
 TableName = Literal[
     "dim_symbol",
+    "dim_exchange",
+    "dim_trading_calendar",
     "stock_basic_cn",
     "dim_asset_stats",
     "ingest_manifest",
@@ -24,9 +26,12 @@ TableName = Literal[
     "quotes",
     "book_snapshot_25",
     "derivative_ticker",
+    "liquidations",
+    "options_chain",
     "kline_1h",
-    "szse_l3_orders",
-    "szse_l3_ticks",
+    "kline_1d",
+    "l3_orders",
+    "l3_ticks",
 ]
 
 # Timestamp input type - accepts int microseconds, datetime objects, or ISO strings

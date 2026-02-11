@@ -1,5 +1,11 @@
 # Quant Agent Architecture
 
+🚧 **STATUS: PROPOSED — NOT IMPLEMENTED**
+
+This document describes a proposed architecture for a future automated Quant Researcher agent. No implementation exists in the codebase yet. This is a roadmap document for potential future development.
+
+---
+
 This document proposes the architecture for an automated Quant Researcher agent in Pointline.
 
 ## Goals

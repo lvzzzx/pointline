@@ -501,3 +501,13 @@ def resolve_symbol_ids(
 def required_book_snapshots_columns() -> Sequence[str]:
     """Columns required for a book snapshots DataFrame after normalization."""
     return tuple(BOOK_SNAPSHOTS_SCHEMA.keys())
+
+
+# ---------------------------------------------------------------------------
+# Schema registry registration
+# ---------------------------------------------------------------------------
+from pointline.schema_registry import register_schema as _register_schema  # noqa: E402
+
+_register_schema(
+    "book_snapshot_25", BOOK_SNAPSHOTS_SCHEMA, partition_by=["exchange", "date"], has_date=True
+)

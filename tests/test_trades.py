@@ -433,7 +433,7 @@ def test_trades_service_write():
 
     service.write(df)
 
-    repo.merge.assert_called_once_with(df, keys=["file_id", "file_line_number"])
+    repo.append.assert_called_once_with(df)
 
 
 def test_trades_service_ingest_file_quarantine():
@@ -511,6 +511,10 @@ def test_check_quarantine_uses_exchange_local_trading_day():
             "price_increment": [0.01],
             "amount_increment": [100.0],
             "contract_size": [1.0],
+            "expiry_ts_us": [None],
+            "underlying_symbol_id": [None],
+            "strike": [None],
+            "put_call": [None],
             # 2024-05-01 in Asia/Shanghai => [2024-04-30T16:00:00Z, 2024-05-01T16:00:00Z)
             "valid_from_ts": [1714492800000000],
             "valid_until_ts": [1714579200000000],
@@ -587,8 +591,8 @@ def test_trades_service_ingest_file_success():
         assert result.ts_local_min_us > 0
         assert result.ts_local_max_us > 0
 
-        # Verify idempotent lineage-key merge was used
-        repo.merge.assert_called_once()
+        # Verify append-first write was used (default)
+        repo.append.assert_called_once()
 
     finally:
         temp_path.unlink(missing_ok=True)

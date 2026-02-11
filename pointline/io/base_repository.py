@@ -1,9 +1,64 @@
+from __future__ import annotations
+
+import logging
 from datetime import date
 from pathlib import Path
 
 import polars as pl
 
 from pointline.config import STORAGE_OPTIONS
+
+logger = logging.getLogger(__name__)
+
+
+class SchemaValidationError(Exception):
+    """Raised when a DataFrame schema does not match the expected table schema."""
+
+
+def validate_schema(
+    df: pl.DataFrame,
+    expected_schema: dict[str, pl.DataType],
+    *,
+    table_path: str = "",
+) -> None:
+    """Validate that a DataFrame matches the expected schema before writing.
+
+    Checks:
+    - All expected columns are present
+    - No unexpected columns exist
+    - Column types match expected types
+
+    Args:
+        df: DataFrame to validate.
+        expected_schema: Mapping of column name to expected Polars DataType.
+        table_path: Table path for error messages.
+
+    Raises:
+        SchemaValidationError: If validation fails.
+    """
+    df_schema = dict(df.schema)
+    expected_cols = set(expected_schema.keys())
+    actual_cols = set(df_schema.keys())
+
+    errors: list[str] = []
+
+    missing = expected_cols - actual_cols
+    if missing:
+        errors.append(f"Missing columns: {sorted(missing)}")
+
+    unexpected = actual_cols - expected_cols
+    if unexpected:
+        errors.append(f"Unexpected columns: {sorted(unexpected)}")
+
+    for col in expected_cols & actual_cols:
+        actual_type = df_schema[col]
+        expected_type = expected_schema[col]
+        if actual_type != expected_type:
+            errors.append(f"Column '{col}': expected {expected_type}, got {actual_type}")
+
+    if errors:
+        detail = "; ".join(errors)
+        raise SchemaValidationError(f"Schema validation failed for '{table_path}': {detail}")
 
 
 def get_writer_properties():
@@ -25,7 +80,14 @@ class BaseDeltaRepository:
     Base implementation for Delta Lake repositories using Polars and delta-rs.
     """
 
-    def __init__(self, table_path: str | Path, partition_by: list[str] | None = None):
+    def __init__(
+        self,
+        table_path: str | Path,
+        partition_by: list[str] | None = None,
+        expected_schema: dict[str, pl.DataType] | None = None,
+        *,
+        table_name: str | None = None,
+    ):
         """
         Initializes the repository with a specific table path.
 
@@ -33,9 +95,26 @@ class BaseDeltaRepository:
             table_path: The physical path to the Delta table.
             partition_by: Optional list of column names to partition by (e.g., ["exchange", "date"]).
                          If None, table will not be partitioned.
+            expected_schema: Optional expected schema for write-time validation.
+                            If provided, every write operation validates the DataFrame against it.
+            table_name: Optional table name to auto-lookup schema from the schema registry.
+                       If both table_name and expected_schema are provided, expected_schema wins.
         """
         self.table_path = str(table_path)
         self.partition_by = partition_by
+        if expected_schema is not None:
+            self.expected_schema = expected_schema
+        elif table_name is not None:
+            from pointline.schema_registry import get_schema
+
+            self.expected_schema = get_schema(table_name)
+        else:
+            self.expected_schema = None
+
+    def _validate_before_write(self, df: pl.DataFrame) -> None:
+        """Validate DataFrame schema before writing, if expected_schema is set."""
+        if self.expected_schema is not None:
+            validate_schema(df, self.expected_schema, table_path=self.table_path)
 
     def read_all(self) -> pl.DataFrame:
         """
@@ -52,8 +131,13 @@ class BaseDeltaRepository:
 
         Args:
             df: The DataFrame to write.
+
+        Raises:
+            SchemaValidationError: If DataFrame schema doesn't match expected_schema.
         """
         from deltalake import write_deltalake
+
+        self._validate_before_write(df)
 
         # Convert Polars DataFrame to PyArrow Table for delta-rs
         arrow_table = df.to_arrow()
@@ -78,8 +162,13 @@ class BaseDeltaRepository:
 
         Args:
             df: The DataFrame to append.
+
+        Raises:
+            SchemaValidationError: If DataFrame schema doesn't match expected_schema.
         """
         from deltalake import write_deltalake
+
+        self._validate_before_write(df)
 
         # Convert Polars DataFrame to PyArrow Table for delta-rs
         arrow_table = df.to_arrow()
@@ -115,7 +204,11 @@ class BaseDeltaRepository:
         """
         from deltalake import write_deltalake
 
-        arrow_data = data.to_arrow() if isinstance(data, pl.DataFrame) else data
+        if isinstance(data, pl.DataFrame):
+            self._validate_before_write(data)
+            arrow_data = data.to_arrow()
+        else:
+            arrow_data = data
 
         write_deltalake(
             self.table_path,
@@ -186,17 +279,10 @@ class BaseDeltaRepository:
             use_native_merge: If True, use Delta Lake native MERGE operation (atomic, recommended).
                             If False, use anti-join + append pattern (simpler but not atomic).
 
-        Note:
-            Native merge (use_native_merge=True) provides:
-            - ACID guarantees (atomic operation)
-            - Better concurrency (no full table rewrite)
-            - Optimistic transaction control
-
-            Anti-join pattern (use_native_merge=False) is simpler but:
-            - Not atomic (read-compute-write race condition)
-            - Full table rewrite (inefficient for large tables)
-            - Risk of data loss in concurrent scenarios
+        Raises:
+            SchemaValidationError: If DataFrame schema doesn't match expected_schema.
         """
+        self._validate_before_write(df)
         if use_native_merge:
             self._merge_native(df, keys)
         else:
@@ -258,7 +344,7 @@ class BaseDeltaRepository:
             # Then concatenate with the new data
             updated = pl.concat([current.join(df.select(keys), on=keys, how="anti"), df])
             self.write_full(updated)
-        except TableNotFoundError:
+        except (TableNotFoundError, FileNotFoundError):
             # If table doesn't exist, perform a full write
             self.write_full(df)
 

@@ -7,9 +7,11 @@ from pointline.tables import (  # noqa: I001
     book_snapshots,
     derivative_ticker,
     klines,
+    l3_orders,
+    l3_ticks,
+    liquidations,
+    options_chain,
     quotes,
-    szse_l3_orders,
-    szse_l3_ticks,
     trades,
 )
 
@@ -17,8 +19,10 @@ __all__ = [
     "book_snapshots",
     "derivative_ticker",
     "klines",
+    "l3_orders",
+    "l3_ticks",
+    "liquidations",
+    "options_chain",
     "quotes",
-    "szse_l3_orders",
-    "szse_l3_ticks",
     "trades",
 ]

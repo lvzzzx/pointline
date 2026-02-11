@@ -26,18 +26,18 @@ from typing import Any
 import polars as pl
 
 from pointline.config import (
-    ASSET_CLASS_TAXONOMY,
-    EXCHANGE_METADATA,
     TABLE_HAS_DATE,
     TABLE_PATHS,
     get_asset_class_exchanges,
     get_asset_type_name,
     get_exchange_metadata,
+    get_exchange_supported_tables,
     get_table_path,
     normalize_exchange,
 )
 from pointline.dim_symbol import read_dim_symbol_table
 from pointline.research.core import _normalize_timestamp
+from pointline.tables.asset_class import ASSET_CLASS_TAXONOMY
 
 
 def list_exchanges(
@@ -79,10 +79,14 @@ def list_exchanges(
         >>> # List Chinese stocks + crypto spot
         >>> combined = list_exchanges(asset_class=["stocks-cn", "crypto-spot"])
     """
-    # Get all exchanges from EXCHANGE_METADATA
+    from pointline.config import _ensure_dim_exchange
+
+    dim_ex = _ensure_dim_exchange()
+    source_items: list[tuple[str, dict]] = list(dim_ex.items())
+
     exchanges_data = []
 
-    for exchange_name, metadata in EXCHANGE_METADATA.items():
+    for exchange_name, metadata in source_items:
         # Filter by active status
         if active_only and not metadata.get("is_active", True):
             continue
@@ -100,17 +104,18 @@ def list_exchanges(
                     if ac in ASSET_CLASS_TAXONOMY:
                         taxonomy_entry = ASSET_CLASS_TAXONOMY[ac]
                         if "children" in taxonomy_entry:
-                            # Parent class - include all children
                             expanded_classes.update(taxonomy_entry["children"])
                         else:
-                            # Leaf class
                             expanded_classes.add(ac)
                     else:
-                        # Unknown class - include as-is for filtering
                         expanded_classes.add(ac)
+                    # Also match parent prefix (e.g., "crypto" matches "crypto-spot")
+                    expanded_classes.add(ac)
 
-                # Check if this exchange belongs to any of the requested classes
-                if metadata.get("asset_class") not in expanded_classes:
+                row_class = metadata.get("asset_class", "")
+                if row_class not in expanded_classes and not any(
+                    row_class.startswith(ec + "-") for ec in expanded_classes
+                ):
                     continue
 
         exchanges_data.append(
@@ -455,15 +460,13 @@ def data_coverage(
 
     for table_name in check_tables:
         # Check if table is supported by this exchange
-        exchange_meta = get_exchange_metadata(normalized_exchange)
-        if exchange_meta:
-            supported_tables = exchange_meta.get("supported_tables", [])
-            if table_name not in supported_tables:
-                result[table_name] = {
-                    "available": False,
-                    "reason": f"Table '{table_name}' not supported for exchange '{exchange}'",
-                }
-                continue
+        supported_tables = get_exchange_supported_tables(normalized_exchange)
+        if supported_tables is not None and table_name not in supported_tables:
+            result[table_name] = {
+                "available": False,
+                "reason": f"Table '{table_name}' not supported for exchange '{exchange}'",
+            }
+            continue
 
         # Check if table exists
         if table_name not in TABLE_PATHS:
@@ -619,10 +622,95 @@ def _get_table_description(table_name: str) -> str:
         "book_snapshot_25": "Top 25 levels order book snapshots",
         "derivative_ticker": "Funding rates, OI, mark/index prices",
         "kline_1h": "1-hour OHLCV candlesticks",
-        "szse_l3_orders": "SZSE Level 3 order placements",
-        "szse_l3_ticks": "SZSE Level 3 trade executions and cancellations",
+        "l3_orders": "China exchange Level 3 order placements",
+        "l3_ticks": "China exchange Level 3 trade executions and cancellations",
     }
     return descriptions.get(table_name, "")
+
+
+def symbol_metadata(
+    symbol_id: int,
+) -> pl.DataFrame:
+    """Return symbol metadata from dim_symbol.
+
+    Args:
+        symbol_id: The symbol_id to look up.
+
+    Returns:
+        DataFrame with symbol metadata.
+        Returns empty DataFrame if symbol_id not found.
+    """
+    dim = read_dim_symbol_table()
+    return dim.filter(pl.col("symbol_id") == symbol_id)
+
+
+def trading_days(
+    exchange: str,
+    start: str | datetime,
+    end: str | datetime,
+) -> list:
+    """Return trading days for an exchange in a date range.
+
+    For 24/7 crypto exchanges, returns every calendar day.
+    For exchanges with a dim_trading_calendar entry, reads from the table.
+
+    Args:
+        exchange: Exchange name (e.g., "binance-futures", "szse")
+        start: Start date (ISO string or datetime, inclusive)
+        end: End date (ISO string or datetime, inclusive)
+
+    Returns:
+        Sorted list of ``datetime.date`` objects that are trading days.
+    """
+    import datetime as dt
+
+    from pointline.tables.dim_trading_calendar import bootstrap_crypto
+    from pointline.tables.dim_trading_calendar import trading_days as _td
+
+    if isinstance(start, str):
+        start_date = dt.date.fromisoformat(start)
+    elif isinstance(start, datetime):
+        start_date = start.date()
+    else:
+        start_date = start
+
+    if isinstance(end, str):
+        end_date = dt.date.fromisoformat(end)
+    elif isinstance(end, datetime):
+        end_date = end.date()
+    else:
+        end_date = end
+
+    # Try reading from dim_trading_calendar table
+    try:
+        cal_path = get_table_path("dim_trading_calendar")
+        cal_df = (
+            pl.scan_delta(str(cal_path))
+            .filter(
+                (pl.col("exchange") == exchange)
+                & (pl.col("date") >= start_date)
+                & (pl.col("date") <= end_date)
+            )
+            .collect()
+        )
+        if not cal_df.is_empty():
+            return _td(cal_df, exchange, start_date, end_date)
+    except Exception:
+        pass
+
+    # Fallback: check if this is a crypto exchange (24/7)
+    meta = get_exchange_metadata(exchange)
+    if meta is None:
+        normalized = normalize_exchange(exchange)
+        if normalized != exchange:
+            meta = get_exchange_metadata(normalized)
+    asset_class = meta.get("asset_class", "") if meta else ""
+    if asset_class.startswith("crypto"):
+        cal_df = bootstrap_crypto(exchange, start_date, end_date)
+        return _td(cal_df, exchange, start_date, end_date)
+
+    # No calendar data available — return empty
+    return []
 
 
 def _get_default_tables() -> list[str]:
@@ -633,8 +721,8 @@ def _get_default_tables() -> list[str]:
         "book_snapshot_25",
         "derivative_ticker",
         "kline_1h",
-        "szse_l3_orders",
-        "szse_l3_ticks",
+        "l3_orders",
+        "l3_ticks",
     ]
 
 

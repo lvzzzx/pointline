@@ -145,4 +145,4 @@ See [examples/discovery_example.py](examples/discovery_example.py) for a complet
 **For production research:** Need explicit symbol_id control or performance tuning? See [Advanced Topics](docs/guides/researcher_guide.md#7-researcher-interface-conventions) for the core API.
 
 ## Contributing
-Please review our [Product Guidelines](./conductor/product-guidelines.md) and [Workflow](./conductor/workflow.md) before contributing.
+Please review our [Collaboration Playbook](./docs/development/collaboration-playbook.md) before contributing.

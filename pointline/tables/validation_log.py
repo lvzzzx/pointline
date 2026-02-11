@@ -42,7 +42,7 @@ VALIDATION_LOG_SCHEMA: dict[str, pl.DataType] = {
     "file_id": pl.Int32,  # FK to ingest_manifest.file_id
     "table_name": pl.Utf8,  # e.g., "trades", "quotes", "book_snapshot_25"
     "validated_at": pl.Int64,  # Validation timestamp in microseconds since epoch (UTC)
-    "validation_status": pl.Utf8,  # "passed" or "failed"
+    "validation_status": pl.Utf8,  # "passed", "failed", "ingested", "quarantined", "error"
     "expected_rows": pl.Int64,  # Rows from re-processing bronze file
     "ingested_rows": pl.Int64,  # Rows in silver table for this file_id
     "missing_rows": pl.Int64,  # Rows in expected but not in ingested (data loss)
@@ -50,6 +50,14 @@ VALIDATION_LOG_SCHEMA: dict[str, pl.DataType] = {
     "mismatched_rows": pl.Int64,  # Rows present in both but with different values
     "mismatch_sample": pl.Utf8,  # JSON representation of mismatch sample (nullable)
     "validation_duration_ms": pl.Int64,  # Validation duration in milliseconds
+    # Ingestion-specific columns (nullable, present only for ingestion records)
+    "vendor": pl.Utf8,  # Vendor name (e.g., "tardis", "quant360")
+    "data_type": pl.Utf8,  # Data type (e.g., "trades", "quotes")
+    "exchange": pl.Utf8,  # Exchange name (e.g., "binance-futures")
+    "date": pl.Date,  # Trading date
+    "filtered_row_count": pl.Int64,  # Rows removed by quarantine/validation
+    "filtered_symbol_count": pl.Int64,  # Symbols quarantined
+    "error_message": pl.Utf8,  # Error message for failed ingestions
 }
 
 
@@ -86,9 +94,10 @@ def create_validation_record(
     Raises:
         ValueError: If validation_status is not "passed" or "failed"
     """
-    if validation_status not in ("passed", "failed"):
+    _VALID_STATUSES = ("passed", "failed", "ingested", "quarantined", "error")
+    if validation_status not in _VALID_STATUSES:
         raise ValueError(
-            f"validation_status must be 'passed' or 'failed', got: {validation_status}"
+            f"validation_status must be one of {_VALID_STATUSES}, got: {validation_status}"
         )
 
     # Generate validation_id using current timestamp in microseconds
@@ -118,6 +127,75 @@ def create_validation_record(
             "mismatched_rows": [mismatched_rows],
             "mismatch_sample": [mismatch_json],
             "validation_duration_ms": [validation_duration_ms],
+            "vendor": [None],
+            "data_type": [None],
+            "exchange": [None],
+            "date": [None],
+            "filtered_row_count": [None],
+            "filtered_symbol_count": [None],
+            "error_message": [None],
+        },
+        schema=VALIDATION_LOG_SCHEMA,
+    )
+
+
+def create_ingestion_record(
+    *,
+    file_id: int,
+    table_name: str,
+    vendor: str,
+    data_type: str,
+    exchange: str | None = None,
+    date: object | None = None,
+    status: str,
+    row_count: int,
+    filtered_row_count: int = 0,
+    filtered_symbol_count: int = 0,
+    error_message: str | None = None,
+    duration_ms: int,
+) -> pl.DataFrame:
+    """Create an ingestion record DataFrame for the validation_log.
+
+    Args:
+        file_id: File ID from ingest_manifest
+        table_name: Target silver table name
+        vendor: Vendor name (e.g., "tardis", "quant360")
+        data_type: Data type (e.g., "trades", "quotes")
+        exchange: Exchange name (nullable, may span multiple)
+        date: Trading date (nullable)
+        status: "ingested", "quarantined", or "error"
+        row_count: Rows successfully ingested
+        filtered_row_count: Rows removed by quarantine/validation
+        filtered_symbol_count: Number of symbols quarantined
+        error_message: Error message if status is "error" or "quarantined"
+        duration_ms: Ingestion duration in milliseconds
+
+    Returns:
+        DataFrame with one row matching VALIDATION_LOG_SCHEMA
+    """
+    ingested_at_us = int(time.time() * 1_000_000)
+
+    return pl.DataFrame(
+        {
+            "validation_id": [ingested_at_us],
+            "file_id": [file_id],
+            "table_name": [table_name],
+            "validated_at": [ingested_at_us],
+            "validation_status": [status],
+            "expected_rows": [row_count + filtered_row_count],
+            "ingested_rows": [row_count],
+            "missing_rows": [0],
+            "extra_rows": [0],
+            "mismatched_rows": [0],
+            "mismatch_sample": [None],
+            "validation_duration_ms": [duration_ms],
+            "vendor": [vendor],
+            "data_type": [data_type],
+            "exchange": [exchange],
+            "date": [date],
+            "filtered_row_count": [filtered_row_count],
+            "filtered_symbol_count": [filtered_symbol_count],
+            "error_message": [error_message],
         },
         schema=VALIDATION_LOG_SCHEMA,
     )
@@ -135,8 +213,17 @@ def normalize_validation_log_schema(df: pl.DataFrame) -> pl.DataFrame:
     Raises:
         ValueError: If required columns are missing
     """
-    # mismatch_sample is nullable, all others are required
-    optional_columns = {"mismatch_sample"}
+    # These columns are nullable (not required for all record types)
+    optional_columns = {
+        "mismatch_sample",
+        "vendor",
+        "data_type",
+        "exchange",
+        "date",
+        "filtered_row_count",
+        "filtered_symbol_count",
+        "error_message",
+    }
 
     missing_required = [
         col
@@ -164,3 +251,11 @@ def normalize_validation_log_schema(df: pl.DataFrame) -> pl.DataFrame:
 def required_validation_log_columns() -> tuple[str, ...]:
     """Columns required for a validation_log DataFrame."""
     return tuple(VALIDATION_LOG_SCHEMA.keys())
+
+
+# ---------------------------------------------------------------------------
+# Schema registry registration
+# ---------------------------------------------------------------------------
+from pointline.schema_registry import register_schema as _register_schema  # noqa: E402
+
+_register_schema("validation_log", VALIDATION_LOG_SCHEMA)

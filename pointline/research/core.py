@@ -592,6 +592,62 @@ def load_kline_1h_decoded(
     return decoded.select(requested_columns) if requested_columns is not None else decoded
 
 
+def load_kline_1d_decoded(
+    *,
+    symbol_id: int | Iterable[int] | None = None,
+    start_ts_us: TimestampInput | None = None,
+    end_ts_us: TimestampInput | None = None,
+    ts_col: str = "ts_bucket_start_us",
+    columns: Sequence[str] | None = None,
+    keep_ints: bool = False,
+    dim_symbol: pl.DataFrame | pl.LazyFrame | None = None,
+    lazy: bool = False,
+) -> pl.DataFrame | pl.LazyFrame:
+    """Load 1d klines and decode fixed-point integers into float OHLC/volume columns.
+
+    If lazy=True, returns a LazyFrame with decode expressions applied.
+    """
+    required_ints = [
+        "open_px_int",
+        "high_px_int",
+        "low_px_int",
+        "close_px_int",
+        "volume_qty_int",
+        "quote_volume_int",
+        "taker_buy_base_qty_int",
+        "taker_buy_quote_qty_int",
+    ]
+    requested_columns = list(columns) if columns is not None else None
+    effective_keep_ints = keep_ints or (
+        requested_columns is not None and any(col in required_ints for col in requested_columns)
+    )
+
+    if lazy:
+        lf = scan_table(
+            "kline_1d",
+            symbol_id=symbol_id,
+            start_ts_us=start_ts_us,
+            end_ts_us=end_ts_us,
+            ts_col=ts_col,
+            columns=_merge_decode_columns(columns, ["symbol_id", *required_ints]),
+        )
+        dim_symbol_df = _ensure_dim_symbol_increments(dim_symbol)
+        decoded = _decode_klines_lazy(lf, dim_symbol_df.lazy(), keep_ints=effective_keep_ints)
+        return decoded.select(requested_columns) if requested_columns is not None else decoded
+
+    df = read_table(
+        "kline_1d",
+        symbol_id=symbol_id,
+        start_ts_us=start_ts_us,
+        end_ts_us=end_ts_us,
+        ts_col=ts_col,
+        columns=_merge_decode_columns(columns, ["symbol_id", *required_ints]),
+    )
+    dim_symbol_df = _ensure_dim_symbol_increments(dim_symbol)
+    decoded = decode_klines(df, dim_symbol_df, keep_ints=effective_keep_ints)
+    return decoded.select(requested_columns) if requested_columns is not None else decoded
+
+
 def _apply_filters(
     lf: pl.LazyFrame,
     *,

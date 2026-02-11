@@ -54,6 +54,21 @@ TRACKED_COLS: tuple[str, ...] = (
     "price_increment",
     "amount_increment",
     "contract_size",
+    # Options fields — nullable for asset classes that don't use them
+    "expiry_ts_us",
+    "underlying_symbol_id",
+    "strike",
+    "put_call",
+)
+
+# Tracked columns that may be omitted from updates (filled with null if missing).
+OPTIONAL_TRACKED_COLS: frozenset[str] = frozenset(
+    {
+        "expiry_ts_us",
+        "underlying_symbol_id",
+        "strike",
+        "put_call",
+    }
 )
 
 SCHEMA: dict[str, pl.DataType] = {
@@ -69,6 +84,12 @@ SCHEMA: dict[str, pl.DataType] = {
     "price_increment": pl.Float64,
     "amount_increment": pl.Float64,
     "contract_size": pl.Float64,
+    # Options fields — nullable for asset classes that don't use them
+    "expiry_ts_us": pl.Int64,  # Contract expiry (nullable)
+    "underlying_symbol_id": pl.Int64,  # Underlying instrument symbol_id (nullable)
+    "strike": pl.Float64,  # Options strike price (nullable)
+    "put_call": pl.Utf8,  # "put" / "call" (nullable)
+    # SCD Type 2 metadata
     "valid_from_ts": pl.Int64,
     "valid_until_ts": pl.Int64,
     "is_current": pl.Boolean,
@@ -110,7 +131,11 @@ def assign_symbol_id_hash(df: pl.DataFrame) -> pl.DataFrame:
     def _hash_payloads(s: pl.Series) -> pl.Series:
         return pl.Series(
             [
-                int.from_bytes(hashlib.blake2b(x.encode("utf-8"), digest_size=4).digest(), "little")
+                int.from_bytes(
+                    hashlib.blake2b(x.encode("utf-8"), digest_size=8).digest(),
+                    "little",
+                    signed=True,
+                )
                 for x in s
             ],
             dtype=pl.Int64,
@@ -123,14 +148,15 @@ def normalize_dim_symbol_schema(df: pl.DataFrame) -> pl.DataFrame:
     """Cast to the canonical dim_symbol schema where possible.
 
     If exchange column is missing, it will be derived from exchange_id
-    using EXCHANGE_MAP.
+    using dim_exchange.
     """
-    from pointline.config import EXCHANGE_MAP, get_exchange_name
+    from pointline.config import _ensure_dim_exchange
 
     # Derive exchange from exchange_id if missing
     if "exchange" not in df.columns and "exchange_id" in df.columns:
         # Create reverse mapping: exchange_id -> exchange name
-        id_to_exchange = {v: get_exchange_name(v) for v in EXCHANGE_MAP.values()}
+        dim_ex = _ensure_dim_exchange()
+        id_to_exchange = {row["exchange_id"]: name for name, row in dim_ex.items()}
         exchange_map = pl.DataFrame(
             {
                 "exchange_id": list(id_to_exchange.keys()),
@@ -142,9 +168,23 @@ def normalize_dim_symbol_schema(df: pl.DataFrame) -> pl.DataFrame:
         # (shouldn't happen in practice)
         df = df.with_columns(pl.col("exchange").fill_null("unknown"))
 
-    missing = [col for col in SCHEMA if col not in df.columns]
+    # Columns that are nullable (options fields).
+    # These are filled with null if absent from the input DataFrame.
+    nullable_cols = {
+        "expiry_ts_us",
+        "underlying_symbol_id",
+        "strike",
+        "put_call",
+    }
+
+    missing = [col for col in SCHEMA if col not in df.columns and col not in nullable_cols]
     if missing:
         raise ValueError(f"dim_symbol missing required columns: {missing}")
+
+    # Fill missing nullable columns with null
+    for col in nullable_cols:
+        if col not in df.columns:
+            df = df.with_columns(pl.lit(None, dtype=SCHEMA[col]).alias(col))
 
     return df.with_columns([pl.col(col).cast(dtype) for col, dtype in SCHEMA.items()])
 
@@ -192,16 +232,24 @@ def scd2_upsert(
 
     # exchange column is optional in updates - will be derived from
     # exchange_id if missing
-    required_cols = set(NATURAL_KEY_COLS + TRACKED_COLS + ("valid_from_ts",))
+    required_cols = (
+        set(NATURAL_KEY_COLS + TRACKED_COLS + ("valid_from_ts",)) - OPTIONAL_TRACKED_COLS
+    )
     missing = [col for col in required_cols if col not in updates.columns]
     if missing:
         raise ValueError(f"updates missing required columns: {missing}")
 
+    # Fill missing optional tracked columns with null
+    for col in OPTIONAL_TRACKED_COLS:
+        if col not in updates.columns:
+            updates = updates.with_columns(pl.lit(None, dtype=SCHEMA[col]).alias(col))
+
     # Derive exchange from exchange_id if missing in updates
     if "exchange" not in updates.columns and "exchange_id" in updates.columns:
-        from pointline.config import EXCHANGE_MAP, get_exchange_name
+        from pointline.config import _ensure_dim_exchange
 
-        id_to_exchange = {v: get_exchange_name(v) for v in EXCHANGE_MAP.values()}
+        dim_ex = _ensure_dim_exchange()
+        id_to_exchange = {row["exchange_id"]: name for name, row in dim_ex.items()}
         exchange_map = pl.DataFrame(
             {
                 "exchange_id": list(id_to_exchange.keys()),
@@ -218,6 +266,19 @@ def scd2_upsert(
 
     is_new = pl.col("symbol_id_cur").is_null()
     is_changed = is_new | _as_boolean_change_mask(joined)
+
+    # Incremental upsert is append-forward only. Backdated or same-timestamp
+    # changes against an existing current row can invert/zero validity windows.
+    invalid_ordering = joined.filter(
+        pl.col("symbol_id_cur").is_not_null()
+        & is_changed
+        & (pl.col("valid_from_ts") <= pl.col("valid_from_ts_cur"))
+    )
+    if not invalid_ordering.is_empty():
+        raise ValueError(
+            "scd2_upsert: updates must have valid_from_ts greater than the current version. "
+            "Use rebuild_from_history for backfills/corrections."
+        )
 
     changed_updates = joined.filter(is_changed).select(updates.columns)
 
@@ -301,10 +362,15 @@ def rebuild_from_history(
     if valid_from_col != "valid_from_ts":
         history = history.rename({valid_from_col: "valid_from_ts"})
 
-    required = set(NATURAL_KEY_COLS + TRACKED_COLS + ("valid_from_ts",))
+    required = set(NATURAL_KEY_COLS + TRACKED_COLS + ("valid_from_ts",)) - OPTIONAL_TRACKED_COLS
     missing = [c for c in required if c not in history.columns]
     if missing:
         raise ValueError(f"History missing required columns: {missing}")
+
+    # Fill missing optional tracked columns with null
+    for col in OPTIONAL_TRACKED_COLS:
+        if col not in history.columns:
+            history = history.with_columns(pl.lit(None, dtype=SCHEMA[col]).alias(col))
 
     # Sort to ensure correct windowing
     df = history.sort(list(NATURAL_KEY_COLS) + ["valid_from_ts"])
@@ -419,7 +485,7 @@ def resolve_symbol_ids(
     if "check_sortedness" in pl.DataFrame.join_asof.__code__.co_varnames:
         join_kwargs["check_sortedness"] = False
 
-    return data.sort(sort_cols).join_asof(
+    resolved = data.sort(sort_cols).join_asof(
         dim_symbol.sort([*NATURAL_KEY_COLS, "valid_from_ts"]),
         left_on=ts_col,
         right_on="valid_from_ts",
@@ -428,12 +494,47 @@ def resolve_symbol_ids(
         **join_kwargs,
     )
 
+    # Guard against matching rows that are outside the SCD2 validity window.
+    # join_asof only enforces valid_from_ts <= ts, so we additionally require
+    # ts < valid_until_ts for matched rows.
+    if "valid_until_ts" in resolved.columns:
+        stale_match = pl.col("symbol_id").is_not_null() & (
+            pl.col(ts_col) >= pl.col("valid_until_ts")
+        )
+        right_side_cols = [col for col in resolved.columns if col not in data.columns]
+        if "symbol_id" in resolved.columns and "symbol_id" not in right_side_cols:
+            right_side_cols.append("symbol_id")
+        if right_side_cols:
+            resolved = resolved.with_columns(
+                [
+                    pl.when(stale_match)
+                    .then(pl.lit(None, dtype=resolved.schema[col]))
+                    .otherwise(pl.col(col))
+                    .alias(col)
+                    for col in right_side_cols
+                ]
+            )
+
+    return resolved
+
 
 def required_update_columns() -> Sequence[str]:
-    """Columns required for an updates DataFrame."""
-    return (*NATURAL_KEY_COLS, *TRACKED_COLS, "valid_from_ts")
+    """Columns required for an updates DataFrame (excludes optional multi-asset cols)."""
+    return tuple(
+        c
+        for c in (*NATURAL_KEY_COLS, *TRACKED_COLS, "valid_from_ts")
+        if c not in OPTIONAL_TRACKED_COLS
+    )
 
 
 def required_dim_symbol_columns() -> Sequence[str]:
     """Columns required for a dim_symbol DataFrame."""
     return tuple(SCHEMA.keys())
+
+
+# ---------------------------------------------------------------------------
+# Schema registry registration
+# ---------------------------------------------------------------------------
+from pointline.schema_registry import register_schema as _register_schema  # noqa: E402
+
+_register_schema("dim_symbol", SCHEMA)

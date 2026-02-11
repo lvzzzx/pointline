@@ -6,7 +6,7 @@ from typing import Any
 
 import polars as pl
 
-from pointline.config import EXCHANGE_MAP, TYPE_MAP, get_exchange_name
+from pointline.config import TYPE_MAP, get_exchange_id, get_exchange_name
 
 
 @dataclass(frozen=True)
@@ -31,9 +31,7 @@ def _parse_iso_to_us(value: str) -> int:
 
 
 def _resolve_exchange_id(exchange: str) -> int:
-    if exchange not in EXCHANGE_MAP:
-        raise ValueError(f"Exchange '{exchange}' not in EXCHANGE_MAP; update pointline.config")
-    return EXCHANGE_MAP[exchange]
+    return get_exchange_id(exchange)
 
 
 def _instrument_state(

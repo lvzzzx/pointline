@@ -150,8 +150,8 @@ def _load_schema_from_module(table_name: str) -> dict[str, pl.DataType] | None:
     module_name_map = {
         "book_snapshot_25": "book_snapshots",
         "kline_1h": "klines",
-        "szse_l3_orders": "szse_l3_orders",
-        "szse_l3_ticks": "szse_l3_ticks",
+        "l3_orders": "l3_orders",
+        "l3_ticks": "l3_ticks",
         "dim_asset_stats": "dim_asset_stats",
         "stock_basic_cn": "stock_basic_cn",
         "validation_log": "validation_log",
@@ -164,8 +164,8 @@ def _load_schema_from_module(table_name: str) -> dict[str, pl.DataType] | None:
     schema_constant_map = {
         "book_snapshot_25": "BOOK_SNAPSHOTS_SCHEMA",
         "kline_1h": "KLINES_SCHEMA",
-        "szse_l3_orders": "SZSE_L3_ORDERS_SCHEMA",
-        "szse_l3_ticks": "SZSE_L3_TICKS_SCHEMA",
+        "l3_orders": "L3_ORDERS_SCHEMA",
+        "l3_ticks": "L3_TICKS_SCHEMA",
         "dim_asset_stats": "DIM_ASSET_STATS_SCHEMA",
         "stock_basic_cn": "STOCK_BASIC_CN_SCHEMA",
         "validation_log": "VALIDATION_LOG_SCHEMA",

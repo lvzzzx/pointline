@@ -1,6 +1,6 @@
 # Bar Aggregation Architecture
 
-**Status:** Proposed
+**Status:** ✅ Implemented | **Module:** `pointline.research.resample`
 **Date:** 2026-02-07
 **Related:** [Resampling Methods Guide](../guides/resampling-methods.md)
 

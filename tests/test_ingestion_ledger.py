@@ -1,5 +1,6 @@
 from datetime import date
 
+import polars as pl
 import pytest
 
 from pointline.io.delta_manifest_repo import DeltaManifestRepository
@@ -169,3 +170,83 @@ def test_filter_pending_without_sha_uses_metadata_fallback(manifest_repo):
         sha256="",
     )
     assert len(manifest_repo.filter_pending([changed])) == 1
+
+
+def test_update_status_preserves_created_at_us(manifest_repo):
+    """Status updates must not null-out the discovery timestamp."""
+    meta = BronzeFileMetadata(
+        vendor="tardis",
+        data_type="quotes",
+        date=date(2024, 1, 4),
+        bronze_file_path="path/to/preserve-created-at",
+        file_size_bytes=111,
+        last_modified_ts=4000,
+        sha256="f" * 64,
+    )
+
+    file_id = manifest_repo.resolve_file_id(meta)
+    before = manifest_repo.read_all().filter(pl.col("file_id") == file_id)
+    created_before = before.item(0, "created_at_us")
+    assert created_before is not None
+
+    manifest_repo.update_status(file_id, "success", meta, IngestionResult(10, 100, 200))
+
+    after = manifest_repo.read_all().filter(pl.col("file_id") == file_id)
+    created_after = after.item(0, "created_at_us")
+    assert created_after == created_before
+
+
+def test_filter_pending_with_sha_uses_fallback_for_legacy_empty_sha_success(manifest_repo):
+    """If legacy success row has empty SHA, checksum-enabled discovery should still skip."""
+    meta_legacy = BronzeFileMetadata(
+        vendor="tardis",
+        data_type="quotes",
+        date=date(2024, 1, 5),
+        bronze_file_path="path/to/legacy-no-sha",
+        file_size_bytes=222,
+        last_modified_ts=5000,
+        sha256="",
+    )
+
+    file_id = manifest_repo.resolve_file_id(meta_legacy)
+    manifest_repo.update_status(file_id, "success", meta_legacy, IngestionResult(1, 1, 1))
+
+    discovered_with_sha = BronzeFileMetadata(
+        vendor="tardis",
+        data_type="quotes",
+        date=date(2024, 1, 5),
+        bronze_file_path="path/to/legacy-no-sha",
+        file_size_bytes=222,
+        last_modified_ts=5000,
+        sha256="a" * 64,
+    )
+
+    assert manifest_repo.filter_pending([discovered_with_sha]) == []
+
+
+def test_filter_pending_with_sha_does_not_fallback_when_prior_success_has_sha(manifest_repo):
+    """Strict SHA matching must win when historical successes already have checksums."""
+    meta = BronzeFileMetadata(
+        vendor="tardis",
+        data_type="quotes",
+        date=date(2024, 1, 6),
+        bronze_file_path="path/to/strict-sha",
+        file_size_bytes=333,
+        last_modified_ts=6000,
+        sha256="b" * 64,
+    )
+
+    file_id = manifest_repo.resolve_file_id(meta)
+    manifest_repo.update_status(file_id, "success", meta, IngestionResult(1, 1, 1))
+
+    changed_content_same_stats = BronzeFileMetadata(
+        vendor="tardis",
+        data_type="quotes",
+        date=date(2024, 1, 6),
+        bronze_file_path="path/to/strict-sha",
+        file_size_bytes=333,
+        last_modified_ts=6000,
+        sha256="c" * 64,
+    )
+
+    assert len(manifest_repo.filter_pending([changed_content_same_stats])) == 1

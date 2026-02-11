@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import os
 
+from pointline.cli.commands.api_snapshot import cmd_bronze_api_capture, cmd_bronze_api_replay
 from pointline.cli.commands.bronze_reorganize import cmd_bronze_reorganize
 from pointline.cli.commands.config import cmd_config_set, cmd_config_show
 from pointline.cli.commands.delta import cmd_delta_optimize, cmd_delta_vacuum
@@ -13,6 +14,7 @@ from pointline.cli.commands.dim_asset_stats import (
     cmd_dim_asset_stats_sync,
 )
 from pointline.cli.commands.dim_symbol import (
+    cmd_dim_symbol_ingest_metadata,
     cmd_dim_symbol_sync,
     cmd_dim_symbol_sync_from_stock_basic_cn,
     cmd_dim_symbol_sync_tushare,
@@ -26,6 +28,7 @@ from pointline.cli.commands.dq import (
     cross_table_check_choices,
     dq_table_choices,
 )
+from pointline.cli.commands.exchange import cmd_exchange_init, cmd_exchange_list
 from pointline.cli.commands.ingest import cmd_ingest_discover, cmd_ingest_run
 from pointline.cli.commands.manifest import cmd_manifest_backfill_sha256, cmd_manifest_show
 from pointline.cli.commands.stock_basic_cn import cmd_stock_basic_cn_sync
@@ -49,6 +52,21 @@ def build_parser() -> argparse.ArgumentParser:
     config_set = config_sub.add_parser("set", help="Set configuration values")
     config_set.add_argument("--lake-root", required=True, help="Root path to the data lake")
     config_set.set_defaults(func=cmd_config_set)
+
+    # --- Exchange ---
+    exchange = subparsers.add_parser("exchange", help="Exchange registry utilities")
+    exchange_sub = exchange.add_subparsers(dest="exchange_command")
+
+    exchange_init = exchange_sub.add_parser("init", help="Bootstrap dim_exchange from seed data")
+    exchange_init.add_argument(
+        "--force",
+        action="store_true",
+        help="Overwrite existing dim_exchange table",
+    )
+    exchange_init.set_defaults(func=cmd_exchange_init)
+
+    exchange_list = exchange_sub.add_parser("list", help="List all exchanges")
+    exchange_list.set_defaults(func=cmd_exchange_list)
 
     # --- Symbol ---
     symbol = subparsers.add_parser("symbol", help="Symbol registry utilities")
@@ -96,6 +114,21 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Perform a full history rebuild for the symbols in the source",
     )
+    symbol_sync.add_argument(
+        "--capture-api-response",
+        action="store_true",
+        help="Capture raw API response to bronze metadata before transformation (api source only)",
+    )
+    symbol_sync.add_argument(
+        "--capture-only",
+        action="store_true",
+        help="Capture API response and exit without writing dim_symbol (api source only)",
+    )
+    symbol_sync.add_argument(
+        "--capture-root",
+        default=None,
+        help="Optional root path for captured metadata (default: LAKE_ROOT/bronze/<vendor>)",
+    )
     symbol_sync.set_defaults(func=cmd_dim_symbol_sync)
 
     symbol_sync_tushare = symbol_sub.add_parser(
@@ -122,7 +155,79 @@ def build_parser() -> argparse.ArgumentParser:
         default=str(get_table_path("dim_symbol")),
         help="Path to the dim_symbol Delta table",
     )
+    symbol_sync_tushare.add_argument(
+        "--rebuild",
+        action="store_true",
+        help="Perform a full history rebuild for the symbols in the source",
+    )
+    symbol_sync_tushare.add_argument(
+        "--capture-api-response",
+        action="store_true",
+        help="Capture raw API response to bronze metadata before transformation",
+    )
+    symbol_sync_tushare.add_argument(
+        "--capture-only",
+        action="store_true",
+        help="Capture API response and exit without writing dim_symbol",
+    )
+    symbol_sync_tushare.add_argument(
+        "--capture-root",
+        default=None,
+        help="Optional root path for captured metadata (default: LAKE_ROOT/bronze/tushare)",
+    )
     symbol_sync_tushare.set_defaults(func=cmd_dim_symbol_sync_tushare)
+
+    symbol_ingest_metadata = symbol_sub.add_parser(
+        "ingest-metadata",
+        help="Ingest captured dim_symbol metadata files using manifest replay semantics",
+    )
+    symbol_ingest_metadata.add_argument(
+        "--vendor",
+        required=True,
+        choices=["tardis", "tushare"],
+        help="Metadata vendor namespace to ingest",
+    )
+    symbol_ingest_metadata.add_argument(
+        "--bronze-root",
+        default=None,
+        help="Captured metadata root (default: LAKE_ROOT/bronze/<vendor>)",
+    )
+    symbol_ingest_metadata.add_argument(
+        "--glob",
+        default="type=dim_symbol_metadata/**/*.jsonl.gz",
+        help="Glob pattern under metadata root (default: type=dim_symbol_metadata/**/*.jsonl.gz)",
+    )
+    symbol_ingest_metadata.add_argument(
+        "--exchange",
+        default=None,
+        help="Optional exchange partition filter",
+    )
+    symbol_ingest_metadata.add_argument(
+        "--manifest-path",
+        default=str(get_table_path("ingest_manifest")),
+        help="Path to ingest_manifest (default: LAKE_ROOT/silver/ingest_manifest)",
+    )
+    symbol_ingest_metadata.add_argument(
+        "--table-path",
+        default=str(get_table_path("dim_symbol")),
+        help="Path to the dim_symbol Delta table",
+    )
+    symbol_ingest_metadata.add_argument(
+        "--rebuild",
+        action="store_true",
+        help="Perform a full history rebuild for symbols in each metadata file",
+    )
+    symbol_ingest_metadata.add_argument(
+        "--force",
+        action="store_true",
+        help="Process files even if already marked success in ingest_manifest",
+    )
+    symbol_ingest_metadata.add_argument(
+        "--effective-ts",
+        default=None,
+        help="Fallback Unix timestamp in microseconds for records missing availableSince",
+    )
+    symbol_ingest_metadata.set_defaults(func=cmd_dim_symbol_ingest_metadata)
 
     symbol_sync_stock_basic = symbol_sub.add_parser(
         "sync-from-stock-basic-cn",
@@ -156,7 +261,7 @@ def build_parser() -> argparse.ArgumentParser:
     bronze_download.add_argument(
         "--data-types",
         required=True,
-        help="Comma-separated list of data types (e.g., trades,quotes,book_snapshot_25)",
+        help="Comma-separated list of data types (e.g., trades,quotes,book_snapshot_25,options_chain,liquidations)",
     )
     bronze_download.add_argument(
         "--symbols",
@@ -203,6 +308,161 @@ def build_parser() -> argparse.ArgumentParser:
     )
     bronze_download.add_argument("--http-proxy", default=None, help="HTTP proxy URL (optional)")
     bronze_download.set_defaults(func=cmd_download)
+
+    bronze_api_capture = bronze_sub.add_parser(
+        "api-capture",
+        help="Capture API metadata to bronze and optionally replay immediately",
+    )
+    bronze_api_capture.add_argument(
+        "--vendor",
+        required=True,
+        choices=["tardis", "tushare", "coingecko"],
+        help="Vendor namespace",
+    )
+    bronze_api_capture.add_argument(
+        "--dataset",
+        required=True,
+        choices=["dim_symbol", "dim_asset_stats"],
+        help="API dataset contract to capture",
+    )
+    bronze_api_capture.add_argument(
+        "--capture-root",
+        default=None,
+        help="Optional root path for capture output (default: LAKE_ROOT/bronze/<vendor>)",
+    )
+    bronze_api_capture.add_argument(
+        "--capture-only",
+        action="store_true",
+        help="Capture API snapshot and exit without replay",
+    )
+    bronze_api_capture.add_argument(
+        "--manifest-path",
+        default=str(get_table_path("ingest_manifest")),
+        help="Path to ingest_manifest (default: LAKE_ROOT/silver/ingest_manifest)",
+    )
+    bronze_api_capture.add_argument(
+        "--table-path",
+        default=None,
+        help="Override target table path for replay",
+    )
+    bronze_api_capture.add_argument(
+        "--force",
+        action="store_true",
+        help="Reserved for compatibility (capture command always replays captured file when enabled)",
+    )
+    bronze_api_capture.add_argument(
+        "--rebuild",
+        action="store_true",
+        help="Use rebuild mode when replaying dim_symbol captures",
+    )
+    bronze_api_capture.add_argument(
+        "--effective-ts",
+        default=None,
+        help="Fallback Unix timestamp in microseconds for dim_symbol records missing availableSince",
+    )
+    bronze_api_capture.add_argument("--exchange", default=None, help="Exchange filter/partition")
+    bronze_api_capture.add_argument("--symbol", default=None, help="Instrument symbol (tardis)")
+    bronze_api_capture.add_argument(
+        "--filter",
+        default=None,
+        help="JSON filter payload for Tardis instruments endpoint",
+    )
+    bronze_api_capture.add_argument(
+        "--api-key",
+        default="",
+        help="Vendor API key (Tardis/CoinGecko as applicable)",
+    )
+    bronze_api_capture.add_argument(
+        "--token",
+        default="",
+        help="Tushare API token",
+    )
+    bronze_api_capture.add_argument(
+        "--include-delisted",
+        action="store_true",
+        help="Include delisted records for Tushare dim_symbol capture",
+    )
+    bronze_api_capture.add_argument(
+        "--mode",
+        choices=["daily", "range"],
+        default="daily",
+        help="Capture mode for dim_asset_stats (coingecko)",
+    )
+    bronze_api_capture.add_argument("--date", default=None, help="Target date for daily capture")
+    bronze_api_capture.add_argument(
+        "--start-date",
+        default=None,
+        help="Start date for range capture (YYYY-MM-DD)",
+    )
+    bronze_api_capture.add_argument(
+        "--end-date",
+        default=None,
+        help="End date for range capture (YYYY-MM-DD)",
+    )
+    bronze_api_capture.add_argument(
+        "--base-assets",
+        default=None,
+        help="Comma-separated base assets (e.g., BTC,ETH,SOL)",
+    )
+    bronze_api_capture.set_defaults(func=cmd_bronze_api_capture)
+
+    bronze_api_replay = bronze_sub.add_parser(
+        "api-replay",
+        help="Replay captured API metadata snapshots using manifest semantics",
+    )
+    bronze_api_replay.add_argument(
+        "--vendor",
+        required=True,
+        choices=["tardis", "tushare", "coingecko"],
+        help="Vendor namespace",
+    )
+    bronze_api_replay.add_argument(
+        "--dataset",
+        required=True,
+        choices=["dim_symbol", "dim_asset_stats"],
+        help="API dataset contract to replay",
+    )
+    bronze_api_replay.add_argument(
+        "--bronze-root",
+        default=None,
+        help="Captured metadata root (default: LAKE_ROOT/bronze/<vendor>)",
+    )
+    bronze_api_replay.add_argument(
+        "--glob",
+        default=None,
+        help="Optional file glob override under metadata root",
+    )
+    bronze_api_replay.add_argument(
+        "--exchange",
+        default=None,
+        help="Optional exchange partition filter",
+    )
+    bronze_api_replay.add_argument(
+        "--manifest-path",
+        default=str(get_table_path("ingest_manifest")),
+        help="Path to ingest_manifest (default: LAKE_ROOT/silver/ingest_manifest)",
+    )
+    bronze_api_replay.add_argument(
+        "--table-path",
+        default=None,
+        help="Override target table path for replay",
+    )
+    bronze_api_replay.add_argument(
+        "--force",
+        action="store_true",
+        help="Process files even if already marked success in ingest_manifest",
+    )
+    bronze_api_replay.add_argument(
+        "--rebuild",
+        action="store_true",
+        help="Use rebuild mode when replaying dim_symbol captures",
+    )
+    bronze_api_replay.add_argument(
+        "--effective-ts",
+        default=None,
+        help="Fallback Unix timestamp in microseconds for dim_symbol records missing availableSince",
+    )
+    bronze_api_replay.set_defaults(func=cmd_bronze_api_replay)
 
     bronze_reorganize = bronze_sub.add_parser(
         "reorganize", help="Reorganize vendor archives into Hive-partitioned bronze layout"
@@ -251,7 +511,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     bronze_discover.add_argument(
         "--data-type",
-        help="Filter by data type (e.g., trades, quotes, book_snapshot_25)",
+        help="Filter by data type (e.g., trades, quotes, book_snapshot_25, options_chain, liquidations)",
     )
     bronze_discover.add_argument(
         "--pending-only",
@@ -288,7 +548,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     bronze_ingest.add_argument(
         "--data-type",
-        help="Filter by data type (e.g., trades, quotes, book_snapshot_25).",
+        help="Filter by data type (e.g., trades, quotes, book_snapshot_25, options_chain, liquidations).",
     )
     bronze_ingest.add_argument(
         "--force",
@@ -321,6 +581,27 @@ def build_parser() -> argparse.ArgumentParser:
         "--no-prehook",
         action="store_true",
         help="Skip vendor-specific prehooks (e.g., archive reorganization)",
+    )
+    bronze_ingest.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Walk the full pipeline but skip writes (no side effects)",
+    )
+    bronze_ingest.add_argument(
+        "--optimize-after-ingest",
+        action="store_true",
+        help="Run delta optimize for touched exchange/date partitions after successful ingestion",
+    )
+    bronze_ingest.add_argument(
+        "--optimize-zorder",
+        default=None,
+        help="Comma-separated columns to Z-order during post-ingest optimize",
+    )
+    bronze_ingest.add_argument(
+        "--optimize-target-file-size",
+        type=int,
+        default=None,
+        help="Target file size in bytes for post-ingest optimize (optional)",
     )
     bronze_ingest.set_defaults(func=cmd_ingest_run)
 
@@ -479,6 +760,16 @@ def build_parser() -> argparse.ArgumentParser:
         default="coingecko",
         help="Data source provider (default: coingecko)",
     )
+    silver_dim_asset_stats_sync.add_argument(
+        "--capture-only",
+        action="store_true",
+        help="Capture API response and exit without replay",
+    )
+    silver_dim_asset_stats_sync.add_argument(
+        "--capture-root",
+        default=None,
+        help="Optional root path for capture output (default: LAKE_ROOT/bronze/coingecko)",
+    )
     silver_dim_asset_stats_sync.set_defaults(func=cmd_dim_asset_stats_sync)
 
     silver_dim_asset_stats_backfill = silver_dim_asset_stats_sub.add_parser(
@@ -516,6 +807,16 @@ def build_parser() -> argparse.ArgumentParser:
         choices=["coingecko", "coinmarketcap"],
         default="coingecko",
         help="Data source provider (default: coingecko)",
+    )
+    silver_dim_asset_stats_backfill.add_argument(
+        "--capture-only",
+        action="store_true",
+        help="Capture API response and exit without replay",
+    )
+    silver_dim_asset_stats_backfill.add_argument(
+        "--capture-root",
+        default=None,
+        help="Optional root path for capture output (default: LAKE_ROOT/bronze/coingecko)",
     )
     silver_dim_asset_stats_backfill.set_defaults(func=cmd_dim_asset_stats_backfill)
 
@@ -562,6 +863,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="Path to the ingest manifest table",
     )
     manifest_show.add_argument(
+        "--vendor",
+        help="Filter by vendor name",
+    )
+    manifest_show.add_argument(
         "--detailed",
         action="store_true",
         help="Show detailed file information instead of summary",
@@ -576,7 +881,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     manifest_show.add_argument(
         "--data-type",
-        help="Filter by data type (e.g., trades, quotes, book_snapshot_25)",
+        help="Filter by data type (e.g., trades, quotes, book_snapshot_25, options_chain, liquidations)",
     )
     manifest_show.add_argument(
         "--symbol",

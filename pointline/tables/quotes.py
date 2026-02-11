@@ -49,6 +49,10 @@ QUOTES_SCHEMA: dict[str, pl.DataType] = {
     "bid_sz_int": pl.Int64,
     "ask_px_int": pl.Int64,
     "ask_sz_int": pl.Int64,
+    # Multi-asset fields (Phase 2) — nullable, unused by crypto
+    "conditions": pl.Int32,  # Quote condition bitfield (nullable, equities)
+    "venue_id": pl.Int16,  # Reporting venue (nullable, equities)
+    # Lineage
     "file_id": pl.Int32,  # Delta Lake stores as Int32 (not UInt32)
     "file_line_number": pl.Int32,  # Delta Lake stores as Int32 (not UInt32)
 }
@@ -60,8 +64,13 @@ def normalize_quotes_schema(df: pl.DataFrame) -> pl.DataFrame:
     Ensures all required columns exist and have correct types.
     Drops any extra columns (e.g., original float columns, dim_symbol metadata).
     """
-    # Check for missing required columns
-    missing_required = [col for col in QUOTES_SCHEMA if col not in df.columns]
+    # Optional columns that can be missing (filled with null)
+    optional_columns = {"conditions", "venue_id"}
+
+    # Check for missing required (non-optional) columns
+    missing_required = [
+        col for col in QUOTES_SCHEMA if col not in df.columns and col not in optional_columns
+    ]
     if missing_required:
         raise ValueError(f"quotes missing required columns: {missing_required}")
 
@@ -70,8 +79,10 @@ def normalize_quotes_schema(df: pl.DataFrame) -> pl.DataFrame:
     for col, dtype in QUOTES_SCHEMA.items():
         if col in df.columns:
             casts.append(pl.col(col).cast(dtype))
+        elif col in optional_columns:
+            casts.append(pl.lit(None, dtype=dtype).alias(col))
         else:
-            raise ValueError(f"Required column {col} is missing")
+            raise ValueError(f"Required non-nullable column {col} is missing")
 
     # Cast and select only schema columns (drops extra columns)
     return df.with_columns(casts).select(list(QUOTES_SCHEMA.keys()))
@@ -388,3 +399,11 @@ def resolve_symbol_ids(
 def required_quotes_columns() -> Sequence[str]:
     """Columns required for a quotes DataFrame after normalization."""
     return tuple(QUOTES_SCHEMA.keys())
+
+
+# ---------------------------------------------------------------------------
+# Schema registry registration
+# ---------------------------------------------------------------------------
+from pointline.schema_registry import register_schema as _register_schema  # noqa: E402
+
+_register_schema("quotes", QUOTES_SCHEMA, partition_by=["exchange", "date"], has_date=True)
