@@ -3,13 +3,24 @@ from __future__ import annotations
 from datetime import date
 
 import polars as pl
+import pytest
 
+from pointline.tables.l3_orders import (
+    ALLOWED_EXCHANGES as L3_ORDERS_ALLOWED,
+)
 from pointline.tables.l3_orders import (
     L3_ORDERS_SCHEMA,
     normalize_l3_orders_schema,
     validate_l3_orders,
 )
-from pointline.tables.l3_ticks import L3_TICKS_SCHEMA, normalize_l3_ticks_schema, validate_l3_ticks
+from pointline.tables.l3_ticks import (
+    ALLOWED_EXCHANGES as L3_TICKS_ALLOWED,
+)
+from pointline.tables.l3_ticks import (
+    L3_TICKS_SCHEMA,
+    normalize_l3_ticks_schema,
+    validate_l3_ticks,
+)
 
 
 def test_normalize_l3_orders_derives_trading_phase() -> None:
@@ -108,3 +119,60 @@ def test_validate_l3_ticks_filters_invalid_tick_semantics() -> None:
     )
     validated = validate_l3_ticks(df)
     assert validated.height == 0
+
+
+def test_l3_allowed_exchanges_constants() -> None:
+    """ALLOWED_EXCHANGES must be szse and sse only."""
+    assert frozenset({"szse", "sse"}) == L3_ORDERS_ALLOWED
+    assert frozenset({"szse", "sse"}) == L3_TICKS_ALLOWED
+
+
+def test_validate_l3_orders_rejects_non_cn_exchange() -> None:
+    """l3_orders validation must raise for exchanges outside SZSE/SSE."""
+    df = pl.DataFrame(
+        {
+            "date": [date(2024, 9, 30)],
+            "exchange": ["binance-futures"],
+            "exchange_id": [2],
+            "symbol_id": [1001],
+            "ts_local_us": [1727659800000000],
+            "appl_seq_num": [1],
+            "side": [0],
+            "ord_type": [1],
+            "px_int": [10000],
+            "order_qty_int": [1],
+            "channel_no": [1],
+            "trading_phase": [2],
+            "file_id": [1],
+            "file_line_number": [1],
+        },
+        schema=L3_ORDERS_SCHEMA,
+    )
+    with pytest.raises(ValueError, match="not allowed"):
+        validate_l3_orders(df)
+
+
+def test_validate_l3_ticks_rejects_non_cn_exchange() -> None:
+    """l3_ticks validation must raise for exchanges outside SZSE/SSE."""
+    df = pl.DataFrame(
+        {
+            "date": [date(2024, 9, 30)],
+            "exchange": ["binance"],
+            "exchange_id": [1],
+            "symbol_id": [1001],
+            "ts_local_us": [1727659800000000],
+            "appl_seq_num": [1],
+            "bid_appl_seq_num": [1],
+            "offer_appl_seq_num": [2],
+            "exec_type": [0],
+            "px_int": [10000],
+            "qty_int": [1],
+            "channel_no": [1],
+            "trading_phase": [2],
+            "file_id": [1],
+            "file_line_number": [1],
+        },
+        schema=L3_TICKS_SCHEMA,
+    )
+    with pytest.raises(ValueError, match="not allowed"):
+        validate_l3_ticks(df)

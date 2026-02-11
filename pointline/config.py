@@ -142,6 +142,15 @@ TABLE_HAS_DATE = {
     "l3_ticks": True,
 }
 
+# Table-level exchange restrictions.
+# Tables listed here can only contain data from the specified exchanges.
+# L3 tables are structurally coupled to Chinese market microstructure
+# (channel_no, appl_seq_num sequencing, CN trading phases).
+TABLE_ALLOWED_EXCHANGES: dict[str, frozenset[str]] = {
+    "l3_orders": frozenset({"szse", "sse"}),
+    "l3_ticks": frozenset({"szse", "sse"}),
+}
+
 # Storage Settings
 STORAGE_OPTIONS = {
     "compression": "zstd",

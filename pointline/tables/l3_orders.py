@@ -1,8 +1,31 @@
 """CN Level 3 order placements domain logic for parsing, validation, and transformation.
 
-This module handles Quant360 CN order stream data, which represents new limit and market
+This module handles SZSE/SSE order stream data, which represents new limit and market
 orders entering the matching engine. This is fundamentally different from L2 aggregated
-data - each row represents an individual order with a unique order ID (appl_seq_num).
+data — each row represents an individual order with a unique order ID (appl_seq_num).
+
+Restricted to Chinese stock exchanges (SZSE, SSE) only. These tables are structurally
+coupled to Chinese market microstructure and cannot be used for other exchanges.
+
+Deterministic Ordering
+----------------------
+The replay key for L3 orders is ``(channel_no, appl_seq_num)``, NOT ``ts_local_us``.
+
+``appl_seq_num`` properties:
+- Scope: per-channel (SZSE stocks, convertible bonds, and funds each use separate
+  channels; SSE convertible bonds use yet another channel)
+- Starts at 1 each trading day
+- Unique and contiguous within a channel for a given trading day — gaps indicate
+  message loss
+- NOT unique across channels — two channels can both have appl_seq_num=1
+
+``channel_no`` identifies the independent exchange channel. Within a single channel,
+``appl_seq_num`` provides a total order over all events (orders and ticks share the
+same sequence space). Cross-channel ordering falls back to ``ts_local_us``.
+
+For intra-channel, single day:  sort by ``(channel_no, appl_seq_num)``
+For intra-channel, multi-day:   sort by ``(date, channel_no, appl_seq_num)``
+For cross-channel merge:        sort by ``(ts_local_us, file_id, file_line_number)``
 """
 
 from __future__ import annotations
@@ -28,6 +51,11 @@ from pointline.tables.cn_trading_phase import (
 )
 from pointline.validation_utils import with_expected_exchange_id
 
+# L3 tables are exclusive to Chinese stock exchanges (SZSE, SSE).
+# These tables use channel_no, appl_seq_num sequencing, and CN trading phases
+# that are structurally coupled to Chinese market microstructure.
+ALLOWED_EXCHANGES: frozenset[str] = frozenset({"szse", "sse"})
+
 # Required metadata fields for ingestion
 REQUIRED_METADATA_FIELDS: set[str] = set()
 
@@ -45,7 +73,7 @@ L3_ORDERS_SCHEMA: dict[str, pl.DataType] = {
     "exchange_id": pl.Int16,
     "symbol_id": pl.Int64,
     "ts_local_us": pl.Int64,  # Arrival time in UTC (converted from Asia/Shanghai TransactTime)
-    "appl_seq_num": pl.Int64,  # Order ID (unique per day per symbol)
+    "appl_seq_num": pl.Int64,  # Order ID (unique per channel per day, starts at 1)
     "side": pl.UInt8,  # 0=buy, 1=sell
     "ord_type": pl.UInt8,  # 0=market, 1=limit
     "px_int": pl.Int64,  # Fixed-point encoded (price / price_increment)
@@ -109,6 +137,14 @@ def validate_l3_orders(df: pl.DataFrame) -> pl.DataFrame:
     missing = [c for c in required if c not in df.columns]
     if missing:
         raise ValueError(f"validate_l3_orders: missing required columns: {missing}")
+
+    # Reject non-Chinese exchanges (l3_orders is SZSE/SSE only)
+    bad_exchanges = set(df["exchange"].unique().to_list()) - ALLOWED_EXCHANGES
+    if bad_exchanges:
+        raise ValueError(
+            f"validate_l3_orders: exchange(s) {sorted(bad_exchanges)} not allowed. "
+            f"l3_orders is restricted to {sorted(ALLOWED_EXCHANGES)}"
+        )
 
     df_with_expected = with_expected_exchange_id(df)
 

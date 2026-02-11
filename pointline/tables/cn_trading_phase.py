@@ -26,18 +26,20 @@ def derive_cn_trading_phase_expr(
     - Rules are intentionally conservative; unmatched timestamps become UNKNOWN.
     """
 
+    # Convert UTC → CST time-of-day (Asia/Shanghai = UTC+8, no DST)
     tod_us = ((pl.col(ts_col) + _CST_OFFSET_US) % _DAY_US).alias("_tod_us")
 
-    open_start = 9 * _HOUR_US + 15 * _MIN_US
-    open_end = 9 * _HOUR_US + 25 * _MIN_US
+    # All boundaries below are CST (China Standard Time) local times.
+    open_start = 9 * _HOUR_US + 15 * _MIN_US  # 09:15 CST
+    open_end = 9 * _HOUR_US + 25 * _MIN_US  # 09:25 CST
 
-    am_cont_start = 9 * _HOUR_US + 30 * _MIN_US
-    am_cont_end = 11 * _HOUR_US + 30 * _MIN_US
-    pm_cont_start = 13 * _HOUR_US
-    pm_cont_end = 14 * _HOUR_US + 57 * _MIN_US
+    am_cont_start = 9 * _HOUR_US + 30 * _MIN_US  # 09:30 CST
+    am_cont_end = 11 * _HOUR_US + 30 * _MIN_US  # 11:30 CST
+    pm_cont_start = 13 * _HOUR_US  # 13:00 CST
+    pm_cont_end = 14 * _HOUR_US + 57 * _MIN_US  # 14:57 CST
 
-    close_start = 14 * _HOUR_US + 57 * _MIN_US
-    close_end = 15 * _HOUR_US
+    close_start = 14 * _HOUR_US + 57 * _MIN_US  # 14:57 CST
+    close_end = 15 * _HOUR_US  # 15:00 CST
 
     cn_exchanges = ["szse", "sse"]
     return (

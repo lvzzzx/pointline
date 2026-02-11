@@ -17,7 +17,13 @@ from zoneinfo import ZoneInfo
 
 import polars as pl
 
-from pointline.config import get_bronze_root, get_exchange_id, get_exchange_timezone, get_table_path
+from pointline.config import (
+    TABLE_ALLOWED_EXCHANGES,
+    get_bronze_root,
+    get_exchange_id,
+    get_exchange_timezone,
+    get_table_path,
+)
 from pointline.dim_symbol import check_coverage
 from pointline.io.protocols import (
     BronzeFileMetadata,
@@ -298,6 +304,27 @@ class GenericIngestionService(BaseService):
             df = df.with_columns(
                 pl.col("exchange").replace_strict(exchange_map).cast(pl.Int16).alias("exchange_id")
             )
+
+            # 3b. Check table-level exchange restrictions (e.g., l3_* → szse/sse only)
+            allowed = TABLE_ALLOWED_EXCHANGES.get(self.table_name)
+            if allowed is not None:
+                disallowed = sorted(set(unique_exchanges) - allowed)
+                if disallowed:
+                    error_msg = (
+                        f"Table '{self.table_name}' is restricted to exchanges "
+                        f"{sorted(allowed)}, got: {disallowed}"
+                    )
+                    logger.error(error_msg)
+                    result = IngestionResult(
+                        row_count=0,
+                        ts_local_min_us=0,
+                        ts_local_max_us=0,
+                        error_message=error_msg,
+                        failure_reason="exchange_not_allowed",
+                    )
+                    if not dry_run:
+                        self._write_validation_log(meta, file_id, result, start_time_ms)
+                    return result
 
             # 4. Validate date partition alignment against exchange-local timezone
             date_alignment_ok, date_alignment_error = self._validate_date_partition_alignment(

@@ -1,8 +1,8 @@
 # Chinese Stock L3 MFT Feature Engineering Guide
 
-**Persona:** Quant Researcher (MFT)  
-**Data Source:** SZSE/SSE Level 3 (l3_orders, l3_ticks)  
-**Scope:** Opening/Closing Call Auctions + Continuous Trading  
+**Persona:** Quant Researcher (MFT)
+**Data Source:** SZSE/SSE Level 3 (l3_orders, l3_ticks)
+**Scope:** Opening/Closing Call Auctions + Continuous Trading
 **Version:** 1.0
 
 ---
@@ -50,6 +50,47 @@ This guide provides a comprehensive feature engineering framework for mid-freque
 - Price limits create predictable liquidity dynamics near bounds
 - T+1 creates inventory effects and overnight risk asymmetry
 - Stamp duty asymmetry makes long-short strategies directionally biased in cost
+
+### 1.3 Channel Architecture & Deterministic Sequencing
+
+L3 data from SZSE/SSE is organized into **independent channels**. Each channel carries a distinct instrument class and maintains its own sequence numbering.
+
+| Exchange | Channel Scope | Notes |
+|----------|--------------|-------|
+| SZSE | Stocks | Main board equities |
+| SZSE | Convertible Bonds | Separate channel from stocks |
+| SZSE | Funds (ETFs) | Separate channel from stocks and bonds |
+| SSE | Convertible Bonds | SSE's own channel |
+
+#### `appl_seq_num` Properties
+
+| Property | Behavior |
+|----------|----------|
+| Scope | Per-channel (not per-symbol, not global) |
+| Starting value | 1 |
+| Uniqueness | Unique within a channel for a given trading day |
+| Contiguity | Continuous within a channel — gaps indicate message loss |
+| Daily reset | Yes — resets to 1 at the start of each trading day |
+| Cross-channel | NOT unique across channels |
+
+#### Shared Sequence Space
+
+Orders (`l3_orders`) and ticks (`l3_ticks`) share the same `(channel_no, appl_seq_num)` sequence within a channel. A tick's `bid_appl_seq_num` / `offer_appl_seq_num` reference the `appl_seq_num` of the originating orders.
+
+This means within a single channel, the combined stream of orders and ticks forms a **total order** over all events.
+
+#### Deterministic Replay Keys
+
+Since `appl_seq_num` resets to 1 each trading day, multi-day replay must include `date` in the sort key. `ts_local_us` is an absolute UTC epoch and naturally orders across days.
+
+| Scenario | Sort Key | Rationale |
+|----------|----------|-----------|
+| Intra-channel, single day | `(channel_no, appl_seq_num)` | Exchange-native total order within one day |
+| Intra-channel, multi-day | `(date, channel_no, appl_seq_num)` | `appl_seq_num` resets daily; `date` disambiguates |
+| Cross-channel merge | `(ts_local_us, file_id, file_line_number)` | No cross-channel sequence; fall back to arrival time |
+| Cross-table merge (orders + ticks) | `(ts_local_us, file_id, file_line_number)` | Orders and ticks are separate feeds |
+
+**Critical:** `appl_seq_num` alone is meaningless without `channel_no` and `date`. Two channels can both have `appl_seq_num=1` at the same time, and the same channel reuses `appl_seq_num=1` on different days.
 
 ---
 
@@ -110,7 +151,7 @@ call_ask_pressure_ratio = cum_ask_qty / (cum_bid_qty + cum_ask_qty)
 - Ratio ≈ 0.5: Balanced, less directional predictability
 
 **Implementation Notes:**
-- Use `szse_l3_orders` with `order_type` filter
+- Use `l3_orders` with `order_type` filter
 - Calculate cumulatively from 09:15-09:25
 - Snap at 09:20 (pre-commitment) and 09:25 (final)
 
@@ -128,7 +169,7 @@ call_cancel_ratio = cancelled_qty / submitted_qty
 
 # Acceleration pattern
 cancel_09_15_09_16 = cancels in first minute
-cancel_09_19_09_20 = cancels in last minute  
+cancel_09_19_09_20 = cancels in last minute
 call_cancel_acceleration = cancel_09_19_09_20 / cancel_09_15_09_16
 ```
 
@@ -224,7 +265,7 @@ open_quote_stability = 1 / (num_quote_changes_09_30_00_to_09_30_30)
 **Formula:**
 ```python
 auction_volume_decay = volume_09_30_09_35 / auction_volume
-auction_price_retest_distance = min(abs(high_09_30_09_35 - auction_price), 
+auction_price_retest_distance = min(abs(high_09_30_09_35 - auction_price),
                                      abs(low_09_30_09_35 - auction_price))
 auction_vwap_divergence = (vwap_09_30_09_35 - auction_price) / auction_price
 ```
@@ -351,7 +392,7 @@ large_trade_participation = large_trade_volume / total_volume
 for each filled_trade:
     order = lookup_order(trade.order_id)
     time_to_fill = trade.ts_exch_us - order.ts_exch_us
-    
+
 fill_rate_proxy = mean(time_to_fill)
 fill_rate_percentile_95 = percentile_95(time_to_fill)
 queue_depth_estimate = time_to_fill * arrival_rate
@@ -376,7 +417,7 @@ Volume/          ___
 Volatility      /   \        ___
 Profile        /     \      /   \
               /       \____/     \___
-             
+
            09:30   11:30  13:00  14:57  15:00
            [High]  [Low]  [Rise] [High] [Close]
 ```
@@ -497,7 +538,7 @@ There is no continuous overnight price formation. This creates a "pressure accum
 # Day T close auction price
 close_auction_price_t = auction_price(day=T, session="close")
 
-# Day T+1 open auction price  
+# Day T+1 open auction price
 open_auction_price_t1 = auction_price(day=T+1, session="open")
 
 overnight_gap_bps = (open_auction_price_t1 - close_auction_price_t) / close_auction_price_t * 10000
@@ -708,7 +749,7 @@ SESSION_BOUNDS = {
     "open_call_start": 1_15_00_000_000,          # 09:15 CST
     "open_call_uncancel_end": 1_20_00_000_000,   # 09:20 cutoff
     "open_call_end": 1_25_00_000_000,            # 09:25 opening
-    
+
     # Continuous Trading
     "morning_start": 1_30_00_000_000,            # 09:30
     "morning_end": 3_30_00_000_000,              # 11:30
@@ -740,75 +781,76 @@ def extract_opening_auction_features(
 ) -> dict:
     """
     Extract PIT-safe opening auction features.
-    
+
     Feature Time: 09:25 (auction close)
     Valid Lookback: 09:15-09:25
     Valid Prediction: 09:30 onwards
     """
     # Load L3 data
-    orders = query.szse_l3_orders("szse", symbol_id, date, date, decoded=True)
-    ticks = query.szse_l3_ticks("szse", symbol_id, date, date, decoded=True)
-    
-    # Sort for deterministic PIT ordering
+    orders = query.l3_orders("szse", symbol_id, date, date, decoded=True)
+    ticks = query.l3_ticks("szse", symbol_id, date, date, decoded=True)
+
+    # Sort for deterministic PIT ordering (cross-table merge uses arrival time)
+    # For intra-channel replay, use: .sort(["channel_no", "appl_seq_num"])
     orders = orders.sort(["ts_local_us", "file_id", "file_line_number"])
     ticks = ticks.sort(["ts_local_us", "file_id", "file_line_number"])
-    
+
     # === AUCTION PERIOD FILTERING ===
     def time_of_day(ts):
         return ts % 86_400_000_000
-    
+
     open_call_orders = orders.filter(
         (pl.col("ts_exch_us").mod(86_400_000_000) >= SESSION_BOUNDS["open_call_start"]) &
         (pl.col("ts_exch_us").mod(86_400_000_000) <= SESSION_BOUNDS["open_call_end"])
     )
-    
+
     # === PHASE SEPARATION ===
     # Cancellable phase (09:15-09:20)
     cancellable = open_call_orders.filter(
         pl.col("ts_exch_us").mod(86_400_000_000) < SESSION_BOUNDS["open_call_uncancel_end"]
     )
-    
+
     # Non-cancellable phase (09:20-09:25)
     locked = open_call_orders.filter(
         pl.col("ts_exch_us").mod(86_400_000_000) >= SESSION_BOUNDS["open_call_uncancel_end"]
     )
-    
+
     # === FEATURE CALCULATION ===
-    
+
     # 1. Cancellation Pattern
     cancel_features = cancellable.group_by("order_type").agg(
         pl.col("qty").sum().alias("total_qty")
     )
-    
+
     # Pivot to get cancel ratio
     cancel_summary = cancel_features.pivot(
         values="total_qty",
         index="order_type",
         columns="order_type"
     )
-    
+
     # order_type: 0=limit, 1=market, 2=cancel
     call_cancel_ratio = (
         pl.when(pl.col("2").is_not_null())
         .then(pl.col("2") / (pl.col("0").fill_null(0) + pl.col("1").fill_null(0) + pl.col("2")))
         .otherwise(0.0)
     )
-    
+
     # 2. Bid/Ask Pressure
     bid_pressure = locked.filter(pl.col("side") == 0).select(pl.col("qty").sum()).item() or 0
     ask_pressure = locked.filter(pl.col("side") == 1).select(pl.col("qty").sum()).item() or 0
-    
+
     call_bid_pressure_ratio = bid_pressure / (bid_pressure + ask_pressure) if (bid_pressure + ask_pressure) > 0 else 0.5
-    
+
     # 3. Auction Volume
     auction_trades = ticks.filter(
         (pl.col("ts_exch_us").mod(86_400_000_000) <= SESSION_BOUNDS["open_call_end"]) &
         (pl.col("tick_type") == 0)  # Fills only
     )
-    
+
     auction_volume = auction_trades.select(pl.col("qty").sum()).item() or 0
     auction_notional = auction_trades.select((pl.col("price") * pl.col("qty")).sum()).item() or 0
-    
+
     return {
         "call_cancel_ratio": call_cancel_ratio,
         "call_bid_pressure_ratio": call_bid_pressure_ratio,
@@ -831,9 +873,9 @@ def create_session_aware_bars(
     """
     Create OHLCV bars with Chinese session metadata.
     """
-    ticks = query.szse_l3_ticks("szse", symbol_id, date, date, decoded=True)
+    ticks = query.l3_ticks("szse", symbol_id, date, date, decoded=True)
     ticks = ticks.filter(pl.col("tick_type") == 0)  # Fills only
-    
+
     # Add session phase column
     def get_session_phase(ts):
         tod = ts % 86_400_000_000
@@ -854,11 +896,11 @@ def create_session_aware_bars(
             .then(pl.lit("closing_auction"))
             .otherwise(pl.lit("unknown"))
         )
-    
+
     ticks = ticks.with_columns([
         get_session_phase(pl.col("ts_exch_us")).alias("session_phase"),
     ])
-    
+
     # Aggregate to bars
     bars = ticks.group_by_dynamic(
         "ts_local_us",
@@ -876,7 +918,7 @@ def create_session_aware_bars(
         pl.col("session_phase").last().alias("session_phase"),
         pl.len().alias("trade_count"),
     ])
-    
+
     # Add time features
     bars = bars.with_columns([
         ((pl.col("ts_local_us") / 1_000_000).cast(pl.Int64).cast(pl.Datetime("us"))
@@ -884,7 +926,7 @@ def create_session_aware_bars(
         ((pl.col("ts_local_us") / 1_000_000).cast(pl.Int64).cast(pl.Datetime("us"))
          .dt.minute().alias("minute")),
     ])
-    
+
     return bars
 ```
 
@@ -899,56 +941,56 @@ def extract_close_to_open_features(
 ) -> dict:
     """
     Extract features comparing Day T closing auction with Day T+1 opening auction.
-    
+
     Feature Time: Day T+1 09:25 (after opening auction completes)
-    Lookback Windows: 
+    Lookback Windows:
         - Day T close: 14:57-15:00
         - Day T+1 open: 09:15-09:25
     """
     from datetime import datetime, timedelta
-    
+
     # Calculate T+1 date
     date_t1 = (datetime.strptime(date_t, "%Y-%m-%d") + timedelta(days=1)).strftime("%Y-%m-%d")
-    
+
     # Load closing auction data (Day T)
-    orders_t = query.szse_l3_orders("szse", symbol_id, date_t, date_t, decoded=True)
-    ticks_t = query.szse_l3_ticks("szse", symbol_id, date_t, date_t, decoded=True)
-    
+    orders_t = query.l3_orders("szse", symbol_id, date_t, date_t, decoded=True)
+    ticks_t = query.l3_ticks("szse", symbol_id, date_t, date_t, decoded=True)
+
     # Load opening auction data (Day T+1)
-    orders_t1 = query.szse_l3_orders("szse", symbol_id, date_t1, date_t1, decoded=True)
-    ticks_t1 = query.szse_l3_ticks("szse", symbol_id, date_t1, date_t1, decoded=True)
-    
+    orders_t1 = query.l3_orders("szse", symbol_id, date_t1, date_t1, decoded=True)
+    ticks_t1 = query.l3_ticks("szse", symbol_id, date_t1, date_t1, decoded=True)
+
     # Filter closing auction (Day T)
     close_orders = orders_t.filter(
         (pl.col("ts_exch_us").mod(86_400_000_000) >= SESSION_BOUNDS["close_call_start"]) &
         (pl.col("ts_exch_us").mod(86_400_000_000) <= SESSION_BOUNDS["close_call_end"])
     ).sort(["ts_local_us", "file_id", "file_line_number"])
-    
+
     close_ticks = ticks_t.filter(
         (pl.col("ts_exch_us").mod(86_400_000_000) >= SESSION_BOUNDS["close_call_start"]) &
         (pl.col("ts_exch_us").mod(86_400_000_000) <= SESSION_BOUNDS["close_call_end"]) &
         (pl.col("tick_type") == 0)  # Fills only
     ).sort(["ts_local_us", "file_id", "file_line_number"])
-    
+
     # Filter opening auction (Day T+1)
     open_orders = orders_t1.filter(
         (pl.col("ts_exch_us").mod(86_400_000_000) >= SESSION_BOUNDS["open_call_start"]) &
         (pl.col("ts_exch_us").mod(86_400_000_000) <= SESSION_BOUNDS["open_call_end"])
     ).sort(["ts_local_us", "file_id", "file_line_number"])
-    
+
     open_ticks = ticks_t1.filter(
         (pl.col("ts_exch_us").mod(86_400_000_000) >= SESSION_BOUNDS["open_call_start"]) &
         (pl.col("ts_exch_us").mod(86_400_000_000) <= SESSION_BOUNDS["open_call_end"]) &
         (pl.col("tick_type") == 0)
     ).sort(["ts_local_us", "file_id", "file_line_number"])
-    
+
     # === AUCTION PRICE EXTRACTION ===
     close_auction_price = close_ticks.select(pl.col("price").last()).item()
     open_auction_price = open_ticks.select(pl.col("price").last()).item()
-    
+
     # === OVERNIGHT GAP CALCULATION ===
     overnight_gap_bps = (open_auction_price - close_auction_price) / close_auction_price * 10000
-    
+
     # === IMBALANCE CALCULATIONS ===
     # Closing imbalance (Day T)
     close_bid_pressure = close_orders.filter(pl.col("side") == 0).select(pl.col("qty").sum()).item() or 0
@@ -956,56 +998,56 @@ def extract_close_to_open_features(
     close_imbalance = close_bid_pressure - close_ask_pressure
     close_volume = close_ticks.select(pl.col("qty").sum()).item() or 0
     close_imbalance_ratio = close_imbalance / close_volume if close_volume > 0 else 0
-    
+
     # Opening imbalance (Day T+1)
     open_bid_pressure = open_orders.filter(pl.col("side") == 0).select(pl.col("qty").sum()).item() or 0
     open_ask_pressure = open_orders.filter(pl.col("side") == 1).select(pl.col("qty").sum()).item() or 0
     open_imbalance = open_bid_pressure - open_ask_pressure
     open_volume = open_ticks.select(pl.col("qty").sum()).item() or 0
     open_imbalance_ratio = open_imbalance / open_volume if open_volume > 0 else 0
-    
+
     # === PERSISTENCE METRICS ===
     imbalance_carryover = open_imbalance / close_imbalance if close_imbalance != 0 else 0
     imbalance_direction_consistent = (close_imbalance > 0) == (open_imbalance > 0)
-    
+
     # === VOLUME RELATIONSHIP ===
     volume_ratio_close_to_open = open_volume / close_volume if close_volume > 0 else 0
-    
+
     # === MOMENTUM SCORE ===
     auction_momentum_raw = (1 if close_imbalance > 0 else -1) * (1 if open_imbalance > 0 else -1)
-    
+
     # === GAP CONFIRMATION ===
     gap_confirmation = overnight_gap_bps * open_imbalance_ratio
-    
+
     # === T+1 INVENTORY PRESSURE ===
     stuck_buyer_volume = max(0, close_imbalance)
     inventory_pressure_proxy = stuck_buyer_volume / open_volume if open_volume > 0 else 0
-    
+
     return {
         # Price gap
         "close_auction_price": close_auction_price,
         "open_auction_price_t1": open_auction_price,
         "overnight_gap_bps": overnight_gap_bps,
-        
+
         # Imbalances
         "close_imbalance": close_imbalance,
         "close_imbalance_ratio": close_imbalance_ratio,
         "open_imbalance_t1": open_imbalance,
         "open_imbalance_ratio_t1": open_imbalance_ratio,
-        
+
         # Persistence
         "imbalance_carryover": imbalance_carryover,
         "imbalance_direction_consistent": imbalance_direction_consistent,
-        
+
         # Volume
         "close_auction_volume": close_volume,
         "open_auction_volume_t1": open_volume,
         "volume_ratio_close_to_open": volume_ratio_close_to_open,
-        
+
         # Momentum & Sentiment
         "auction_momentum_raw": auction_momentum_raw,
         "gap_confirmation": gap_confirmation,
-        
+
         # Inventory pressure
         "inventory_pressure_proxy": inventory_pressure_proxy,
     }
@@ -1020,17 +1062,17 @@ def calculate_imbalance_persistence(
     Calculate rolling correlation of imbalance persistence over multiple days.
     """
     from datetime import datetime, timedelta
-    
+
     close_imbalances = []
     open_imbalances = []
-    
+
     current = datetime.strptime(start_date, "%Y-%m-%d")
     end = datetime.strptime(end_date, "%Y-%m-%d")
-    
+
     while current < end:
         date_str = current.strftime("%Y-%m-%d")
         next_date_str = (current + timedelta(days=1)).strftime("%Y-%m-%d")
-        
+
         try:
             features = extract_close_to_open_features(symbol_id, date_str)
             close_imbalances.append(features["close_imbalance_ratio"])
@@ -1038,9 +1080,9 @@ def calculate_imbalance_persistence(
         except Exception:
             # Skip dates with missing data
             pass
-        
+
         current += timedelta(days=1)
-    
+
     # Calculate correlation
     if len(close_imbalances) > 10:
         corr = pl.DataFrame({
@@ -1070,8 +1112,10 @@ def calculate_imbalance_persistence(
 
 ### 5.2 Determinism Checklist
 
+- [ ] Intra-channel single-day: sort by `(channel_no, appl_seq_num)`
+- [ ] Intra-channel multi-day: sort by `(date, channel_no, appl_seq_num)` — `appl_seq_num` resets daily
+- [ ] Cross-channel / cross-table merge: sort by `(ts_local_us, file_id, file_line_number)`
 - [ ] Primary timeline: `ts_local_us` (not `ts_exch_us` for cross-venue)
-- [ ] Tie-break sort: `ts_local_us`, `file_id`, `file_line_number`
 - [ ] As-of joins: `strategy="backward"` only
 - [ ] Forward transforms: Labels only, never features
 - [ ] Bar boundaries: Fixed `closed` and `label` parameters
@@ -1084,27 +1128,27 @@ def test_pit_safety():
     """Verify no lookahead in feature generation."""
     symbol = "000001"
     date = "2024-09-30"
-    
+
     # Generate features at 09:25
     features_0925 = extract_features(symbol, date, as_of_time="09:25:00")
-    
+
     # Should NOT change when we add future data
     features_0925_with_future = extract_features(
-        symbol, date, 
+        symbol, date,
         as_of_time="09:25:00",
         include_data_until="09:30:00"  # This should be ignored
     )
-    
+
     assert features_0925 == features_0925_with_future, "PIT violation detected!"
 
 def test_auction_boundary():
     """Verify auction period isolation."""
     symbol = "000001"
     date = "2024-09-30"
-    
+
     # Opening auction features
     auction_features = extract_opening_auction_features(symbol, date)
-    
+
     # Verify no continuous trading data included
     assert auction_features["max_timestamp"] <= SESSION_BOUNDS["open_call_end"]
 
@@ -1112,33 +1156,33 @@ def test_close_to_open_pit():
     """Verify close-to-open features don't leak future information."""
     symbol = "000001"
     date_t = "2024-09-30"
-    
+
     # Extract features using only Day T close and Day T+1 open
     features = extract_close_to_open_features(symbol, date_t)
-    
+
     # Feature timestamp should be Day T+1 09:25 (after opening auction)
     assert features["feature_timestamp"] >= datetime(2024, 10, 1, 1, 25, 0)
-    
+
     # Gap calculation should NOT use any T+1 continuous trading data
     # (only opening auction 09:15-09:25)
     assert "09:30" not in features["data_sources_used"]
-    
+
     # Persistence calculation should use historical window excluding current day
     persistence = calculate_imbalance_persistence(symbol, "2024-09-01", "2024-09-30")
     # Should not include Sept 30 data in its own persistence calculation
-    
+
 def test_overnight_gap_label_separation():
     """Ensure gap prediction features are separated from gap outcome labels."""
     symbol = "000001"
     date_t = "2024-09-30"
-    
+
     # Features (available at 09:25 on T+1)
     features = extract_close_to_open_features(symbol, date_t)
     overnight_gap_bps = features["overnight_gap_bps"]  # This is a feature (known at 09:25)
-    
+
     # Label (forward-looking, only known after 09:30)
     post_gap_return_30min = calculate_return("09:30", "10:00")  # This is a label
-    
+
     # Never use post_gap_return as a feature for overnight_gap prediction
     assert "post_gap_return" not in features.keys()
 ```
@@ -1168,10 +1212,10 @@ def calculate_break_even_threshold(direction: str, holding_period: str) -> float
         "long": 0.00027,   # 2.7 bps
         "short": 0.00127,  # 12.7 bps
     }
-    
+
     # Round-trip cost
     round_trip_cost = costs["long"] + costs["short"]  # 15.4 bps
-    
+
     # Break-even alpha per trade
     if direction == "long_only":
         return costs["long"]  # 2.7 bps
@@ -1179,7 +1223,7 @@ def calculate_break_even_threshold(direction: str, holding_period: str) -> float
         return costs["short"]  # 12.7 bps
     elif direction == "long_short":
         return round_trip_cost / 2  # 7.7 bps average
-    
+
 # Example: Auction imbalance factor
 # Requires 7.7 bps average alpha per trade to break even
 # With 2 trades/day (open/close), need 15.4 bps daily alpha
@@ -1200,11 +1244,11 @@ def estimate_slippage_l3(
     """
     # Load book snapshot at timestamp
     book = load_book_snapshot(symbol_id, timestamp_us)
-    
+
     remaining = target_qty
     total_cost = 0.0
     levels_consumed = 0
-    
+
     for level in range(depth_levels):
         if side == "buy":
             price = book[f"ask_price_{level}"]
@@ -1212,23 +1256,23 @@ def estimate_slippage_l3(
         else:
             price = book[f"bid_price_{level}"]
             available = book[f"bid_qty_{level}"]
-        
+
         take = min(remaining, available)
         total_cost += take * price
         remaining -= take
         levels_consumed += 1
-        
+
         if remaining <= 0:
             break
-    
+
     avg_price = total_cost / target_qty if target_qty > 0 else 0
     mid_price = (book["bid_price_0"] + book["ask_price_0"]) / 2
-    
+
     if side == "buy":
         slippage_bps = (avg_price - mid_price) / mid_price * 10000
     else:
         slippage_bps = (mid_price - avg_price) / mid_price * 10000
-    
+
     return {
         "slippage_bps": slippage_bps,
         "avg_fill_price": avg_price,
@@ -1396,6 +1440,6 @@ from pointline.dim_symbol import read_dim_symbol_table
 
 ---
 
-**Document Version:** 1.0  
-**Last Updated:** 2024  
+**Document Version:** 1.0
+**Last Updated:** 2024
 **Owner:** Quant Research Team

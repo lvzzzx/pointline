@@ -1,12 +1,35 @@
 """CN Level 3 tick executions and cancellations domain logic for parsing, validation, and transformation.
 
-This module handles Quant360 CN tick stream data, which represents trade executions and
-order cancellations. Each tick links back to the original orders via bid_appl_seq_num and
-offer_appl_seq_num, enabling full order book reconstruction.
+This module handles SZSE/SSE tick stream data, which represents trade executions and
+order cancellations. Each tick links back to the original orders via bid_appl_seq_num
+and offer_appl_seq_num, enabling full order book reconstruction.
+
+Restricted to Chinese stock exchanges (SZSE, SSE) only. These tables are structurally
+coupled to Chinese market microstructure and cannot be used for other exchanges.
 
 Tick Types:
 - Executions (exec_type=0): Price > 0, both bid_appl_seq_num and offer_appl_seq_num set
 - Cancellations (exec_type=1): Price = 0, one of bid_appl_seq_num or offer_appl_seq_num set
+
+Deterministic Ordering
+----------------------
+The replay key for L3 ticks is ``(channel_no, appl_seq_num)``, NOT ``ts_local_us``.
+
+``appl_seq_num`` properties:
+- Scope: per-channel (SZSE stocks, convertible bonds, and funds each use separate
+  channels; SSE convertible bonds use yet another channel)
+- Starts at 1 each trading day
+- Unique and contiguous within a channel for a given trading day — gaps indicate
+  message loss
+- NOT unique across channels — two channels can both have appl_seq_num=1
+
+Orders and ticks share the same ``(channel_no, appl_seq_num)`` sequence space within
+a channel. A tick's ``bid_appl_seq_num`` / ``offer_appl_seq_num`` reference the
+``appl_seq_num`` of the originating orders in the l3_orders table.
+
+For intra-channel, single day:  sort by ``(channel_no, appl_seq_num)``
+For intra-channel, multi-day:   sort by ``(date, channel_no, appl_seq_num)``
+For cross-channel merge:        sort by ``(ts_local_us, file_id, file_line_number)``
 """
 
 from __future__ import annotations
@@ -32,6 +55,11 @@ from pointline.tables.cn_trading_phase import (
 )
 from pointline.validation_utils import with_expected_exchange_id
 
+# L3 tables are exclusive to Chinese stock exchanges (SZSE, SSE).
+# These tables use channel_no, appl_seq_num sequencing, and CN trading phases
+# that are structurally coupled to Chinese market microstructure.
+ALLOWED_EXCHANGES: frozenset[str] = frozenset({"szse", "sse"})
+
 # Required metadata fields for ingestion
 REQUIRED_METADATA_FIELDS: set[str] = set()
 
@@ -49,7 +77,7 @@ L3_TICKS_SCHEMA: dict[str, pl.DataType] = {
     "exchange_id": pl.Int16,
     "symbol_id": pl.Int64,
     "ts_local_us": pl.Int64,  # Arrival time in UTC (converted from Asia/Shanghai TransactTime)
-    "appl_seq_num": pl.Int64,  # Tick ID (unique per day per symbol)
+    "appl_seq_num": pl.Int64,  # Tick ID (unique per channel per day, starts at 1)
     "bid_appl_seq_num": pl.Int64,  # Buy order ID (0 if N/A)
     "offer_appl_seq_num": pl.Int64,  # Sell order ID (0 if N/A)
     "exec_type": pl.UInt8,  # 0=fill, 1=cancel
@@ -112,6 +140,14 @@ def validate_l3_ticks(df: pl.DataFrame) -> pl.DataFrame:
     missing = [c for c in required if c not in df.columns]
     if missing:
         raise ValueError(f"validate_l3_ticks: missing required columns: {missing}")
+
+    # Reject non-Chinese exchanges (l3_ticks is SZSE/SSE only)
+    bad_exchanges = set(df["exchange"].unique().to_list()) - ALLOWED_EXCHANGES
+    if bad_exchanges:
+        raise ValueError(
+            f"validate_l3_ticks: exchange(s) {sorted(bad_exchanges)} not allowed. "
+            f"l3_ticks is restricted to {sorted(ALLOWED_EXCHANGES)}"
+        )
 
     df_with_expected = with_expected_exchange_id(df)
 
