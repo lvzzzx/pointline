@@ -32,6 +32,7 @@ from pointline.research.resample.rollups import (
     is_builtin_feature_rollup,
     normalize_feature_rollup_names,
 )
+from pointline.research.spines.clock import generate_bar_end_timestamps
 
 
 class PipelineError(ValueError):
@@ -545,12 +546,7 @@ def _build_spine(compiled: dict[str, Any], source: pl.LazyFrame) -> pl.LazyFrame
         start_ts_us = int(bounds["_min"][0])
         end_ts_us = int(bounds["_max"][0])
 
-    first_end = ((start_ts_us // step_us) + 1) * step_us
-    timestamps: list[int] = []
-    current = first_end
-    while current <= end_ts_us:
-        timestamps.append(current)
-        current += step_us
+    timestamps = generate_bar_end_timestamps(start_ts_us, end_ts_us, step_us)
 
     symbols = source.select(["exchange_id", "symbol_id"]).unique().collect()
     if not timestamps:

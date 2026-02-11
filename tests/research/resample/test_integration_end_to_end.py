@@ -23,16 +23,10 @@ from pointline.research.spines import ClockSpineBuilder, ClockSpineConfig
 
 @pytest.fixture
 def mock_dim_symbol():
-    """Mock dim_symbol table for testing."""
-    with patch("pointline.research.spines.clock.read_dim_symbol_table") as mock:
-        # Return a mock DataFrame with test symbol_ids
-        mock_df = pl.DataFrame(
-            {
-                "symbol_id": [12345, 12346],
-                "exchange_id": [1, 1],
-            }
-        )
-        mock.return_value = mock_df
+    """Mock resolve_exchange_ids for testing."""
+    with patch("pointline.research.spines.clock.resolve_exchange_ids") as mock:
+        # Map each symbol_id to exchange_id=1
+        mock.side_effect = lambda ids: [1] * len(ids)
         yield mock
 
 

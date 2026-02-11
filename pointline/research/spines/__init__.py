@@ -28,7 +28,7 @@ from . import clock, dollar, trades, volume  # noqa: F401
 from .base import SpineBuilder, SpineBuilderConfig
 
 # Export builder configs and builders
-from .clock import ClockSpineBuilder, ClockSpineConfig
+from .clock import ClockSpineBuilder, ClockSpineConfig, generate_bar_end_timestamps
 from .dollar import DollarBarConfig
 
 # Registry functions
@@ -58,6 +58,7 @@ __all__ = [
     "ClockSpineBuilder",
     # Configs
     "ClockSpineConfig",
+    "generate_bar_end_timestamps",
     "TradesSpineConfig",
     "VolumeBarConfig",
     "DollarBarConfig",

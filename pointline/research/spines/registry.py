@@ -128,6 +128,9 @@ def get_builder_info() -> dict[str, dict[str, Any]]:
 def get_builder_by_config(config: Any) -> SpineBuilder:
     """Get builder by config type.
 
+    Iterates registered builders and matches via ``builder.config_type``.
+    Falls back to class-name inference for backward compatibility.
+
     Args:
         config: Builder-specific config instance
 
@@ -137,33 +140,18 @@ def get_builder_by_config(config: Any) -> SpineBuilder:
     Raises:
         ValueError: If no builder matches the config type
     """
-    config_type_name = type(config).__name__
+    config_cls = type(config)
 
-    # Direct mappings
-    mappings = {
-        "ClockSpineConfig": "clock",
-        "TradesSpineConfig": "trades",
-        "VolumeBarConfig": "volume",
-        "DollarBarConfig": "dollar",
-    }
+    # Primary: match via config_type property
+    for builder in _SPINE_REGISTRY.values():
+        if hasattr(builder, "config_type") and builder.config_type is config_cls:
+            return builder
 
-    builder_name = mappings.get(config_type_name)
-    if builder_name:
-        return get_builder(builder_name)
-
-    # Fallback: try to infer from class name
-    for name in [
-        "clock",
-        "trades",
-        "volume",
-        "dollar",
-        "tick",
-        "imbalance",
-        "quote_event",
-        "time_weighted",
-    ]:
-        if name in config_type_name.lower():
-            return get_builder(name)
+    # Fallback: class-name inference for backward compatibility
+    config_type_name = config_cls.__name__
+    for name in _DETECTION_PRIORITY:
+        if name in config_type_name.lower() and name in _SPINE_REGISTRY:
+            return _SPINE_REGISTRY[name]
 
     raise ValueError(
         f"Could not determine builder for config type '{config_type_name}'. "

@@ -300,10 +300,9 @@ class TestTradesSpineBuilder:
         # We don't assert df.height > 0 because the symbol may have no trades
         assert df.height >= 0
 
-        # Should have file_id and file_line_number for determinism
+        # Standard 3-column contract (no lineage columns after sweep dedup)
         if df.height > 0:
-            assert "file_id" in df.columns
-            assert "file_line_number" in df.columns
+            assert set(df.columns) == {"ts_local_us", "exchange_id", "symbol_id"}
 
 
 class TestVolumeSpineBuilder:

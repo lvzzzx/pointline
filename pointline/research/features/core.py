@@ -7,10 +7,11 @@ from dataclasses import dataclass
 
 import polars as pl
 
-from pointline.dim_symbol import read_dim_symbol_table
+from pointline.dim_symbol import resolve_exchange_ids
 from pointline.research import core as research_core
 from pointline.research.spines import get_builder_by_config
 from pointline.research.spines.base import SpineBuilderConfig
+from pointline.research.spines.clock import generate_bar_end_timestamps
 from pointline.types import TimestampInput
 
 
@@ -33,26 +34,6 @@ def _ensure_symbol_ids(symbol_id: int | Iterable[int]) -> list[int]:
     if isinstance(symbol_id, int):
         return [symbol_id]
     return list(symbol_id)
-
-
-def _resolve_exchange_ids(symbol_ids: list[int]) -> list[int]:
-    dim = read_dim_symbol_table(columns=["symbol_id", "exchange_id"]).unique()
-    lookup = dim.filter(pl.col("symbol_id").is_in(symbol_ids))
-    if lookup.is_empty():
-        raise ValueError("No matching symbol_ids found in dim_symbol.")
-
-    exchange_ids: list[int] = []
-    missing: list[int] = []
-    for symbol in symbol_ids:
-        rows = lookup.filter(pl.col("symbol_id") == symbol)
-        if rows.is_empty():
-            missing.append(symbol)
-            continue
-        exchange_ids.append(int(rows["exchange_id"][0]))
-
-    if missing:
-        raise ValueError(f"Missing exchange_id for symbol_id(s): {missing}")
-    return exchange_ids
 
 
 def _normalize_ts_inputs(start_ts_us: TimestampInput, end_ts_us: TimestampInput) -> tuple[int, int]:
@@ -81,8 +62,10 @@ def build_clock_spine(
     start_us, end_us = _normalize_ts_inputs(start_ts_us, end_ts_us)
     step_us = step_ms * 1_000
 
-    steps = (end_us - start_us) // step_us + 1
-    total_rows = steps * len(symbol_ids)
+    # Generate bar-end timestamps aligned to grid
+    timestamps = generate_bar_end_timestamps(start_us, end_us, step_us)
+
+    total_rows = len(timestamps) * len(symbol_ids)
     if total_rows > max_rows:
         raise ValueError(
             "Clock spine would generate too many rows. "
@@ -90,12 +73,10 @@ def build_clock_spine(
             "Increase step_ms or max_rows."
         )
 
-    stop_us = start_us + step_us * steps
-    timestamps = pl.int_range(start_us, stop_us, step_us, eager=True)
     time_df = pl.DataFrame({"ts_local_us": timestamps})
 
     if exchange_id is None:
-        exchange_ids = _resolve_exchange_ids(symbol_ids)
+        exchange_ids = resolve_exchange_ids(symbol_ids)
     else:
         exchange_ids = _ensure_symbol_ids(exchange_id)
 

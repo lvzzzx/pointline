@@ -1,7 +1,10 @@
-"""Trades spine builder: Event-driven resampling on every trade.
+"""Trades spine builder: Event-driven resampling at unique trade timestamps.
 
-Generates spine points at every trade event. This is useful for tick-by-tick
-analysis where you want to compute features after each trade.
+Generates one spine point per unique (exchange_id, symbol_id, ts_local_us).
+In crypto, a single aggressive order sweeping the book produces multiple
+trade records with the same timestamp — these are collapsed into one spine
+point so that downstream as-of joins see one event per market decision,
+not one per fill.
 """
 
 from dataclasses import dataclass
@@ -26,7 +29,20 @@ class TradesSpineConfig(SpineBuilderConfig):
 
 
 class TradesSpineBuilder:
-    """Trades spine builder: Event-driven resampling on every trade."""
+    """Trades spine builder: one spine point per unique trade timestamp.
+
+    Sweep Deduplication:
+        A large aggressive order sweeping the book generates multiple
+        trade records with the same ts_local_us.  These are collapsed
+        into a single spine point so that:
+        - as-of joins see one event per market decision, not per fill
+        - the book snapshot used for features reflects pre-sweep state once
+        - event counts are not inflated by exchange fill fragmentation
+    """
+
+    @property
+    def config_type(self) -> type:
+        return TradesSpineConfig
 
     @property
     def name(self) -> str:
@@ -57,6 +73,10 @@ class TradesSpineBuilder:
     ) -> pl.LazyFrame:
         """Build trades spine from trades stream.
 
+        Loads trades and deduplicates by (exchange_id, symbol_id, ts_local_us)
+        so that order-book sweeps (multiple fills at the same timestamp) produce
+        a single spine point.
+
         Args:
             symbol_id: Single symbol_id or list of symbol_ids
             start_ts_us: Start timestamp (microseconds, UTC)
@@ -65,37 +85,29 @@ class TradesSpineBuilder:
 
         Returns:
             LazyFrame with (ts_local_us, exchange_id, symbol_id)
-            sorted by (exchange_id, symbol_id, ts_local_us, file_id, file_line_number)
+            sorted by (exchange_id, symbol_id, ts_local_us).
+
+            ts_local_us is the BAR END — each unique trade timestamp
+            is both the event time and the bar boundary.
         """
         if not isinstance(config, TradesSpineConfig):
             raise TypeError(f"Expected TradesSpineConfig, got {type(config).__name__}")
 
-        # Load trades stream
+        # Load trades stream (only need spine columns)
         lf = research_core.scan_table(
             "trades",
             symbol_id=symbol_id,
             start_ts_us=start_ts_us,
             end_ts_us=end_ts_us,
-            columns=[
-                "ts_local_us",
-                "exchange_id",
-                "symbol_id",
-                "file_id",
-                "file_line_number",
-            ],
+            columns=["ts_local_us", "exchange_id", "symbol_id"],
         )
 
-        # Sort by deterministic ordering
-        # Include file_id and file_line_number for full determinism
-        return lf.sort(
-            [
-                "exchange_id",
-                "symbol_id",
-                "ts_local_us",
-                "file_id",
-                "file_line_number",
-            ]
-        )
+        # Deduplicate: collapse order-book sweeps (same timestamp) into
+        # one spine point per (exchange_id, symbol_id, ts_local_us)
+        lf = lf.unique(subset=["exchange_id", "symbol_id", "ts_local_us"])
+
+        # Deterministic ordering
+        return lf.sort(["exchange_id", "symbol_id", "ts_local_us"])
 
 
 # Auto-register on module import

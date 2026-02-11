@@ -538,3 +538,37 @@ def required_dim_symbol_columns() -> Sequence[str]:
 from pointline.schema_registry import register_schema as _register_schema  # noqa: E402
 
 _register_schema("dim_symbol", SCHEMA)
+
+
+def resolve_exchange_ids(symbol_ids: list[int]) -> list[int]:
+    """Resolve exchange_ids from symbol_ids via dim_symbol.
+
+    Args:
+        symbol_ids: List of symbol_ids to resolve.
+
+    Returns:
+        List of exchange_ids in the same order as symbol_ids.
+
+    Raises:
+        ValueError: If no matching symbol_ids found or some are missing.
+    """
+    dim = read_dim_symbol_table(columns=["symbol_id", "exchange_id"]).unique()
+    lookup = dim.filter(pl.col("symbol_id").is_in(symbol_ids))
+
+    if lookup.is_empty():
+        raise ValueError("No matching symbol_ids found in dim_symbol.")
+
+    exchange_ids: list[int] = []
+    missing: list[int] = []
+
+    for symbol in symbol_ids:
+        rows = lookup.filter(pl.col("symbol_id") == symbol)
+        if rows.is_empty():
+            missing.append(symbol)
+            continue
+        exchange_ids.append(int(rows["exchange_id"][0]))
+
+    if missing:
+        raise ValueError(f"Missing exchange_id for symbol_id(s): {missing}")
+
+    return exchange_ids
