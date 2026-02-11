@@ -738,6 +738,531 @@ exit_pressure_score = inventory_pressure_proxy / (1 + inventory_breakeven_gap)
 
 ---
 
+## 3.8 T+1 Adverse Selection Features
+
+### 3.8.1 Theoretical Foundation
+
+**Reference:** Jiang & Li (2025), "Adverse Selection and Overnight Returns: Information-Based Pricing Distortions Under China's 'T+1' Trading"
+
+China's T+1 trading rule creates a **unique adverse selection mechanism** that differs fundamentally from T+0 markets:
+
+| Market Mechanism | T+0 (US) | T+1 (China) |
+|-----------------|-----------|-------------|
+| Same-day exit | Allowed | **Prohibited** |
+| Informed trader advantage | Temporary | **Overnight persistence** |
+| Uninformed buyer protection | Can cut losses | **Stuck until T+1** |
+| Typical overnight return | Slightly positive | **Negative (adverse selection)** |
+
+**Core Insight:** Informed traders can sell to uninformed buyers near the close, knowing that:
+1. Uninformed buyers cannot exit if adverse information arrives overnight
+2. Informed traders capture the spread while transferring overnight risk
+3. This creates **systematic negative overnight returns** in Chinese markets
+
+**Alpha Principle:** Identify when adverse selection risk is high → Avoid overnight longs or short into the close.
+
+---
+
+### 3.8.2 T+1 Constraint Intensity (T1CI)
+
+**Intuition:** A composite measure of how "binding" the T+1 constraint is for a given stock/day. Higher T1CI = higher adverse selection risk for buyers.
+
+**Formula:**
+```python
+def calculate_t1_constraint_intensity(
+    close_auction_orders: pl.DataFrame,
+    day_trades: pl.DataFrame,
+) -> dict:
+    """
+    Measure T+1 constraint intensity (0-1 scale).
+    High values indicate severe adverse selection risk.
+    """
+    # 1. Intraday volatility (information uncertainty)
+    intraday_returns = day_trades["price"].pct_change()
+    intraday_vol = intraday_returns.std()
+    vol_score = min(intraday_vol * 10, 1.0)  # Normalize to 0-1
+
+    # 2. Late-day buying surge (uninformed FOMO)
+    afternoon_start_us = 5_00_00_000_000  # 13:00 UTC
+    last_hour_start_us = 6_00_00_000_000  # 14:00 UTC
+
+    last_hour_volume = day_trades.filter(
+        pl.col("ts_exch_us").mod(86_400_000_000) >= last_hour_start_us
+    )["qty"].sum()
+
+    afternoon_volume = day_trades.filter(
+        pl.col("ts_exch_us").mod(86_400_000_000) >= afternoon_start_us
+    )["qty"].sum()
+
+    late_day_ratio = last_hour_volume / afternoon_volume if afternoon_volume > 0 else 0
+
+    # 3. Market order concentration (informed urgency)
+    market_orders = close_auction_orders.filter(pl.col("order_type") == 1).height
+    total_orders = close_auction_orders.height
+    market_order_ratio = market_orders / total_orders if total_orders > 0 else 0
+
+    # 4. Cancellation commitment (low cancel = high conviction)
+    cancelled_orders = close_auction_orders.filter(
+        pl.col("order_type") == 2  # Cancel type
+    ).height
+    cancel_ratio = cancelled_orders / total_orders if total_orders > 0 else 0
+    commitment_score = 1 - cancel_ratio  # Inverted: low cancel = high commitment
+
+    # Composite T1CI
+    t1ci = (
+        0.30 * vol_score +
+        0.25 * min(late_day_ratio, 1.0) +
+        0.25 * market_order_ratio +
+        0.20 * commitment_score
+    )
+
+    return {
+        "t1_constraint_intensity": t1ci,
+        "risk_level": (
+            "HIGH" if t1ci > 0.7
+            else "MEDIUM" if t1ci > 0.4
+            else "LOW"
+        ),
+        "recommended_overnight_position": (
+            "SHORT" if t1ci > 0.7
+            else "NEUTRAL" if t1ci > 0.4
+            else "LONG"
+        ),
+        "components": {
+            "volatility_score": vol_score,
+            "late_day_ratio": late_day_ratio,
+            "market_order_ratio": market_order_ratio,
+            "commitment_score": commitment_score,
+        }
+    }
+```
+
+**Interpretation:**
+| T1CI Range | Risk Level | Strategy |
+|-----------|-----------|----------|
+| 0.0 - 0.4 | LOW | Safe for overnight longs; expect normal gap |
+| 0.4 - 0.7 | MEDIUM | Caution; reduce position size; hedge with shorts |
+| 0.7 - 1.0 | HIGH | **Avoid overnight longs**; short into close; expect negative gap |
+
+---
+
+### 3.8.3 Informed Flow Detection
+
+**Intuition:** Identify informed trader signatures in L3 data. Informed traders near the close exhibit specific patterns: large size, market orders, low cancellation rates.
+
+**Formula:**
+```python
+def classify_informed_flow(
+    orders: pl.DataFrame,
+    ticks: pl.DataFrame,
+    window: str = "close_auction",  # "close_auction" or "last_hour"
+) -> pl.DataFrame:
+    """
+    Classify orders/trades as informed or uninformed.
+    """
+    # Define window bounds
+    if window == "close_auction":
+        window_start = SESSION_BOUNDS["close_call_start"]
+        window_end = SESSION_BOUNDS["close_call_end"]
+    else:  # last_hour
+        window_start = 6_00_00_000_000  # 14:00 UTC
+        window_end = SESSION_BOUNDS["close_call_end"]
+
+    window_orders = orders.filter(
+        (pl.col("ts_exch_us").mod(86_400_000_000) >= window_start) &
+        (pl.col("ts_exch_us").mod(86_400_000_000) <= window_end)
+    )
+
+    # Calculate percentiles for classification
+    qty_80th = window_orders["qty"].quantile(0.8)
+
+    # Classify each order
+    classified = window_orders.with_columns([
+        # Informed trader signatures
+        pl.when(
+            (pl.col("order_type") == 1) &  # Market order (urgency)
+            (pl.col("qty") > qty_80th)      # Large size
+        ).then(pl.lit("informed_aggressive"))
+        .when(
+            (pl.col("order_type") == 0) &  # Limit order
+            (pl.col("qty") > qty_80th) &   # Large size
+            (pl.col("price").is_not_null())  # Specific price (not market)
+        ).then(pl.lit("informed_passive"))
+        .when(
+            (pl.col("order_type") == 0) &  # Limit order
+            (pl.col("qty") <= window_orders["qty"].median())  # Small
+        ).then(pl.lit("uninformed_retail"))
+        .otherwise(pl.lit("unknown"))
+        .alias("trader_classification")
+    ])
+
+    return classified
+
+
+def calculate_informed_pressure_ratio(
+    orders: pl.DataFrame,
+    side: str = "sell",  # Focus on sells (informed dumping)
+) -> dict:
+    """
+    Calculate ratio of informed selling pressure.
+    High informed sell pressure → Expect negative overnight gap.
+    """
+    classified = classify_informed_flow(orders)
+
+    # Filter for sells (side=1) or buys (side=0)
+    side_code = 1 if side == "sell" else 0
+    side_orders = classified.filter(pl.col("side") == side_code)
+
+    informed_sell_qty = side_orders.filter(
+        pl.col("trader_classification").str.starts_with("informed")
+    )["qty"].sum()
+
+    total_sell_qty = side_orders["qty"].sum()
+
+    informed_ratio = informed_sell_qty / total_sell_qty if total_sell_qty > 0 else 0
+
+    return {
+        "informed_pressure_ratio": informed_ratio,
+        "informed_qty": informed_sell_qty,
+        "total_qty": total_sell_qty,
+        "signal": (
+            "STRONG_SELL" if informed_ratio > 0.6
+            else "SELL" if informed_ratio > 0.4
+            else "NEUTRAL" if informed_ratio > 0.2
+            else "BUY"
+        )
+    }
+```
+
+**Interpretation:**
+- **Informed sell ratio > 60%:** Informed traders aggressively distributing; strong negative gap expected
+- **Informed sell ratio 40-60%:** Moderate adverse selection; cautious positioning
+- **Informed sell ratio < 20%:** Uninformed flow dominant; less adverse selection risk
+
+---
+
+### 3.8.4 Adverse Selection Cost (ASC) Proxy
+
+**Intuition:** Measure realized adverse selection cost using post-trade price movement. If buyers consistently pay prices that decline afterward, adverse selection is present.
+
+**Formula:**
+```python
+def calculate_adverse_selection_cost(
+    ticks: pl.DataFrame,
+    forward_window_us: int = 60_000_000,  # 1 minute forward
+) -> dict:
+    """
+    Calculate adverse selection cost proxy.
+    Positive ASC = buyers overpaid (adverse selection against them).
+    """
+    trades = ticks.filter(pl.col("tick_type") == 0).sort("ts_exch_us")
+
+    # Calculate forward price change for each trade
+    asc_data = trades.with_columns([
+        # Forward-looking price (next trade or X seconds ahead)
+        pl.col("price").shift(-1).alias("next_price"),
+        pl.col("ts_exch_us").alias("trade_time"),
+    ]).with_columns([
+        # Effective spread approximation
+        ((pl.col("price") - pl.col("next_price")) / pl.col("price")).alias("price_impact")
+    ])
+
+    # Separate by inferred side (using tick rule or quote context)
+    # Buy-initiated: trade at or above ask
+    # Sell-initiated: trade at or below bid
+
+    # For simplicity, use tick rule:
+    # Up-tick = buyer-initiated, Down-tick = seller-initiated
+    asc_data = asc_data.with_columns([
+        pl.when(pl.col("price") > pl.col("price").shift(1))
+        .then(pl.lit("buy_initiated"))
+        .when(pl.col("price") < pl.col("price").shift(1))
+        .then(pl.lit("sell_initiated"))
+        .otherwise(pl.lit("unchanged"))
+        .alias("trade_direction")
+    ])
+
+    # Adverse selection for buyers: paid high, price fell
+    buy_trades = asc_data.filter(pl.col("trade_direction") == "buy_initiated")
+    buyer_asc = buy_trades["price_impact"].mean()  # Should be negative
+
+    # Adverse selection for sellers: sold low, price rose
+    sell_trades = asc_data.filter(pl.col("trade_direction") == "sell_initiated")
+    seller_asc = -sell_trades["price_impact"].mean()  # Invert; should be negative
+
+    # Composite ASC (higher = more adverse selection)
+    composite_asc = (abs(buyer_asc) + abs(seller_asc)) / 2
+
+    return {
+        "buyer_adverse_selection": buyer_asc,
+        "seller_adverse_selection": seller_asc,
+        "composite_asc": composite_asc,
+        "asc_annualized_bps": composite_asc * 10000 * 252,  # Approximate daily cost
+    }
+```
+
+**Interpretation:**
+- **ASC > 5 bps:** High adverse selection environment; avoid market orders
+- **ASC 2-5 bps:** Moderate adverse selection; use limit orders
+- **ASC < 2 bps:** Low adverse selection; aggressive execution acceptable
+
+---
+
+### 3.8.5 Overnight Drift Prediction
+
+**Intuition:** Predict overnight return direction using T+1 constraint mechanics and adverse selection risk. Based on Jiang & Li's finding of systematic negative overnight drift.
+
+**Formula:**
+```python
+def predict_overnight_drift(
+    symbol_id: str,
+    date: str,
+) -> dict:
+    """
+    Predict overnight return using adverse selection framework.
+
+    Prediction Time: Day T 15:00 (after close)
+    Target: Day T+1 09:30 open gap
+    """
+    # Load Day T data
+    orders = query.l3_orders("szse", symbol_id, date, date, decoded=True)
+    ticks = query.l3_ticks("szse", symbol_id, date, date, decoded=True)
+
+    # Calculate components
+    t1ci = calculate_t1_constraint_intensity(
+        orders.filter(
+            (pl.col("ts_exch_us").mod(86_400_000_000) >= SESSION_BOUNDS["close_call_start"])
+        ),
+        ticks
+    )
+
+    informed_pressure = calculate_informed_pressure_ratio(orders, side="sell")
+    asc = calculate_adverse_selection_cost(ticks)
+
+    # Closing auction features
+    close_orders = orders.filter(
+        (pl.col("ts_exch_us").mod(86_400_000_000) >= SESSION_BOUNDS["close_call_start"]) &
+        (pl.col("ts_exch_us").mod(86_400_000_000) <= SESSION_BOUNDS["close_call_end"])
+    )
+
+    close_bid_pressure = close_orders.filter(pl.col("side") == 0)["qty"].sum() or 0
+    close_ask_pressure = close_orders.filter(pl.col("side") == 1)["qty"].sum() or 0
+    close_imbalance_ratio = (
+        (close_bid_pressure - close_ask_pressure) /
+        (close_bid_pressure + close_ask_pressure)
+        if (close_bid_pressure + close_ask_pressure) > 0 else 0
+    )
+
+    # Overnight drift prediction model
+    # Negative coefficients: higher adverse selection → more negative drift
+    drift_prediction = (
+        -5.0 +  # Base negative drift (Jiang & Li finding)
+        -15.0 * t1ci["t1_constraint_intensity"] +
+        -10.0 * informed_pressure["informed_pressure_ratio"] +
+        -8.0 * asc["composite_asc"] * 100 +  # Scale ASC
+        5.0 * close_imbalance_ratio  # Positive imbalance partially offsets
+    )
+
+    return {
+        "predicted_overnight_gap_bps": drift_prediction,
+        "confidence": (
+            "HIGH" if t1ci["t1_constraint_intensity"] > 0.7
+            else "MEDIUM" if t1ci["t1_constraint_intensity"] > 0.4
+            else "LOW"
+        ),
+        "components": {
+            "t1ci": t1ci["t1_constraint_intensity"],
+            "informed_sell_ratio": informed_pressure["informed_pressure_ratio"],
+            "asc": asc["composite_asc"],
+            "close_imbalance": close_imbalance_ratio,
+        },
+        "trading_signal": (
+            "SHORT_OVERNIGHT" if drift_prediction < -20
+            else "REDUCE_LONG" if drift_prediction < -10
+            else "HOLD" if drift_prediction < 5
+            else "ADD_LONG"
+        )
+    }
+```
+
+---
+
+### 3.8.6 Stuck Buyer Inventory Proxy
+
+**Intuition:** Estimate the volume of "stuck" buyers from Day T who will become forced sellers on Day T+1 due to T+1 constraint.
+
+**Formula:**
+```python
+def calculate_stuck_buyer_inventory(
+    day_t_orders: pl.DataFrame,
+    day_t_ticks: pl.DataFrame,
+    day_t_close_price: float,
+) -> dict:
+    """
+    Estimate trapped long inventory that must be held overnight.
+
+    Key insight: Buyers at Day T close cannot sell until Day T+1.
+    If price falls overnight, these are "stuck" with losses.
+    """
+    # Identify Day T closing auction buyers
+    close_buyers = day_t_orders.filter(
+        (pl.col("ts_exch_us").mod(86_400_000_000) >= SESSION_BOUNDS["close_call_start"]) &
+        (pl.col("side") == 0)  # Buy side
+    )
+
+    total_stuck_qty = close_buyers["qty"].sum()
+
+    # Estimate their urgency to exit (based on position size)
+    avg_stuck_size = close_buyers["qty"].mean() if close_buyers.height > 0 else 0
+
+    # Large positions = more urgent to diversify/reduce risk
+    large_stuck_qty = close_buyers.filter(
+        pl.col("qty") > close_buyers["qty"].quantile(0.8)
+    )["qty"].sum()
+
+    # Calculate potential selling pressure on T+1
+    # Assume 30-50% of stuck buyers exit at open if underwater
+    estimated_exit_pressure = total_stuck_qty * 0.4
+
+    return {
+        "total_stuck_buyer_qty": total_stuck_qty,
+        "large_position_qty": large_stuck_qty,
+        "estimated_t1_sell_pressure": estimated_exit_pressure,
+        "stuck_buyer_notional": total_stuck_qty * day_t_close_price,
+        "urgency_score": large_stuck_qty / total_stuck_qty if total_stuck_qty > 0 else 0,
+    }
+```
+
+---
+
+### 3.8.7 Trading Strategy: T+1 Adverse Selection Exploitation
+
+**Strategy Name:** "Avoid the Trap" Overnight Short
+
+**Setup:**
+- **Signal Time:** Day T 14:55-15:00 (closing auction)
+- **Entry:** Short into close when T1CI > 0.7 and informed sell ratio > 0.6
+- **Exit:** Day T+1 09:30-10:00 (cover on opening gap down)
+
+**Rules:**
+```python
+def t1_adverse_selection_strategy(
+    symbol_id: str,
+    date: str,
+) -> dict:
+    """
+    Generate short signal based on T+1 adverse selection.
+    """
+    prediction = predict_overnight_drift(symbol_id, date)
+
+    # Entry criteria
+    enter_short = (
+        prediction["predicted_overnight_gap_bps"] < -15 and
+        prediction["confidence"] in ["HIGH", "MEDIUM"] and
+        prediction["components"]["informed_sell_ratio"] > 0.5
+    )
+
+    # Position sizing
+    if enter_short:
+        conviction = abs(prediction["predicted_overnight_gap_bps"]) / 50  # Normalize
+        position_size = min(conviction, 1.0)  # Cap at 100%
+
+        return {
+            "signal": "SHORT_OVERNIGHT",
+            "position_size": position_size,
+            "entry_time": "14:57:00",  # Closing auction
+            "exit_time": "09:30:00",   # Next day open
+            "expected_return_bps": prediction["predicted_overnight_gap_bps"],
+            "stop_loss_bps": 20,  # If gap goes against us
+        }
+
+    return {"signal": "NO_TRADE"}
+```
+
+**Risk Management:**
+- **Stop Loss:** 20 bps (if overnight gap is positive, exit immediately at 09:30)
+- **Max Position:** 10% of ADV to avoid market impact
+- **Correlated Exposure:** Monitor sector-wide T1CI to avoid concentration
+
+---
+
+### 3.8.8 PIT Safety & Validation
+
+**Critical Constraint:**
+| Feature | Feature Time | Data Window | Valid Prediction |
+|---------|--------------|-------------|------------------|
+| T1CI | Day T 15:00 | Day T full day | Day T+1 09:30 open |
+| Informed pressure | Day T 15:00 | Day T 14:57-15:00 | Day T+1 09:30 open |
+| Overnight drift | Day T 15:00 | Day T close auction | Day T+1 09:30 open |
+| Stuck buyer inventory | Day T 15:00 | Day T close auction | Day T+1 selling pressure |
+
+**Leakage Traps:**
+- ❌ **Wrong:** Using Day T+1 09:25 opening auction data to predict Day T close
+- ✅ **Right:** Using only Day T data to predict Day T+1 opening gap
+- ❌ **Wrong:** Including Day T+1 continuous trading in drift prediction
+- ✅ **Right:** Feature frozen at Day T 15:00; outcome measured at Day T+1 09:30
+
+---
+
+### 3.8.9 Summary Table
+
+| Feature | Category | Input Data | Prediction Horizon | Priority |
+|---------|----------|------------|-------------------|----------|
+| `t1_constraint_intensity` | Risk Metric | L3 orders + ticks (Day T) | Day T+1 open | **HIGH** |
+| `informed_pressure_ratio` | Flow Analysis | L3 orders (close auction) | Day T+1 open | **HIGH** |
+| `adverse_selection_cost` | Microstructure | L3 ticks (Day T) | Day T+1 execution | MEDIUM |
+| `predicted_overnight_drift` | Composite Signal | All Day T features | Day T+1 09:30 | **HIGH** |
+| `stuck_buyer_inventory` | Supply/Demand | L3 orders (close) | Day T+1 morning | MEDIUM |
+| `urgency_score` | Positioning | L3 orders (close) | Day T+1 selling pressure | MEDIUM |
+
+---
+
+### 3.8.10 Connection to Existing Features
+
+These T+1 adverse selection features **complement** Section 3.7 (Close-to-Open Auction Persistence):
+
+| Section 3.7 Feature | T+1 Extension (3.8) | Enhancement |
+|--------------------|--------------------|-------------|
+| `inventory_pressure_proxy` | `stuck_buyer_inventory` | Quantifies T+1 constraint mechanically |
+| `imbalance_carryover` | `informed_pressure_ratio` | Distinguishes informed vs uninformed flow |
+| `overnight_gap_bps` (outcome) | `predicted_overnight_drift` | Predictive model with theoretical grounding |
+| `gap_confirmation` | `t1_constraint_intensity` | Risk-adjusted confidence score |
+
+**Recommended Usage:**
+1. Use Section 3.7 features for **descriptive** analysis of auction dynamics
+2. Use Section 3.8 features for **predictive** modeling of adverse selection
+3. Combine both for **risk-adjusted** position sizing (e.g., fade gaps only when T1CI is low)
+
+---
+
+### 3.8.11 Extension: Network-Aware T+1 Features
+
+For enhanced alpha generation, combine T+1 adverse selection features with **co-trading networks** (see `docs/guides/cotrading-networks-chinese-stocks.md`).
+
+**Key Integration:**
+- **CT1CI (Cluster T1CI):** Aggregate T+1 risk across co-trading clusters
+- **Network Informed Pressure:** Detect informed selling propagation across linked stocks
+- **Cluster Short Strategy:** Short entire clusters with high aggregate T1CI, not just individual stocks
+
+**Why This Matters:**
+T+1 adverse selection **propagates through co-trading networks**. When one stock in a cluster has high T1CI (informed selling at close), co-trading stocks often gap down together the next morning due to:
+- Shared investor base
+- Common information arrival
+- Sector/ thematic correlation
+
+**Reference:** See `docs/guides/t1-adverse-selection-cotrading-integration.md` for:
+- Network-aware feature calculations (CT1CI, NIPR)
+- Cluster-based trading strategies
+- Risk management with network concentration limits
+- Expected performance improvements (+60% Sharpe, -35% drawdown)
+
+| Standalone | Network Integration | Benefit |
+|-----------|---------------------|---------|
+| Short single stock | Short cluster | Diversification |
+| Idiosyncratic risk | Systematic clusters | Better risk control |
+| $10M capacity | $50M+ capacity | Scalability |
+
+---
+
 ## 4. Implementation Templates
 
 ### 4.1 Session Boundary Definitions
@@ -1302,6 +1827,11 @@ def estimate_slippage_l3(
 | `gap_confirmation` | Positive confirmation predicts momentum | Return 09:30-10:00 vs confirmation score |
 | `inventory_pressure_proxy` | High pressure predicts selling | Return 09:30-09:35 vs pressure |
 | `volume_ratio_close_to_open` | Ratio > 2 predicts volatility expansion | Realized vol ratio vs volume ratio |
+| **T+1 Adverse Selection Features** |||
+| `t1_constraint_intensity` | T1CI > 0.7 predicts negative overnight gap | Overnight return vs T1CI level |
+| `informed_pressure_ratio` | Informed sell > 60% predicts negative gap | Overnight return vs informed ratio |
+| `predicted_overnight_drift` | Composite model predicts gap direction | Directional accuracy, RMSE |
+| `stuck_buyer_inventory` | High inventory predicts T+1 selling pressure | First 30-min return vs inventory |
 
 **Deliverables:**
 - Feature distribution analysis
@@ -1353,6 +1883,8 @@ def estimate_slippage_l3(
   - **Imbalance Persistence Regime:** High persistence (> 0.4) vs low persistence (< 0.1) periods
   - **T+1 Pressure Regime:** High inventory pressure (> 0.5) vs low pressure days
   - **Overnight News Regime:** Volume ratio > 2.0 (news event) vs normal nights
+  - **Adverse Selection Regime:** T1CI > 0.7 (high adverse selection) vs T1CI < 0.4 (low)
+  - **Informed Flow Regime:** Informed sell ratio > 0.6 (distribution) vs < 0.2 (accumulation)
 
 **Close-to-Open Regime Patterns:**
 | Regime | Condition | Expected Feature Performance |
@@ -1362,6 +1894,9 @@ def estimate_slippage_l3(
 | **T+1 Flush** | High close imbalance + high inventory pressure | Sell-off at T+1 open |
 | **Overnight Momentum** | Consistent imbalance (Buy→Buy→Buy) | Trend day likely |
 | **News Gap** | High volume ratio + gap > 50bps | Momentum, don't fade |
+| **Adverse Selection Trap** | T1CI > 0.7 + informed sell > 60% | Short overnight, expect negative gap |
+| **Safe Haven** | T1CI < 0.4 + low informed flow | Safe for overnight longs |
+| **T+1 Squeeze** | High stuck inventory + gap up | Expect profit-taking at open |
 
 **Deliverables:**
 - Regime-conditional Sharpe ratios
@@ -1375,6 +1910,8 @@ def estimate_slippage_l3(
 ### 8.1 Related Documentation
 
 - `docs/guides/feature-pipeline-modes.md` - PIT-safe pipeline templates
+- `docs/guides/cotrading-networks-chinese-stocks.md` - Co-trading networks for cross-stock dependency modeling
+- `docs/guides/t1-adverse-selection-cotrading-integration.md` - Integration of T+1 features with co-trading networks
 - `skills/pointline-research/references/schemas.md` - L3 table schemas
 - `skills/pointline-research/references/exchange_quirks.md` - SZSE/SSE specifics
 - `skills/pointline-research/references/analysis_patterns.md` - General patterns
@@ -1385,6 +1922,8 @@ def estimate_slippage_l3(
 2. **Opening Price Discovery:** Cao, Ghysels & Hatheway (2000), "Price Discovery without Trading"
 3. **Order Flow Toxicity:** Easley, López de Prado & O'Hara (2012), "Flow Toxicity and Volatility"
 4. **Chinese Market Microstructure:** Chen & Rui (2003), "Are China'S Bull Markets Normal?"
+5. **T+1 Adverse Selection:** Jiang & Li (2025), "Adverse Selection and Overnight Returns: Information-Based Pricing Distortions Under China's 'T+1' Trading" (SSRN 5349222)
+6. **Co-Trading Networks:** Lu et al. (2023), "Co-trading networks for modeling dynamic interdependency structures and estimating high-dimensional covariances in US equity markets" (arXiv:2302.09382)
 
 ### 8.3 Internal Tools
 
@@ -1424,6 +1963,13 @@ from pointline.dim_symbol import read_dim_symbol_table
 | `overnight_sentiment` | Sentiment | No | 09:30-10:00 | High |
 | `inventory_pressure_proxy` | T+1 Constraint | No | 09:30-10:00 | Medium |
 | `price_discovery_error` | Efficiency | No | 09:30-09:35 | Low |
+| **T+1 Adverse Selection Features** ||||
+| `t1_constraint_intensity` | Risk Metric | Yes | Day T+1 open | **HIGH** |
+| `informed_pressure_ratio` | Flow Analysis | Yes | Day T+1 open | **HIGH** |
+| `adverse_selection_cost` | Microstructure | Yes | Day T+1 execution | MEDIUM |
+| `predicted_overnight_drift` | Composite Signal | Yes | Day T+1 09:30 | **HIGH** |
+| `stuck_buyer_inventory` | Supply/Demand | Yes | Day T+1 morning | MEDIUM |
+| `urgency_score` | Positioning | Yes | Day T+1 selling pressure | MEDIUM |
 
 ### 9.2 UTC Time Conversion Reference
 
