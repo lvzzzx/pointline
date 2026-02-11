@@ -30,13 +30,14 @@ from pointline.research.pipeline import (
     execute_compiled_with_sources,
     load_source,
 )
+from pointline.research.spines import SpineCache
 
 
 class WorkflowError(ValueError):
     """Raised for invalid workflow requests or stage dependency graphs."""
 
 
-def workflow(request: dict[str, Any]) -> dict[str, Any]:
+def workflow(request: dict[str, Any], *, cache: SpineCache | None = None) -> dict[str, Any]:
     """Execute a hybrid workflow that composes multiple pipeline modes."""
     started_at = _utc_now_iso()
     validate_quant_research_workflow_input_v2(request)
@@ -77,6 +78,7 @@ def workflow(request: dict[str, Any]) -> dict[str, Any]:
                 resolved_sources,
                 coverage_checks=coverage_checks,
                 probe_checks=probe_checks,
+                cache=cache,
             )
             gates = evaluate_quality_gates(stage_compiled, runtime)
 

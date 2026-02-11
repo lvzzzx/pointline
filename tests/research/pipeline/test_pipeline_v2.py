@@ -693,11 +693,11 @@ def test_pipeline_event_joined_uses_lineage_tie_break_for_same_timestamp():
     assert bid_px == 50020
 
 
-def test_pipeline_rejects_unimplemented_volume_spine():
+def test_pipeline_rejects_unknown_spine_type():
     request = _base_request("bar_then_feature")
-    request["spine"] = {"type": "volume"}
+    request["spine"] = {"type": "nonexistent_bar_type"}
 
-    with pytest.raises(ValueError, match="not implemented in pipeline v2"):
+    with pytest.raises(SchemaValidationError):
         pipeline(request)
 
 

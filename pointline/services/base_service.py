@@ -1,3 +1,5 @@
+"""Base service module with abstract service interface."""
+
 from abc import ABC, abstractmethod
 
 import polars as pl

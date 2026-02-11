@@ -13,22 +13,21 @@ from unittest.mock import patch
 import polars as pl
 import pytest
 
-from pointline.research.spines import ClockSpineConfig
+from pointline.research.spines import (
+    ClockSpineConfig,
+    DollarBarConfig,
+    VolumeBarConfig,
+    get_builder_by_config,
+)
 from pointline.research.spines.clock import ClockSpineBuilder
 
 
 @pytest.fixture
 def mock_dim_symbol():
-    """Mock dim_symbol table for testing."""
-    with patch("pointline.research.spines.clock.read_dim_symbol_table") as mock:
-        # Return a mock DataFrame with test symbol_ids
-        mock_df = pl.DataFrame(
-            {
-                "symbol_id": [12345, 12346],
-                "exchange_id": [1, 1],
-            }
-        )
-        mock.return_value = mock_df
+    """Mock resolve_exchange_ids for testing."""
+    with patch("pointline.research.spines.clock.resolve_exchange_ids") as mock:
+        # Map each symbol_id to exchange_id=1
+        mock.side_effect = lambda ids: [1] * len(ids)
         yield mock
 
 
@@ -317,42 +316,222 @@ class TestClockSpineEdgeCases:
 
 
 class TestClockSpineAlignment:
-    """Test grid alignment logic."""
+    """Test grid alignment logic via generate_bar_end_timestamps."""
 
     def test_align_to_grid_zero_start(self):
         """Test alignment from timestamp 0."""
-        builder = ClockSpineBuilder()
+        from pointline.research.spines.clock import generate_bar_end_timestamps
 
-        # Access private method for unit test
-        bar_end = builder._align_to_grid(ts=0, step_us=60_000_000)
-
+        timestamps = generate_bar_end_timestamps(0, 60_000_000, 60_000_000)
         # First bar ends at 1 minute
-        assert bar_end == 60_000_000
+        assert timestamps[0] == 60_000_000
 
     def test_align_to_grid_mid_interval(self):
         """Test alignment from mid-interval."""
-        builder = ClockSpineBuilder()
+        from pointline.research.spines.clock import generate_bar_end_timestamps
 
         # 50 seconds, should align to next bar at 60s
-        bar_end = builder._align_to_grid(ts=50_000_000, step_us=60_000_000)
-        assert bar_end == 60_000_000
+        timestamps = generate_bar_end_timestamps(50_000_000, 120_000_000, 60_000_000)
+        assert timestamps[0] == 60_000_000
 
         # 70 seconds, should align to next bar at 120s
-        bar_end = builder._align_to_grid(ts=70_000_000, step_us=60_000_000)
-        assert bar_end == 120_000_000
+        timestamps = generate_bar_end_timestamps(70_000_000, 120_000_000, 60_000_000)
+        assert timestamps[0] == 120_000_000
 
     def test_align_to_grid_exact_boundary(self):
         """Test alignment when timestamp is exactly on boundary."""
-        builder = ClockSpineBuilder()
+        from pointline.research.spines.clock import generate_bar_end_timestamps
 
         # Exactly at 60s boundary, should align to NEXT bar at 120s
-        bar_end = builder._align_to_grid(ts=60_000_000, step_us=60_000_000)
-        assert bar_end == 120_000_000
+        timestamps = generate_bar_end_timestamps(60_000_000, 180_000_000, 60_000_000)
+        assert timestamps[0] == 120_000_000
 
         # Exactly at 120s boundary, should align to NEXT bar at 180s
-        bar_end = builder._align_to_grid(ts=120_000_000, step_us=60_000_000)
-        assert bar_end == 180_000_000
+        timestamps = generate_bar_end_timestamps(120_000_000, 180_000_000, 60_000_000)
+        assert timestamps[0] == 180_000_000
 
 
-# NOTE: Volume spine tests would go here but volume.py needs similar updates
-# This will be part of Phase 0 completion after clock spine is validated
+class TestVolumeSpineBarEndSemantics:
+    """Test volume spine generates bar ENDS (not starts)."""
+
+    def _make_trades_lf(self) -> pl.LazyFrame:
+        """Create synthetic trades for volume bar testing."""
+        # 6 trades, each with volume=100 (qty_int=1, amount_increment=100)
+        # Sorted by timestamp. volume_threshold=200 → 3 bars.
+        return pl.LazyFrame(
+            {
+                "ts_local_us": [100, 200, 300, 400, 500, 600],
+                "exchange_id": pl.Series([1] * 6, dtype=pl.Int16),
+                "symbol_id": pl.Series([42] * 6, dtype=pl.Int64),
+                "qty_int": pl.Series([1] * 6, dtype=pl.Int64),
+                "file_id": pl.Series([1] * 6, dtype=pl.Int32),
+                "file_line_number": pl.Series(list(range(1, 7)), dtype=pl.Int32),
+            }
+        )
+
+    def _mock_dim_symbol(self) -> pl.DataFrame:
+        return pl.DataFrame(
+            {
+                "symbol_id": pl.Series([42], dtype=pl.Int64),
+                "amount_increment": [100.0],
+            }
+        )
+
+    @patch("pointline.research.spines.volume.research_core")
+    @patch("pointline.research.spines.volume.read_dim_symbol_table")
+    def test_volume_bar_end_timestamps(self, mock_dim, mock_core):
+        """Volume spine timestamps must be bar ENDS, not starts."""
+        mock_core.scan_table.return_value = self._make_trades_lf()
+        mock_dim.return_value = self._mock_dim_symbol()
+
+        from pointline.research.spines.volume import VolumeSpineBuilder
+
+        builder = VolumeSpineBuilder()
+        config = VolumeBarConfig(volume_threshold=200.0)
+
+        spine = builder.build_spine(
+            symbol_id=42,
+            start_ts_us=0,
+            end_ts_us=1000,
+            config=config,
+        ).collect()
+
+        # With volume_threshold=200 and volume=100 per trade:
+        # cum_vol:  [100,  200,  300,  400,  500,  600]
+        # bar_id:   [  0,    1,    1,    2,    2,    3]
+        # bar_start (min ts per bar_id): [100, 200, 400, 600]
+        # After shift: bar_end = [200, 400, 600, 1000(=end_ts_us)]
+        assert spine.height == 4
+        ts_list = spine["ts_local_us"].to_list()
+        assert ts_list == [200, 400, 600, 1000], (
+            f"Expected bar ENDS [200, 400, 600, 1000], got {ts_list}"
+        )
+
+    @patch("pointline.research.spines.volume.research_core")
+    @patch("pointline.research.spines.volume.read_dim_symbol_table")
+    def test_volume_max_rows_enforcement(self, mock_dim, mock_core):
+        """Volume spine must enforce max_rows with an eager check."""
+        mock_core.scan_table.return_value = self._make_trades_lf()
+        mock_dim.return_value = self._mock_dim_symbol()
+
+        from pointline.research.spines.volume import VolumeSpineBuilder
+
+        builder = VolumeSpineBuilder()
+        # threshold=100 → 6 bars, but max_rows=2
+        config = VolumeBarConfig(volume_threshold=100.0, max_rows=2)
+
+        with pytest.raises(RuntimeError, match="too many rows"):
+            builder.build_spine(
+                symbol_id=42,
+                start_ts_us=0,
+                end_ts_us=1000,
+                config=config,
+            ).collect()
+
+
+class TestDollarSpineBarEndSemantics:
+    """Test dollar spine generates bar ENDS (not starts)."""
+
+    def _make_trades_lf(self) -> pl.LazyFrame:
+        # 4 trades, notional = px_int * price_inc * qty_int * amount_inc
+        # = 10 * 1.0 * 1 * 100.0 = 1000 per trade
+        # dollar_threshold=2000 → 2 bars
+        return pl.LazyFrame(
+            {
+                "ts_local_us": [100, 200, 300, 400],
+                "exchange_id": pl.Series([1] * 4, dtype=pl.Int16),
+                "symbol_id": pl.Series([42] * 4, dtype=pl.Int64),
+                "px_int": pl.Series([10] * 4, dtype=pl.Int64),
+                "qty_int": pl.Series([1] * 4, dtype=pl.Int64),
+                "file_id": pl.Series([1] * 4, dtype=pl.Int32),
+                "file_line_number": pl.Series(list(range(1, 5)), dtype=pl.Int32),
+            }
+        )
+
+    def _mock_dim_symbol(self) -> pl.DataFrame:
+        return pl.DataFrame(
+            {
+                "symbol_id": pl.Series([42], dtype=pl.Int64),
+                "price_increment": [1.0],
+                "amount_increment": [100.0],
+            }
+        )
+
+    @patch("pointline.research.spines.dollar.research_core")
+    @patch("pointline.research.spines.dollar.read_dim_symbol_table")
+    def test_dollar_bar_end_timestamps(self, mock_dim, mock_core):
+        """Dollar spine timestamps must be bar ENDS, not starts."""
+        mock_core.scan_table.return_value = self._make_trades_lf()
+        mock_dim.return_value = self._mock_dim_symbol()
+
+        from pointline.research.spines.dollar import DollarSpineBuilder
+
+        builder = DollarSpineBuilder()
+        config = DollarBarConfig(dollar_threshold=2000.0)
+
+        spine = builder.build_spine(
+            symbol_id=42,
+            start_ts_us=0,
+            end_ts_us=1000,
+            config=config,
+        ).collect()
+
+        # notional per trade = |10*1.0 * 1*100.0| = 1000
+        # cum_notional: [1000, 2000, 3000, 4000]
+        # bar_id:       [   0,    1,    1,    2]
+        # bar_start (min ts per bar_id): [100, 200, 400]
+        # After shift: bar_end = [200, 400, 1000(=end_ts_us)]
+        assert spine.height == 3
+        ts_list = spine["ts_local_us"].to_list()
+        assert ts_list == [200, 400, 1000], f"Expected bar ENDS [200, 400, 1000], got {ts_list}"
+
+    @patch("pointline.research.spines.dollar.research_core")
+    @patch("pointline.research.spines.dollar.read_dim_symbol_table")
+    def test_dollar_max_rows_enforcement(self, mock_dim, mock_core):
+        """Dollar spine must enforce max_rows with an eager check."""
+        mock_core.scan_table.return_value = self._make_trades_lf()
+        mock_dim.return_value = self._mock_dim_symbol()
+
+        from pointline.research.spines.dollar import DollarSpineBuilder
+
+        builder = DollarSpineBuilder()
+        # threshold=1000 → 4 bars, but max_rows=2
+        config = DollarBarConfig(dollar_threshold=1000.0, max_rows=2)
+
+        with pytest.raises(RuntimeError, match="too many rows"):
+            builder.build_spine(
+                symbol_id=42,
+                start_ts_us=0,
+                end_ts_us=1000,
+                config=config,
+            ).collect()
+
+
+class TestConfigTypeDispatch:
+    """Test dynamic config_type dispatch in registry."""
+
+    def test_dispatch_clock(self):
+        builder = get_builder_by_config(ClockSpineConfig())
+        assert builder.name == "clock"
+
+    def test_dispatch_volume(self):
+        builder = get_builder_by_config(VolumeBarConfig())
+        assert builder.name == "volume"
+
+    def test_dispatch_dollar(self):
+        builder = get_builder_by_config(DollarBarConfig())
+        assert builder.name == "dollar"
+
+    def test_dispatch_trades(self):
+        from pointline.research.spines import TradesSpineConfig
+
+        builder = get_builder_by_config(TradesSpineConfig())
+        assert builder.name == "trades"
+
+    def test_config_type_property(self):
+        """Each builder's config_type should return its config class."""
+        from pointline.research.spines import get_builder
+
+        assert get_builder("clock").config_type is ClockSpineConfig
+        assert get_builder("volume").config_type is VolumeBarConfig
+        assert get_builder("dollar").config_type is DollarBarConfig

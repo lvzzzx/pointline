@@ -1,3 +1,5 @@
+"""Local bronze source module for file discovery."""
+
 import hashlib
 import logging
 from collections.abc import Iterator

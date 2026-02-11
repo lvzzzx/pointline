@@ -100,7 +100,7 @@
     },
     "spine": {
       "type": "object",
-      "additionalProperties": false,
+      "additionalProperties": true,
       "required": ["type"],
       "properties": {
         "type": {

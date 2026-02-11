@@ -43,6 +43,7 @@ class CheckResult:
     recommendation: str | None = None
 
     def __post_init__(self):
+        """Post-initialization to normalize violation rate."""
         if self.total_count == 0:
             # If total is 0, set violation_rate based on whether there are violations
             object.__setattr__(self, "violation_rate", 1.0 if self.violation_count > 0 else 0.0)
@@ -61,6 +62,7 @@ class CheckReport:
     overall_duration_ms: int = 0
 
     def __post_init__(self):
+        """Post-initialization to update overall status."""
         self._update_overall_status()
 
     def add_result(self, result: CheckResult) -> None:
@@ -169,6 +171,7 @@ class SymbolIntegrityCheck(BaseCrossTableCheck):
         table_name: str,
         date_partition: date | None,
     ) -> CheckResult:
+        """Execute symbol integrity check."""
         import time
 
         start_ms = int(time.time() * 1000)
@@ -302,6 +305,7 @@ class ManifestConsistencyCheck(BaseCrossTableCheck):
         table_name: str,
         date_partition: date | None,
     ) -> CheckResult:
+        """Execute manifest consistency check."""
         import time
 
         from pointline.dq.registry import get_dq_config
@@ -477,6 +481,7 @@ class TemporalAlignmentCheck(BaseCrossTableCheck):
         table_name: str,
         date_partition: date | None,
     ) -> CheckResult:
+        """Execute temporal alignment check."""
         import time
 
         start_ms = int(time.time() * 1000)
@@ -682,6 +687,7 @@ class ExchangeConsistencyCheck(BaseCrossTableCheck):
         table_name: str,
         date_partition: date | None,
     ) -> CheckResult:
+        """Execute exchange consistency check."""
         import time
 
         start_ms = int(time.time() * 1000)
@@ -790,6 +796,7 @@ class DateIntegrityCheck(BaseCrossTableCheck):
         table_name: str,
         date_partition: date | None,
     ) -> CheckResult:
+        """Execute date integrity check."""
         import time
 
         start_ms = int(time.time() * 1000)

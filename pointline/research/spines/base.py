@@ -5,6 +5,9 @@ implements a specific sampling method (clock, trades, volume bars, dollar bars, 
 
 Spine Contract:
 - Must return LazyFrame with columns: (ts_local_us, exchange_id, symbol_id)
+- ts_local_us is the BAR END timestamp — the right boundary of the half-open
+  window [prev_bar_end, ts_local_us).  All data assigned to this bar satisfies
+  data.ts_local_us < bar.ts_local_us (strict less-than).
 - Must be sorted by (exchange_id, symbol_id, ts_local_us) for deterministic ordering
 - Must preserve PIT correctness (no lookahead bias)
 """
@@ -54,9 +57,14 @@ class SpineBuilder(Protocol):
     Contract:
     - build_spine() must return LazyFrame with (ts_local_us, exchange_id, symbol_id)
     - Output must be sorted by (exchange_id, symbol_id, ts_local_us)
-    - Timestamps must be bar ENDS (interval ends)
+    - ts_local_us values are BAR ENDS (interval ends)
     - Must preserve PIT correctness (no lookahead bias)
     """
+
+    @property
+    def config_type(self) -> type[SpineBuilderConfig]:
+        """Return the config class this builder accepts."""
+        ...
 
     @property
     def name(self) -> str:
@@ -108,7 +116,10 @@ class SpineBuilder(Protocol):
 
         Returns:
             LazyFrame with columns:
-            - ts_local_us (Int64): Sample timestamp
+            - ts_local_us (Int64): BAR END timestamp — right boundary of
+              the half-open window [prev_bar_end, ts_local_us).
+              NOT the bar start. assign_to_buckets() relies on
+              data.ts_local_us < spine.ts_local_us.
             - exchange_id (Int16): Exchange ID
             - symbol_id (Int64): Symbol ID
 

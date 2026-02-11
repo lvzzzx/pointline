@@ -36,6 +36,10 @@ class DollarSpineBuilder:
     """Dollar bar builder: Sample every $N notional value."""
 
     @property
+    def config_type(self) -> type:
+        return DollarBarConfig
+
+    @property
     def name(self) -> str:
         return "dollar"
 
@@ -82,7 +86,11 @@ class DollarSpineBuilder:
 
         Returns:
             LazyFrame with (ts_local_us, exchange_id, symbol_id)
-            sorted by (exchange_id, symbol_id, ts_local_us)
+            sorted by (exchange_id, symbol_id, ts_local_us).
+
+            ts_local_us is the BAR END — the right boundary of each
+            dollar bar window, NOT the first trade timestamp.
+            assign_to_buckets() relies on data.ts < bar.ts_local_us.
 
         Raises:
             TypeError: If config is not DollarBarConfig
@@ -156,16 +164,38 @@ class DollarSpineBuilder:
         )
 
         # Group by (exchange_id, symbol_id, bar_id), take first timestamp
+        # These are bar BOUNDARIES (starts), which we shift forward to get bar ENDS
         spine = trades.group_by(["exchange_id", "symbol_id", "bar_id"]).agg(
             [
-                pl.col("ts_local_us").min().alias("ts_local_us"),
+                pl.col("ts_local_us").min().alias("bar_start_ts"),
             ]
         )
 
-        # Sort by (exchange_id, symbol_id, ts_local_us) for deterministic ordering
+        # Sort by (exchange_id, symbol_id, bar_start_ts) for correct shifting
+        spine = spine.sort(["exchange_id", "symbol_id", "bar_start_ts"])
+
+        # Shift forward: bar_end[k] = bar_start[k+1], last bar gets end_ts_us
+        # This converts bar STARTS to bar ENDS as required by the protocol
+        spine = spine.with_columns(
+            pl.col("bar_start_ts")
+            .shift(-1)
+            .over(["exchange_id", "symbol_id"])
+            .fill_null(end_ts_us)
+            .alias("ts_local_us")
+        )
+
+        # Sort by bar-end timestamps
         spine = spine.sort(["exchange_id", "symbol_id", "ts_local_us"])
 
-        # Select final columns (drop bar_id)
+        # Enforce max_rows safety limit (eager check)
+        row_count = spine.select(pl.len()).collect().item()
+        if row_count > config.max_rows:
+            raise RuntimeError(
+                f"Dollar spine would generate too many rows: {row_count:,} > {config.max_rows:,}. "
+                f"Increase dollar_threshold or max_rows."
+            )
+
+        # Select final columns
         spine = spine.select(["ts_local_us", "exchange_id", "symbol_id"])
 
         return spine

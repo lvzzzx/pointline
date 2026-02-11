@@ -44,6 +44,7 @@ logger = logging.getLogger(__name__)
 
 
 def cmd_validate_quotes(args: argparse.Namespace) -> int:
+    """Validate raw quotes file against ingested table."""
     start_time_ms = int(time.time() * 1000)
 
     path = Path(args.file)
@@ -202,6 +203,7 @@ def cmd_validate_quotes(args: argparse.Namespace) -> int:
 
 
 def cmd_validate_trades(args: argparse.Namespace) -> int:
+    """Validate raw trades file against ingested table."""
     start_time_ms = int(time.time() * 1000)
 
     path = Path(args.file)

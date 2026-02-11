@@ -15,6 +15,7 @@ from pointline.config import (
 
 
 def cmd_config_show(args: Namespace) -> int:
+    """Show resolved configuration values."""
     env_value = os.getenv("LAKE_ROOT")
     config_value = get_config_lake_root()
 
@@ -28,6 +29,7 @@ def cmd_config_show(args: Namespace) -> int:
 
 
 def cmd_config_set(args: Namespace) -> int:
+    """Set configuration values."""
     if args.lake_root is None:
         raise ValueError("config set: --lake-root is required")
 

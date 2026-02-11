@@ -10,10 +10,34 @@ from dataclasses import dataclass
 
 import polars as pl
 
-from pointline.dim_symbol import read_dim_symbol_table
+from pointline.dim_symbol import resolve_exchange_ids
 
 from .base import SpineBuilderConfig
 from .registry import register_builder
+
+
+def generate_bar_end_timestamps(start_us: int, end_us: int, step_us: int) -> list[int]:
+    """Generate bar-end timestamps aligned to grid.
+
+    First bar end = ceil(start_us / step_us) * step_us, then every step_us
+    until end_us (inclusive).
+
+    Args:
+        start_us: Start timestamp in microseconds.
+        end_us: End timestamp in microseconds.
+        step_us: Step size in microseconds.
+
+    Returns:
+        List of bar-end timestamps.
+    """
+    # First bar end is one interval after the last complete interval boundary
+    first_end = ((start_us // step_us) + 1) * step_us
+    timestamps: list[int] = []
+    current = first_end
+    while current <= end_us:
+        timestamps.append(current)
+        current += step_us
+    return timestamps
 
 
 @dataclass(frozen=True)
@@ -44,6 +68,10 @@ class ClockSpineBuilder:
         Generates: [60_000_000, 120_000_000, 180_000_000]
         These are bar ENDS: Bar at 60s contains data in [0s, 60s)
     """
+
+    @property
+    def config_type(self) -> type[SpineBuilderConfig]:
+        return ClockSpineConfig
 
     @property
     def name(self) -> str:
@@ -108,19 +136,13 @@ class ClockSpineBuilder:
         symbol_ids = [symbol_id] if isinstance(symbol_id, int) else list(symbol_id)
 
         # Resolve exchange_ids
-        exchange_ids = self._resolve_exchange_ids(symbol_ids)
+        exchange_ids = resolve_exchange_ids(symbol_ids)
 
         # Compute step in microseconds
         step_us = config.step_ms * 1_000
 
         # Generate bar boundary timestamps (interval ENDS)
-        # CRITICAL: First bar end is at start + step, not at start
-        grid_start = self._align_to_grid(start_ts_us, step_us)
-        timestamps: list[int] = []
-        current = grid_start
-        while current <= end_ts_us:
-            timestamps.append(current)
-            current += step_us
+        timestamps = generate_bar_end_timestamps(start_ts_us, end_ts_us, step_us)
 
         if not timestamps:
             # Edge case: no bars in range
@@ -156,57 +178,6 @@ class ClockSpineBuilder:
 
         # Sort by (exchange_id, symbol_id, ts_local_us) for deterministic ordering
         return spine.sort(["exchange_id", "symbol_id", "ts_local_us"])
-
-    def _align_to_grid(self, ts: int, step_us: int) -> int:
-        """Align timestamp to grid and return FIRST bar end.
-
-        Args:
-            ts: Input timestamp (microseconds)
-            step_us: Step size in microseconds
-
-        Returns:
-            First bar end timestamp >= ts aligned to grid
-
-        Example:
-            ts=0, step_us=60_000_000
-            → Returns 60_000_000 (first bar ends at 1 minute)
-
-            ts=50_000_000, step_us=60_000_000
-            → Returns 60_000_000 (first bar ends at 1 minute)
-
-            ts=70_000_000, step_us=60_000_000
-            → Returns 120_000_000 (first bar ends at 2 minutes)
-        """
-        # Find how many complete intervals have passed
-        intervals_passed = ts // step_us
-
-        # First bar end is one interval after the last complete interval
-        bar_end = (intervals_passed + 1) * step_us
-
-        return bar_end
-
-    def _resolve_exchange_ids(self, symbol_ids: list[int]) -> list[int]:
-        """Resolve exchange_ids from symbol_ids via dim_symbol."""
-        dim = read_dim_symbol_table(columns=["symbol_id", "exchange_id"]).unique()
-        lookup = dim.filter(pl.col("symbol_id").is_in(symbol_ids))
-
-        if lookup.is_empty():
-            raise ValueError("No matching symbol_ids found in dim_symbol.")
-
-        exchange_ids: list[int] = []
-        missing: list[int] = []
-
-        for symbol in symbol_ids:
-            rows = lookup.filter(pl.col("symbol_id") == symbol)
-            if rows.is_empty():
-                missing.append(symbol)
-                continue
-            exchange_ids.append(int(rows["exchange_id"][0]))
-
-        if missing:
-            raise ValueError(f"Missing exchange_id for symbol_id(s): {missing}")
-
-        return exchange_ids
 
 
 # Auto-register on module import

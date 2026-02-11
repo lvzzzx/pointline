@@ -1,3 +1,5 @@
+"""Tardis instrument data mapping utilities."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -11,6 +13,8 @@ from pointline.config import TYPE_MAP, get_exchange_id, get_exchange_name
 
 @dataclass(frozen=True)
 class TardisInstrument:
+    """Represents a Tardis instrument with its metadata."""
+
     exchange_symbol: str
     base_asset: str
     quote_asset: str
