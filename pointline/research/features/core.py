@@ -11,6 +11,7 @@ from pointline.dim_symbol import resolve_exchange_ids
 from pointline.research import core as research_core
 from pointline.research.spines import get_builder_by_config
 from pointline.research.spines.base import SpineBuilderConfig
+from pointline.research.spines.cache import SpineCache
 from pointline.research.spines.clock import generate_bar_end_timestamps
 from pointline.types import TimestampInput
 
@@ -116,6 +117,7 @@ def build_event_spine(
     start_ts_us: TimestampInput,
     end_ts_us: TimestampInput,
     config: EventSpineConfig,
+    cache: SpineCache | None = None,
 ) -> pl.LazyFrame:
     """Build an event spine with deterministic ordering.
 
@@ -126,6 +128,9 @@ def build_event_spine(
         start_ts_us: Start timestamp (microseconds, UTC, or TimestampInput)
         end_ts_us: End timestamp (microseconds, UTC, or TimestampInput)
         config: EventSpineConfig with builder_config
+        cache: Optional SpineCache for caching expensive spine computations.
+            When provided, spines are persisted as Parquet and reused on
+            subsequent calls with identical inputs.
 
     Returns:
         LazyFrame with (ts_local_us, exchange_id, symbol_id)
@@ -151,7 +156,10 @@ def build_event_spine(
     # Get builder from config type
     builder = get_builder_by_config(config.builder_config)
 
-    # Delegate to builder
+    # Delegate through cache if provided
+    if cache is not None:
+        return cache.get_or_build(builder, symbol_id, start_us, end_us, config.builder_config)
+
     return builder.build_spine(
         symbol_id=symbol_id,
         start_ts_us=start_us,

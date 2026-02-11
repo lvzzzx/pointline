@@ -32,6 +32,7 @@ from pointline.research.resample.rollups import (
     is_builtin_feature_rollup,
     normalize_feature_rollup_names,
 )
+from pointline.research.spines import SpineCache, get_builder
 from pointline.research.spines.clock import generate_bar_end_timestamps
 
 
@@ -51,13 +52,13 @@ class _ExecutionArtifacts:
     reproducibility_evidence: str
 
 
-def pipeline(request: dict[str, Any]) -> dict[str, Any]:
+def pipeline(request: dict[str, Any], *, cache: SpineCache | None = None) -> dict[str, Any]:
     """Execute research pipeline request (v2 contract)."""
     started_at = _utc_now_iso()
     validate_quant_research_input_v2(request)
 
     compiled = compile_request(request)
-    frame, runtime = execute_compiled(compiled)
+    frame, runtime = execute_compiled(compiled, cache=cache)
     gates = evaluate_quality_gates(compiled, runtime)
     metrics = compute_metrics(frame, compiled["evaluation"]["metrics"])
     status = "success"
@@ -145,7 +146,9 @@ def compile_request(request: dict[str, Any]) -> dict[str, Any]:
     return compiled
 
 
-def execute_compiled(compiled: dict[str, Any]) -> tuple[pl.DataFrame, _ExecutionArtifacts]:
+def execute_compiled(
+    compiled: dict[str, Any], *, cache: SpineCache | None = None
+) -> tuple[pl.DataFrame, _ExecutionArtifacts]:
     """Execute a compiled request across all supported modes."""
     timeline_col = compiled["timeline"]["time_col"]
     sources, coverage_checks, probe_checks = _load_sources(compiled["sources"], timeline_col)
@@ -154,6 +157,7 @@ def execute_compiled(compiled: dict[str, Any]) -> tuple[pl.DataFrame, _Execution
         sources,
         coverage_checks=coverage_checks,
         probe_checks=probe_checks,
+        cache=cache,
     )
 
 
@@ -163,6 +167,7 @@ def execute_compiled_with_sources(
     *,
     coverage_checks: list[dict[str, Any]] | None = None,
     probe_checks: list[dict[str, Any]] | None = None,
+    cache: SpineCache | None = None,
 ) -> tuple[pl.DataFrame, _ExecutionArtifacts]:
     """Execute a compiled request with pre-loaded source frames.
 
@@ -172,7 +177,7 @@ def execute_compiled_with_sources(
     coverage_checks = coverage_checks or []
     probe_checks = probe_checks or []
 
-    result, pit_violations, unassigned = _execute_mode(compiled, sources)
+    result, pit_violations, unassigned = _execute_mode(compiled, sources, cache=cache)
     result = apply_context_plugins(
         result,
         compiled.get("context_risk"),
@@ -182,7 +187,7 @@ def execute_compiled_with_sources(
     frame = result.collect()
 
     # Mandatory reproducibility rerun check on identical compiled inputs.
-    rerun_result, _, _ = _execute_mode(compiled, sources)
+    rerun_result, _, _ = _execute_mode(compiled, sources, cache=cache)
     rerun_result = apply_context_plugins(
         rerun_result,
         compiled.get("context_risk"),
@@ -215,12 +220,14 @@ def execute_compiled_with_sources(
 def _execute_mode(
     compiled: dict[str, Any],
     sources: dict[str, pl.LazyFrame],
+    *,
+    cache: SpineCache | None = None,
 ) -> tuple[pl.LazyFrame, int, int]:
     mode = compiled["mode"]
     if mode == "bar_then_feature":
-        return _execute_bar_then_feature(compiled, sources)
+        return _execute_bar_then_feature(compiled, sources, cache=cache)
     if mode == "tick_then_bar":
-        return _execute_tick_then_bar(compiled, sources)
+        return _execute_tick_then_bar(compiled, sources, cache=cache)
     if mode == "event_joined":
         return _execute_event_joined(compiled, sources)
     raise PipelineError(f"Unsupported mode: {mode}")
@@ -443,22 +450,28 @@ def load_source(spec: dict[str, Any], timeline_col: str) -> pl.LazyFrame:
 
 
 def _execute_bar_then_feature(
-    compiled: dict[str, Any], sources: dict[str, pl.LazyFrame]
+    compiled: dict[str, Any],
+    sources: dict[str, pl.LazyFrame],
+    *,
+    cache: SpineCache | None = None,
 ) -> tuple[pl.LazyFrame, int, int]:
     _validate_mode_operator_stages(
         compiled,
         mode="bar_then_feature",
         allowed_stages={"aggregate_then_feature", "bar_feature"},
     )
-    return _execute_bucketed_aggregation(compiled, sources)
+    return _execute_bucketed_aggregation(compiled, sources, cache=cache)
 
 
 def _execute_bucketed_aggregation(
-    compiled: dict[str, Any], sources: dict[str, pl.LazyFrame]
+    compiled: dict[str, Any],
+    sources: dict[str, pl.LazyFrame],
+    *,
+    cache: SpineCache | None = None,
 ) -> tuple[pl.LazyFrame, int, int]:
     source_name = _primary_source_name(compiled)
     source = sources[source_name]
-    spine = _build_spine(compiled, source)
+    spine = _build_spine(compiled, source, cache=cache)
 
     bucketed = assign_to_buckets(source, spine)
     pit_violations = _count_pit_violations(bucketed)
@@ -471,7 +484,10 @@ def _execute_bucketed_aggregation(
 
 
 def _execute_tick_then_bar(
-    compiled: dict[str, Any], sources: dict[str, pl.LazyFrame]
+    compiled: dict[str, Any],
+    sources: dict[str, pl.LazyFrame],
+    *,
+    cache: SpineCache | None = None,
 ) -> tuple[pl.LazyFrame, int, int]:
     # TODO(v2): diverge execution plan with explicit tick-level pre-feature stage graph.
     # Current implementation shares bucketing/aggregation engine with bar_then_feature,
@@ -482,7 +498,7 @@ def _execute_tick_then_bar(
         allowed_stages={"feature_then_aggregate", "aggregate_then_feature"},
         require_any={"feature_then_aggregate"},
     )
-    return _execute_bucketed_aggregation(compiled, sources)
+    return _execute_bucketed_aggregation(compiled, sources, cache=cache)
 
 
 def _execute_event_joined(
@@ -508,7 +524,43 @@ def _execute_event_joined(
     return aligned, 0, 0
 
 
-def _build_spine(compiled: dict[str, Any], source: pl.LazyFrame) -> pl.LazyFrame:
+def _extract_spine_params(compiled: dict[str, Any]) -> tuple[int | list[int], int, int]:
+    """Extract symbol_id and timestamp bounds for builder dispatch.
+
+    Returns:
+        (symbol_id, start_ts_us, end_ts_us) from the primary source spec,
+        with optional overrides from spine config.
+    """
+    primary = compiled["sources"][0]
+    symbol_id: int | list[int] = primary["symbol_id"]
+    start_ts_us = int(compiled["spine"].get("start_ts_us", primary["start_ts_us"]))
+    end_ts_us = int(compiled["spine"].get("end_ts_us", primary["end_ts_us"]))
+    return symbol_id, start_ts_us, end_ts_us
+
+
+# Keys in the spine dict that are pipeline-level, not builder-specific.
+_SPINE_PIPELINE_KEYS = frozenset({"type", "max_rows", "source"})
+
+
+def _resolve_builder_config(builder: Any, spine_cfg: dict[str, Any]) -> Any:
+    """Map pipeline spine dict to a builder-specific frozen config.
+
+    Strips pipeline-level keys (``type``, ``max_rows``, ``source``) and
+    passes remaining kwargs to ``builder.config_type``.  ``max_rows`` is
+    forwarded to the config if the builder's config type accepts it.
+    """
+    kwargs = {k: v for k, v in spine_cfg.items() if k not in _SPINE_PIPELINE_KEYS}
+    if "max_rows" in spine_cfg:
+        kwargs["max_rows"] = spine_cfg["max_rows"]
+    return builder.config_type(**kwargs)
+
+
+def _build_spine(
+    compiled: dict[str, Any],
+    source: pl.LazyFrame,
+    *,
+    cache: SpineCache | None = None,
+) -> pl.LazyFrame:
     spine_cfg = compiled["spine"]
     spine_type = spine_cfg["type"]
 
@@ -518,14 +570,25 @@ def _build_spine(compiled: dict[str, Any], source: pl.LazyFrame) -> pl.LazyFrame
             ["ts_local_us", "exchange_id", "symbol_id", "file_id", "file_line_number"]
         )
 
-    if spine_type in {"volume", "dollar"}:
-        raise PipelineError(
-            f"spine.type='{spine_type}' is not implemented in pipeline v2. "
-            "Use spine.type='clock' or 'trades'."
-        )
+    if spine_type == "clock":
+        return _build_clock_spine(compiled, source)
 
-    if spine_type != "clock":
+    # Dispatch to registered builders (volume, dollar, etc.)
+    try:
+        builder = get_builder(spine_type)
+    except KeyError:
         raise PipelineError(f"Unsupported spine.type for pipeline v2: {spine_type}")
+
+    symbol_id, start_ts_us, end_ts_us = _extract_spine_params(compiled)
+    builder_config = _resolve_builder_config(builder, spine_cfg)
+
+    if cache is not None:
+        return cache.get_or_build(builder, symbol_id, start_ts_us, end_ts_us, builder_config)
+    return builder.build_spine(symbol_id, start_ts_us, end_ts_us, builder_config)
+
+
+def _build_clock_spine(compiled: dict[str, Any], source: pl.LazyFrame) -> pl.LazyFrame:
+    spine_cfg = compiled["spine"]
 
     step_ms = int(spine_cfg.get("step_ms", 60_000))
     if step_ms <= 0:

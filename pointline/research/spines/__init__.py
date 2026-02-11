@@ -26,6 +26,7 @@ Usage:
 # Import all builders to trigger auto-registration
 from . import clock, dollar, trades, volume  # noqa: F401
 from .base import SpineBuilder, SpineBuilderConfig
+from .cache import CacheEntry, SpineCache
 
 # Export builder configs and builders
 from .clock import ClockSpineBuilder, ClockSpineConfig, generate_bar_end_timestamps
@@ -47,6 +48,9 @@ __all__ = [
     # Base
     "SpineBuilder",
     "SpineBuilderConfig",
+    # Cache
+    "SpineCache",
+    "CacheEntry",
     # Registry
     "register_builder",
     "get_builder",
