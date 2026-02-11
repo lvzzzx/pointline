@@ -11,6 +11,7 @@ from pointline.io.base_repository import BaseDeltaRepository
 
 
 def cmd_delta_optimize(args: argparse.Namespace) -> int:
+    """Optimize Delta table partitions."""
     try:
         filters = parse_partition_filters(args.partition)
     except ValueError as exc:
@@ -49,6 +50,7 @@ def cmd_delta_optimize(args: argparse.Namespace) -> int:
 
 
 def cmd_delta_vacuum(args: argparse.Namespace) -> int:
+    """Vacuum old files from Delta tables."""
     partition_by = TABLE_PARTITIONS.get(args.table)
     repo = BaseDeltaRepository(get_table_path(args.table), partition_by=partition_by)
     dry_run = not args.execute

@@ -30,6 +30,7 @@ logger = logging.getLogger(__name__)
 
 
 def _parse_date(value: str | None) -> date_type | None:
+    """Parse date string to date object."""
     if not value:
         return None
     parsed = parse_date_arg(value)
@@ -39,6 +40,7 @@ def _parse_date(value: str | None) -> date_type | None:
 
 
 def _write_dq_summary(df: pl.DataFrame, *, table_path: Path) -> None:
+    """Write DQ summary to Delta table."""
     if df.is_empty():
         return
     normalized = normalize_dq_summary_schema(df)
@@ -49,10 +51,12 @@ def _write_dq_summary(df: pl.DataFrame, *, table_path: Path) -> None:
 
 
 def _progress_printer(*, table_name: str, index: int, total: int, date_partition) -> None:
+    """Print progress for DQ operations."""
     print(f"[dq] {table_name}: {index}/{total} date={date_partition}")
 
 
 def cmd_dq_run(args: argparse.Namespace) -> int:
+    """Run data quality checks."""
     date_partition = _parse_date(args.date)
     dq_summary_path = Path(args.dq_summary_path)
     progress_cb = _progress_printer if args.progress else None
@@ -90,6 +94,7 @@ def cmd_dq_run(args: argparse.Namespace) -> int:
 
 
 def cmd_dq_report(args: argparse.Namespace) -> int:
+    """Show DQ report for a table."""
     dq_summary_path = Path(args.dq_summary_path)
     if not dq_summary_path.exists():
         print(f"dq_summary not found at: {dq_summary_path}. Running DQ now...")
@@ -129,6 +134,7 @@ def cmd_dq_report(args: argparse.Namespace) -> int:
 
 
 def _aggregate_issue_counts(rows: list[dict]) -> dict[str, int]:
+    """Aggregate issue counts from multiple DQ summary rows."""
     totals: dict[str, int] = {}
     for row in rows:
         raw = row.get("issue_counts")
@@ -147,6 +153,7 @@ def _aggregate_issue_counts(rows: list[dict]) -> dict[str, int]:
 
 
 def _extract_partition_stats(row: dict) -> tuple[int | None, int | None]:
+    """Extract file count and total bytes from partition stats."""
     raw = row.get("profile_stats")
     if not raw:
         return None, None
@@ -167,6 +174,7 @@ def _extract_partition_stats(row: dict) -> tuple[int | None, int | None]:
 
 
 def cmd_dq_summary(args: argparse.Namespace) -> int:
+    """Show DQ health summary for a table."""
     dq_summary_path = Path(args.dq_summary_path)
     if not dq_summary_path.exists():
         print(f"dq_summary not found at: {dq_summary_path}")
@@ -233,6 +241,7 @@ def cmd_dq_summary(args: argparse.Namespace) -> int:
 
 
 def dq_table_choices() -> list[str]:
+    """Return available DQ table choices."""
     return ["all", *list_dq_tables()]
 
 

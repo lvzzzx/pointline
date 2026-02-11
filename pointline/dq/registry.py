@@ -7,6 +7,8 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True)
 class TableDQConfig:
+    """Configuration for data quality checks on a table."""
+
     table_name: str
     key_columns: tuple[str, ...]
     ts_column: str | None
@@ -109,10 +111,12 @@ TABLE_DQ_CONFIGS: dict[str, TableDQConfig] = {
 
 
 def get_dq_config(table_name: str) -> TableDQConfig:
+    """Get DQ configuration for a table."""
     if table_name not in TABLE_DQ_CONFIGS:
         raise ValueError(f"Unknown DQ table: {table_name}")
     return TABLE_DQ_CONFIGS[table_name]
 
 
 def list_dq_tables() -> tuple[str, ...]:
+    """List all tables with DQ configurations."""
     return tuple(TABLE_DQ_CONFIGS.keys())

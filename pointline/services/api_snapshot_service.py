@@ -23,11 +23,13 @@ from pointline.services.dim_symbol_service import DimSymbolService
 
 
 def _sanitize_component(value: str) -> str:
+    """Sanitize a string for use in file paths."""
     clean = re.sub(r"[^A-Za-z0-9._-]+", "_", value.strip())
     return clean or "unknown"
 
 
 def _extract_partition_value(relative_path: str, key: str) -> str | None:
+    """Extract partition value from a path."""
     token = f"{key}="
     for part in Path(relative_path).parts:
         if part.startswith(token):
@@ -37,6 +39,7 @@ def _extract_partition_value(relative_path: str, key: str) -> str | None:
 
 
 def _sanitize_request_payload(params: dict[str, Any]) -> dict[str, Any]:
+    """Sanitize request payload by redacting sensitive keys."""
     redacted_keys = {"api_key", "token", "authorization", "auth"}
     sanitized: dict[str, Any] = {}
     for key, value in params.items():
@@ -49,6 +52,8 @@ def _sanitize_request_payload(params: dict[str, Any]) -> dict[str, Any]:
 
 @dataclass
 class ApiCaptureResult:
+    """Result of an API capture operation."""
+
     vendor: str
     dataset: str
     bronze_root: Path
@@ -59,6 +64,8 @@ class ApiCaptureResult:
 
 @dataclass
 class ApiReplayFileResult:
+    """Result of replaying a single API snapshot file."""
+
     bronze_file_path: str
     status: str
     row_count: int
@@ -67,6 +74,8 @@ class ApiReplayFileResult:
 
 @dataclass
 class ApiReplaySummary:
+    """Summary of an API replay operation."""
+
     vendor: str
     dataset: str
     discovered_files: int

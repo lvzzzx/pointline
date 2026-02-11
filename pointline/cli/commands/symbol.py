@@ -10,6 +10,7 @@ from pointline.registry import find_symbol
 
 
 def cmd_symbol_search(args: argparse.Namespace) -> int:
+    """Search for symbols in the registry."""
     df = find_symbol(
         query=args.query,
         exchange=args.exchange,

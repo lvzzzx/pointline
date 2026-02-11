@@ -1,3 +1,5 @@
+"""Configuration management module for Pointline."""
+
 from __future__ import annotations
 
 import logging

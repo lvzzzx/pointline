@@ -1,3 +1,5 @@
+"""Base repository module for Delta table operations."""
+
 from __future__ import annotations
 
 import logging

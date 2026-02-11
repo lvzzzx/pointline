@@ -1,3 +1,5 @@
+"""Delta manifest repository module."""
+
 import logging
 import struct
 import time

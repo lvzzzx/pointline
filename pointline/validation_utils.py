@@ -1,3 +1,5 @@
+"""Validation utilities for data quality checks."""
+
 import polars as pl
 
 

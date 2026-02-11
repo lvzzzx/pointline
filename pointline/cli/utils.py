@@ -19,6 +19,14 @@ from pointline.io.protocols import BronzeFileMetadata
 
 
 def sorted_files(files: Iterable[BronzeFileMetadata]) -> list[BronzeFileMetadata]:
+    """Sort bronze files by vendor, data type, date, and path.
+
+    Args:
+        files: Iterable of bronze file metadata.
+
+    Returns:
+        Sorted list of bronze file metadata.
+    """
     return sorted(
         files,
         key=lambda f: (
@@ -60,6 +68,15 @@ def print_files(files: Sequence[BronzeFileMetadata], *, limit: int | None = 100)
 
 
 def compute_sha256(path: Path, chunk_size: int = 1024 * 1024) -> str:
+    """Compute SHA256 hash of a file.
+
+    Args:
+        path: Path to the file.
+        chunk_size: Size of chunks to read. Default is 1MB.
+
+    Returns:
+        Hex digest of the SHA256 hash.
+    """
     hasher = hashlib.sha256()
     with path.open("rb") as handle:
         for chunk in iter(lambda: handle.read(chunk_size), b""):
@@ -68,6 +85,17 @@ def compute_sha256(path: Path, chunk_size: int = 1024 * 1024) -> str:
 
 
 def parse_date_arg(value: str | None) -> date | None:
+    """Parse a date string in YYYY-MM-DD format.
+
+    Args:
+        value: Date string to parse, or None.
+
+    Returns:
+        Parsed date, or None if input was None.
+
+    Raises:
+        ValueError: If the date format is invalid.
+    """
     if value is None:
         return None
     from datetime import datetime as _dt
@@ -85,6 +113,20 @@ def resolve_manifest_file_id(
     file_path: Path,
     data_type: str,
 ) -> int:
+    """Resolve file ID from the manifest based on file path and SHA256 hash.
+
+    Args:
+        manifest_path: Path to the manifest table.
+        bronze_root: Root directory for bronze files.
+        file_path: Path to the file to look up.
+        data_type: Data type of the file.
+
+    Returns:
+        Resolved file ID.
+
+    Raises:
+        ValueError: If file not found, not under bronze root, or no manifest record exists.
+    """
     manifest_repo = DeltaManifestRepository(manifest_path)
     if not file_path.exists():
         raise ValueError(f"File not found: {file_path}")
@@ -118,6 +160,15 @@ def resolve_manifest_file_id(
 
 
 def add_lineage(df: pl.DataFrame, file_id: int) -> pl.DataFrame:
+    """Add file_id and file_line_number columns for lineage tracking.
+
+    Args:
+        df: Input DataFrame.
+        file_id: File ID to associate with the records.
+
+    Returns:
+        DataFrame with lineage columns added.
+    """
     if "file_line_number" in df.columns:
         file_line_number = pl.col("file_line_number").cast(pl.Int32)
     else:
@@ -131,6 +182,16 @@ def add_lineage(df: pl.DataFrame, file_id: int) -> pl.DataFrame:
 
 
 def add_metadata(df: pl.DataFrame, exchange: str, exchange_id: int) -> pl.DataFrame:
+    """Add exchange metadata and derived date column to the DataFrame.
+
+    Args:
+        df: Input DataFrame with ts_local_us column.
+        exchange: Exchange name.
+        exchange_id: Exchange ID.
+
+    Returns:
+        DataFrame with exchange and date columns added.
+    """
     result = df.with_columns(
         [
             pl.lit(exchange, dtype=pl.Utf8).alias("exchange"),
@@ -152,6 +213,19 @@ def compare_expected_vs_ingested(
     compare_cols: list[str],
     limit: int | None,
 ) -> tuple[int, int, int, int, int, pl.DataFrame]:
+    """Compare expected data against ingested data for validation.
+
+    Args:
+        expected: Expected DataFrame from the source file.
+        ingested: Ingested DataFrame from the table.
+        key_cols: Columns to use as join keys.
+        compare_cols: Columns to compare for equality.
+        limit: Maximum number of mismatched rows to return.
+
+    Returns:
+        Tuple of (expected_count, ingested_count, missing_count, extra_count,
+                  mismatch_count, mismatch_sample).
+    """
     expected_marked = expected.select(key_cols + compare_cols).with_columns(
         pl.lit(True).alias("_present_exp")
     )
@@ -196,6 +270,19 @@ def compare_expected_vs_ingested(
 
 
 def parse_partition_filters(items: Sequence[str]) -> dict[str, object]:
+    """Parse partition filter strings into a dictionary.
+
+    Supports date values (parsed as dates) and integer values (parsed as int).
+
+    Args:
+        items: Sequence of "key=value" strings.
+
+    Returns:
+        Dictionary of filter key to parsed value.
+
+    Raises:
+        ValueError: If a filter string is invalid or date format is wrong.
+    """
     filters: dict[str, object] = {}
     for item in items:
         if "=" not in item:
@@ -241,6 +328,16 @@ def read_bronze_csv(path: Path) -> pl.DataFrame:
 
 
 def infer_bronze_metadata(path: Path) -> dict[str, str]:
+    """Infer bronze file metadata from its path.
+
+    Expects path format: .../exchange={exchange}/type={type}/date={date}/symbol={symbol}/...
+
+    Args:
+        path: Path to the bronze file.
+
+    Returns:
+        Dictionary with exchange, data_type, date, and symbol if matched, empty otherwise.
+    """
     match = re.search(
         r"exchange=([^/]+)/type=([^/]+)/date=([^/]+)/symbol=([^/]+)/",
         path.as_posix(),
@@ -257,6 +354,17 @@ def infer_bronze_metadata(path: Path) -> dict[str, str]:
 
 
 def read_updates(path: Path) -> pl.DataFrame:
+    """Read updates from a CSV or Parquet file.
+
+    Args:
+        path: Path to the update file.
+
+    Returns:
+        DataFrame containing the updates.
+
+    Raises:
+        SystemExit: If the file format is unsupported.
+    """
     suffix = path.suffix.lower()
     if suffix == ".csv":
         return pl.read_csv(path)
@@ -266,6 +374,17 @@ def read_updates(path: Path) -> pl.DataFrame:
 
 
 def parse_effective_ts(value: str | None) -> int:
+    """Parse effective timestamp from string or use current time.
+
+    Args:
+        value: Timestamp string (microseconds since epoch) or "now".
+
+    Returns:
+        Timestamp in microseconds since epoch.
+
+    Raises:
+        SystemExit: If the value cannot be parsed as an integer.
+    """
     if value is None or value.lower() == "now":
         return int(time.time() * 1_000_000)
     try:
@@ -275,6 +394,17 @@ def parse_effective_ts(value: str | None) -> int:
 
 
 def parse_symbol_id_single(value: str | None) -> int | None:
+    """Parse a single symbol ID from a comma-separated string.
+
+    Args:
+        value: Comma-separated string containing symbol IDs.
+
+    Returns:
+        Single symbol ID, or None if input is empty.
+
+    Raises:
+        ValueError: If more than one symbol ID is provided.
+    """
     if not value:
         return None
     items = [int(part.strip()) for part in value.split(",") if part.strip()]
@@ -286,6 +416,14 @@ def parse_symbol_id_single(value: str | None) -> int | None:
 
 
 def normalize_exchange_arg(exchange: str | None) -> tuple[str, int] | tuple[None, None]:
+    """Normalize exchange name and return with its ID.
+
+    Args:
+        exchange: Exchange name to normalize, or None.
+
+    Returns:
+        Tuple of (normalized_exchange, exchange_id) or (None, None) if input is None.
+    """
     if exchange is None:
         return None, None
     exchange = normalize_exchange(exchange)

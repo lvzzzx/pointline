@@ -39,6 +39,11 @@ from pointline.config import BRONZE_ROOT, TABLE_PATHS, get_bronze_root, get_tabl
 
 
 def build_parser() -> argparse.ArgumentParser:
+    """Build and configure the argument parser for the Pointline CLI.
+
+    Returns:
+        Configured ArgumentParser with all subcommands and arguments.
+    """
     parser = argparse.ArgumentParser(prog="pointline", description="Pointline data lake CLI")
     subparsers = parser.add_subparsers(dest="command")
 

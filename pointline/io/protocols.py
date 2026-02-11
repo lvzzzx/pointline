@@ -1,3 +1,5 @@
+"""IO protocols and data classes for Pointline."""
+
 from __future__ import annotations
 
 from collections.abc import Callable, Iterator

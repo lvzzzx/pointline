@@ -12,6 +12,7 @@ from pointline.io.delta_manifest_repo import DeltaManifestRepository
 
 
 def _extract_partition_from_path_expr(key: str) -> pl.Expr:
+    """Create Polars expression to extract partition value from path."""
     return pl.col("bronze_file_name").cast(pl.Utf8).str.extract(rf"(?:^|/){key}=([^/]+)", 1)
 
 
@@ -21,6 +22,7 @@ def _filter_partition_column(
     key: str,
     value: str | None,
 ) -> tuple[pl.DataFrame, bool]:
+    """Filter DataFrame by partition column value."""
     if value is None:
         return df, True
     if key in df.columns:
@@ -31,6 +33,7 @@ def _filter_partition_column(
 
 
 def cmd_manifest_show(args: argparse.Namespace) -> int:
+    """Show manifest information."""
     manifest_repo = DeltaManifestRepository(Path(args.manifest_path))
     df = manifest_repo.read_all()
 
@@ -112,6 +115,7 @@ def cmd_manifest_show(args: argparse.Namespace) -> int:
 
 
 def cmd_manifest_backfill_sha256(args: argparse.Namespace) -> int:
+    """Backfill SHA256 hashes for manifest entries."""
     manifest_path = Path(args.manifest_path)
     bronze_root = Path(args.bronze_root)
     manifest_repo = DeltaManifestRepository(manifest_path)

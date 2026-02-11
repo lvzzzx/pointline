@@ -17,6 +17,7 @@ from pointline.services.dim_symbol_service import DimSymbolService
 
 
 def _print_replay_summary(summary: ApiReplaySummary) -> None:
+    """Print summary of API replay results."""
     print(f"Ingesting {summary.processed_files} metadata file(s) for vendor={summary.vendor}...")
     for item in summary.file_results:
         if item.status == "success":
@@ -27,6 +28,7 @@ def _print_replay_summary(summary: ApiReplaySummary) -> None:
 
 
 def cmd_dim_symbol_upsert(args: argparse.Namespace) -> int:
+    """Upsert dim_symbol updates from a file."""
     updates = read_updates(Path(args.file))
     repo = BaseDeltaRepository(Path(args.table_path))
     service = DimSymbolService(repo)

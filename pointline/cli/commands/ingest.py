@@ -21,6 +21,7 @@ from pointline.io.vendors.registry import resolve_table_name
 
 
 def _extract_partition_value(bronze_file_path: str, key: str) -> str | None:
+    """Extract partition value from bronze file path."""
     token = f"{key}="
     for part in Path(bronze_file_path).parts:
         if part.startswith(token):
@@ -30,10 +31,12 @@ def _extract_partition_value(bronze_file_path: str, key: str) -> str | None:
 
 
 def _resolve_target_table_name(meta: BronzeFileMetadata) -> str | None:
+    """Resolve target table name from bronze file metadata."""
     return resolve_table_name(meta.vendor, meta.data_type, interval=meta.interval)
 
 
 def _extract_partition_filters(meta: BronzeFileMetadata) -> dict[str, object] | None:
+    """Extract partition filters from bronze file metadata."""
     exchange = _extract_partition_value(meta.bronze_file_path, "exchange")
 
     partition_date = meta.date
@@ -57,6 +60,7 @@ def _run_post_ingest_optimize(
     target_file_size: int | None = None,
     zorder: str | None = None,
 ) -> int:
+    """Run post-ingest optimization on touched partitions."""
     if not touched_partitions:
         print("Post-ingest optimize: no touched partitions to optimize.")
         return 0
@@ -105,6 +109,7 @@ def _run_post_ingest_optimize(
 
 
 def cmd_ingest_discover(args: argparse.Namespace) -> int:
+    """Discover bronze files for ingestion."""
     # Resolve bronze_root: vendor parameter takes precedence
     if hasattr(args, "vendor") and args.vendor:
         bronze_root = BRONZE_ROOT / args.vendor

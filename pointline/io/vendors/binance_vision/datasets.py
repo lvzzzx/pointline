@@ -1,3 +1,5 @@
+"""Binance Vision dataset download utilities."""
+
 from __future__ import annotations
 
 import hashlib
@@ -42,6 +44,8 @@ DEFAULT_BINANCE_TEMPLATE = (
 
 @dataclass
 class BinanceDownloadResult:
+    """Result of a Binance download operation."""
+
     downloaded: list[Path] = field(default_factory=list)
     skipped: list[Path] = field(default_factory=list)
     missing: list[str] = field(default_factory=list)

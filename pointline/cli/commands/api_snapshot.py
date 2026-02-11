@@ -12,6 +12,7 @@ from pointline.services.api_snapshot_service import ApiReplaySummary, ApiSnapsho
 
 
 def _print_replay_summary(summary: ApiReplaySummary) -> None:
+    """Print summary of API replay results."""
     print(f"Ingesting {summary.processed_files} metadata file(s) for vendor={summary.vendor}...")
     for item in summary.file_results:
         if item.status == "success":
@@ -22,6 +23,7 @@ def _print_replay_summary(summary: ApiReplaySummary) -> None:
 
 
 def _parse_iso_date(raw: str, *, field: str) -> datetime.date:
+    """Parse an ISO date string (YYYY-MM-DD)."""
     try:
         return datetime.strptime(raw, "%Y-%m-%d").date()
     except ValueError as exc:
@@ -29,12 +31,14 @@ def _parse_iso_date(raw: str, *, field: str) -> datetime.date:
 
 
 def _parse_base_assets(raw: str | None) -> list[str] | None:
+    """Parse comma-separated base assets string into list."""
     if not raw:
         return None
     return [asset.strip().upper() for asset in raw.split(",") if asset.strip()]
 
 
 def _build_capture_request(args: argparse.Namespace) -> ApiCaptureRequest:
+    """Build API capture request from CLI arguments."""
     if args.vendor == "tardis" and args.dataset == "dim_symbol":
         if not args.exchange:
             raise ValueError("--exchange is required for tardis dim_symbol capture")
@@ -102,6 +106,7 @@ def _build_capture_request(args: argparse.Namespace) -> ApiCaptureRequest:
 
 
 def cmd_bronze_api_capture(args: argparse.Namespace) -> int:
+    """Capture API metadata to bronze and optionally replay."""
     snapshot_service = ApiSnapshotService()
 
     try:
@@ -138,6 +143,7 @@ def cmd_bronze_api_capture(args: argparse.Namespace) -> int:
 
 
 def cmd_bronze_api_replay(args: argparse.Namespace) -> int:
+    """Replay captured API metadata snapshots using manifest semantics."""
     snapshot_service = ApiSnapshotService()
     effective_ts_us = parse_effective_ts(args.effective_ts) if args.effective_ts else None
 

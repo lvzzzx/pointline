@@ -98,6 +98,7 @@ class BinanceVisionVendor:
         )
 
     def get_table_mapping(self) -> dict[str, str]:
+        """Return mapping from vendor data types to table names."""
         return {
             "klines": "kline_{interval}",
         }
@@ -115,11 +116,13 @@ class BinanceVisionVendor:
         }
 
     def get_api_snapshot_specs(self) -> dict[str, ApiSnapshotSpec]:
+        """Return API snapshot specifications (not supported by Binance Vision)."""
         return {}
 
     def capture_api_snapshot(
         self, dataset: str, request: ApiCaptureRequest
     ) -> list[dict[str, Any]]:
+        """Capture API snapshot (not supported by Binance Vision)."""
         raise NotImplementedError(f"{self.name} does not support API snapshots")
 
     def build_updates_from_snapshot(
@@ -128,6 +131,7 @@ class BinanceVisionVendor:
         records: list[dict[str, Any]],
         options: ApiReplayOptions,
     ) -> pl.DataFrame:
+        """Build updates from snapshot records (not supported by Binance Vision)."""
         raise NotImplementedError(f"{self.name} does not support API snapshots")
 
     def read_and_parse(self, path: Path, meta: BronzeFileMetadata) -> pl.DataFrame:
