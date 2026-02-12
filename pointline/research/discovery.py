@@ -35,9 +35,9 @@ from pointline.config import (
     get_table_path,
     normalize_exchange,
 )
-from pointline.dim_symbol import read_dim_symbol_table
 from pointline.research.core import _normalize_timestamp
 from pointline.tables.asset_class import ASSET_CLASS_TAXONOMY
+from pointline.tables.dim_symbol import read_dim_symbol_table
 
 
 def list_exchanges(

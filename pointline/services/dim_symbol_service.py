@@ -6,9 +6,9 @@ import time
 import polars as pl
 from deltalake.exceptions import CommitFailedError
 
-from pointline.dim_symbol import required_update_columns, scd2_upsert
 from pointline.io.protocols import TableRepository
 from pointline.services.base_service import BaseService
+from pointline.tables.dim_symbol import required_update_columns, scd2_upsert
 
 logger = logging.getLogger(__name__)
 
@@ -93,7 +93,7 @@ class DimSymbolService(BaseService):
         audit trail (e.g. Tardis 'changes' array) and we want to correct/backfill
         the timeline rather than just appending a new current version.
         """
-        from pointline.dim_symbol import NATURAL_KEY_COLS, rebuild_from_history
+        from pointline.tables.dim_symbol import NATURAL_KEY_COLS, rebuild_from_history
 
         # 1. Transform raw history rows into proper SCD2 chains
         new_symbol_history = rebuild_from_history(history_data)
@@ -125,7 +125,7 @@ class DimSymbolService(BaseService):
                     final_table = new_symbol_history
                 else:
                     # Normalize schemas to ensure compatibility before concatenating
-                    from pointline.dim_symbol import normalize_dim_symbol_schema
+                    from pointline.tables.dim_symbol import normalize_dim_symbol_schema
 
                     preserved_data = normalize_dim_symbol_schema(preserved_data)
                     new_symbol_history = normalize_dim_symbol_schema(new_symbol_history)

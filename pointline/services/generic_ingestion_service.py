@@ -21,9 +21,6 @@ from pointline.config import (
     get_exchange_timezone,
     get_table_path,
 )
-
-# get_exchange_id is still imported for quarantine checks against dim_symbol
-from pointline.dim_symbol import check_coverage
 from pointline.io.protocols import (
     BronzeFileMetadata,
     IngestionManifestRepository,
@@ -32,6 +29,9 @@ from pointline.io.protocols import (
 )
 from pointline.io.vendors import get_vendor
 from pointline.services.base_service import BaseService
+
+# get_exchange_id is still imported for quarantine checks against dim_symbol
+from pointline.tables.dim_symbol import check_coverage
 from pointline.tables.domain_contract import EventTableDomain
 from pointline.tables.validation_log import create_ingestion_record
 

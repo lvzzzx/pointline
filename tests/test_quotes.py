@@ -6,18 +6,18 @@ from unittest.mock import Mock
 
 import polars as pl
 import pytest
+from pointline.validation_utils import DataQualityWarning
 
 from pointline.cli.ingestion_factory import create_ingestion_service
-from pointline.dim_symbol import SCHEMA as DIM_SYMBOL_SCHEMA
-from pointline.dim_symbol import scd2_bootstrap
 from pointline.io.base_repository import BaseDeltaRepository
 from pointline.io.protocols import BronzeFileMetadata
 from pointline.io.vendors.tardis.parsers.quotes import parse_tardis_quotes_csv
+from pointline.tables.dim_symbol import SCHEMA as DIM_SYMBOL_SCHEMA
+from pointline.tables.dim_symbol import scd2_bootstrap
 from pointline.tables.quotes import (
     QUOTES_DOMAIN,
     QUOTES_SCHEMA,
 )
-from pointline.validation_utils import DataQualityWarning
 
 
 def _sample_tardis_quotes_csv() -> pl.DataFrame:

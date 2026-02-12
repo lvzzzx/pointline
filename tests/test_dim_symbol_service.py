@@ -8,8 +8,8 @@ from pointline.io.protocols import TableRepository
 
 def test_dim_symbol_service_orchestration():
     # This will fail initially because DimSymbolService doesn't exist
-    from pointline.dim_symbol import scd2_bootstrap
     from pointline.services.dim_symbol_service import DimSymbolService
+    from pointline.tables.dim_symbol import scd2_bootstrap
 
     mock_repo = MagicMock(spec=TableRepository)
 

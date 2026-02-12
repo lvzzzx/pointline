@@ -1,6 +1,6 @@
 import polars as pl
 
-from pointline.dim_symbol import (
+from pointline.tables.dim_symbol import (
     DEFAULT_VALID_UNTIL_TS_US,
     check_coverage,
     rebuild_from_history,

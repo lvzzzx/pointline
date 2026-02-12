@@ -1,6 +1,6 @@
 import polars as pl
 
-from pointline.dim_symbol import (
+from pointline.tables.dim_symbol import (
     DEFAULT_VALID_UNTIL_TS_US,
     required_dim_symbol_columns,
     required_update_columns,
@@ -195,7 +195,7 @@ def test_upsert_missing_columns_raises_error():
 def test_normalize_schema_missing_columns_raises_error():
     import pytest
 
-    from pointline.dim_symbol import normalize_dim_symbol_schema
+    from pointline.tables.dim_symbol import normalize_dim_symbol_schema
 
     bad_df = pl.DataFrame({"exchange_id": [1]})
     with pytest.raises(ValueError, match="missing required columns"):
@@ -215,7 +215,7 @@ def test_upsert_backdated_change_raises_error():
 
 
 def test_check_coverage_logic():
-    from pointline.dim_symbol import SCHEMA, check_coverage
+    from pointline.tables.dim_symbol import SCHEMA, check_coverage
 
     # Range [100, 200)
 
@@ -261,7 +261,7 @@ def test_check_coverage_logic():
         pl.lit(True).alias("is_current"),
         pl.lit(456).alias("symbol_id"),
     )
-    from pointline.dim_symbol import normalize_dim_symbol_schema
+    from pointline.tables.dim_symbol import normalize_dim_symbol_schema
 
     dim_multi = pl.concat([normalize_dim_symbol_schema(v1), normalize_dim_symbol_schema(v2)])
     assert check_coverage(dim_multi, 1, "BTC-PERPETUAL", 100, 200) is True

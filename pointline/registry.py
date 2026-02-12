@@ -12,7 +12,7 @@ import time
 
 import polars as pl
 
-from pointline.dim_symbol import read_dim_symbol_table
+from pointline.tables.dim_symbol import read_dim_symbol_table
 
 logger = logging.getLogger(__name__)
 

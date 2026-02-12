@@ -4,10 +4,9 @@ from datetime import date
 
 import polars as pl
 import pytest
+from pointline.validation_utils import DataQualityWarning
 
 from pointline.cli.ingestion_factory import create_ingestion_service
-from pointline.dim_symbol import SCHEMA as DIM_SYMBOL_SCHEMA
-from pointline.dim_symbol import scd2_bootstrap
 from pointline.io.base_repository import BaseDeltaRepository
 from pointline.io.delta_manifest_repo import DeltaManifestRepository
 from pointline.io.protocols import BronzeFileMetadata
@@ -16,7 +15,8 @@ from pointline.tables.book_snapshots import (
     BOOK_SNAPSHOTS_DOMAIN,
     BOOK_SNAPSHOTS_SCHEMA,
 )
-from pointline.validation_utils import DataQualityWarning
+from pointline.tables.dim_symbol import SCHEMA as DIM_SYMBOL_SCHEMA
+from pointline.tables.dim_symbol import scd2_bootstrap
 
 
 def _sample_tardis_book_snapshots_csv() -> pl.DataFrame:

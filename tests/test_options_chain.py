@@ -6,11 +6,11 @@ import polars as pl
 import pytest
 
 from pointline.cli.ingestion_factory import create_ingestion_service
-from pointline.dim_symbol import SCHEMA as DIM_SYMBOL_SCHEMA
 from pointline.io.base_repository import BaseDeltaRepository
 from pointline.io.delta_manifest_repo import DeltaManifestRepository
 from pointline.io.protocols import BronzeFileMetadata
 from pointline.io.vendors.tardis.parsers.options_chain import parse_tardis_options_chain_csv
+from pointline.tables.dim_symbol import SCHEMA as DIM_SYMBOL_SCHEMA
 from pointline.tables.options_chain import (
     OPTIONS_CHAIN_DOMAIN,
     OPTIONS_CHAIN_SCHEMA,

@@ -137,7 +137,7 @@ class TushareVendor:
 
     def get_scd2_tracked_columns(self, dataset: str) -> list[str] | None:
         if dataset == "dim_symbol":
-            from pointline.dim_symbol import TRACKED_COLS
+            from pointline.tables.dim_symbol import TRACKED_COLS
 
             return list(TRACKED_COLS)
         return None

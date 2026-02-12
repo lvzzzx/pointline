@@ -130,7 +130,7 @@ def _load_schema_from_module(table_name: str) -> dict[str, pl.DataType] | None:
     Some tables have special mappings:
     - book_snapshot_25 → book_snapshots.BOOK_SNAPSHOTS_SCHEMA
     - kline_1h/kline_1d → klines.KLINE_SCHEMA
-    - dim_symbol → dim_symbol.SCHEMA (not in tables/)
+    - dim_symbol → tables.dim_symbol.SCHEMA
     - ingest_manifest → io.delta_manifest_repo.MANIFEST_SCHEMA
 
     Args:
@@ -139,13 +139,6 @@ def _load_schema_from_module(table_name: str) -> dict[str, pl.DataType] | None:
     Returns:
         Schema dictionary or None if not found
     """
-    # Special case: dim_symbol is in pointline/, not pointline/tables/
-    if table_name == "dim_symbol":
-        try:
-            module = importlib.import_module("pointline.dim_symbol")
-            return getattr(module, "SCHEMA", None)
-        except (ImportError, AttributeError):
-            return None
     if table_name == "ingest_manifest":
         try:
             module = importlib.import_module("pointline.io.delta_manifest_repo")
@@ -175,6 +168,7 @@ def _load_schema_from_module(table_name: str) -> dict[str, pl.DataType] | None:
         "kline_1d": "KLINE_SCHEMA",
         "l3_orders": "L3_ORDERS_SCHEMA",
         "l3_ticks": "L3_TICKS_SCHEMA",
+        "dim_symbol": "SCHEMA",
         "dim_asset_stats": "SCHEMA",
         "stock_basic_cn": "SCHEMA",
         "validation_log": "VALIDATION_LOG_SCHEMA",

@@ -22,8 +22,7 @@ def _bootstrap_domains() -> None:
     global _BOOTSTRAPPED
     if _BOOTSTRAPPED:
         return
-    # Import order is lexical for linting; both imports are required for registration side effects.
-    import pointline.dim_symbol  # noqa: F401
+    # Import pointline.tables to trigger module-level domain registrations.
     import pointline.tables  # noqa: F401
 
     _BOOTSTRAPPED = True

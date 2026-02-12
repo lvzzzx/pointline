@@ -6,6 +6,7 @@
 from pointline.tables import (  # noqa: I001
     book_snapshots,
     derivative_ticker,
+    dim_symbol,
     klines,
     l3_orders,
     l3_ticks,
@@ -18,6 +19,7 @@ from pointline.tables import (  # noqa: I001
 __all__ = [
     "book_snapshots",
     "derivative_ticker",
+    "dim_symbol",
     "klines",
     "l3_orders",
     "l3_ticks",

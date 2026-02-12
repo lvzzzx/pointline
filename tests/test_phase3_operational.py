@@ -15,7 +15,7 @@ from unittest.mock import Mock
 import polars as pl
 
 from pointline.cli.ingestion_factory import create_ingestion_service
-from pointline.dim_symbol import SCHEMA as DIM_SYMBOL_SCHEMA
+from pointline.tables.dim_symbol import SCHEMA as DIM_SYMBOL_SCHEMA
 from pointline.tables.validation_log import create_ingestion_record
 
 # ---------------------------------------------------------------------------

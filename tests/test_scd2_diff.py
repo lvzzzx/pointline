@@ -20,7 +20,7 @@ from __future__ import annotations
 import polars as pl
 import pytest
 
-from pointline.dim_symbol import (
+from pointline.tables.dim_symbol import (
     DEFAULT_VALID_UNTIL_TS_US,
     NATURAL_KEY_COLS,
     TRACKED_COLS,
@@ -310,7 +310,7 @@ def test_half_open_boundary_at_transition():
 # ---------------------------------------------------------------------------
 def test_no_overlap_no_gap():
     """Intervals cover contiguous range with no overlaps."""
-    from pointline.dim_symbol import check_coverage
+    from pointline.tables.dim_symbol import check_coverage
 
     prev = _make_snapshot([_snapshot_row(tick_size=0.01)])
     diff_boot = diff_snapshots(

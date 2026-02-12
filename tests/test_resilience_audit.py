@@ -2,8 +2,8 @@ from unittest.mock import MagicMock, patch
 
 import polars as pl
 
-from pointline.dim_symbol import scd2_bootstrap
 from pointline.io.protocols import TableRepository
+from pointline.tables.dim_symbol import scd2_bootstrap
 
 
 def test_dim_symbol_service_retry_on_conflict():
