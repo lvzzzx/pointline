@@ -6,18 +6,18 @@ This plan must be maintained in accordance with `/Users/zjx/Documents/pointline/
 
 ## Purpose / Big Picture
 
-After this change, Pointline will run on one new v2 ingestion and schema core that matches the target architecture exactly: event partitions are `(exchange, trading_date)` derived from exchange-local time, manifest identity is deterministic, point-in-time symbol coverage is enforced, and event lineage is `file_id` plus `file_seq`. A contributor will be able to read one set of schema modules and one ingestion pipeline and understand the entire data path without compatibility shims or mixed legacy contracts.
+After this change, Pointline will have one new v2 ingestion and schema core that matches the target architecture exactly: event partitions are `(exchange, trading_date)` derived from exchange-local time, manifest identity is deterministic, point-in-time symbol coverage is enforced, and event lineage is `file_id` plus `file_seq`. A contributor will be able to read one set of schema modules and one ingestion pipeline and understand the entire data path without compatibility shims or mixed legacy contracts.
 
-The user-visible result is that `pointline bronze discover`, `pointline bronze ingest`, `pointline manifest show`, and validation commands continue to work, but they run through the new v2 core only. Legacy schema/version compatibility code is removed, and rebuilding or re-ingesting old data is the supported migration path.
+The user-visible result for this plan is a clean, tested v2 core API and ingestion engine with no legacy runtime compatibility code in the core path. CLI refactor/rewrite is intentionally out of scope for this ExecPlan and will happen in a separate plan.
 
 ## Progress
 
 - [x] (2026-02-12 15:24Z) Authored this ExecPlan with concrete milestones, file-level targets, cutover rules, and validation criteria for the v2 clean cut.
-- [ ] Establish v2 package scaffolding and test-first contracts (completed: none; remaining: add `pointline/schemas/*`, `pointline/v2/*`, and first failing tests).
-- [ ] Implement canonical v2 schema registry and table specs (completed: none; remaining: event/dimension/control specs, dtype helpers, schema introspection APIs).
-- [ ] Implement v2 single-file ingestion pipeline with deterministic manifest and lineage semantics (completed: none; remaining: parser dispatch, idempotency gate, timezone partition derivation, PIT quarantine, validation logging, Delta writes).
+- [x] (2026-02-12 23:58Z) Establish v2 package scaffolding and test-first contracts (completed: added `pointline/schemas/*`, `pointline/v2/*`, and `tests/v2/*`; remaining: extend contract coverage for adapter-boundary and replay tests).
+- [x] (2026-02-13 00:06Z) Implement canonical v2 schema registry and table specs (completed: event/dimension/control specs, status/type constants, `TableSpec`/`ColumnSpec` helpers, registry lookup/list APIs; remaining: expand specs as additional v2 tables are ported).
+- [x] (2026-02-13 00:11Z) Implement v2 single-file ingestion pipeline with deterministic manifest and lineage semantics (completed: idempotency gate, timezone partition derivation, PIT quarantine, lineage assignment, schema normalization, manifest status updates, and pipeline contract tests; remaining: wire production parser dispatch + Delta repository writer in follow-up milestones).
 - [ ] Port trades, quotes, and orderbook update flows to v2 and prove determinism with tests (completed: none; remaining: parser adapters, tie-break ordering, replay determinism tests).
-- [ ] Cut CLI orchestration to v2 path and remove compatibility branches from runtime code (completed: none; remaining: ingestion factory and command rewiring, removal of legacy service entrypoints).
+- [ ] Define and lock clean v2 core interfaces for downstream adapters (completed: none; remaining: explicit service entrypoints, boundary contracts, and adapter-facing integration tests).
 - [ ] Remove legacy schema/version shims and obsolete modules, then update docs to one architecture story (completed: none; remaining: delete old compatibility paths, refresh architecture/development/reference docs).
 - [ ] Run full quality gates and record final evidence in this plan (completed: none; remaining: `pytest`, `ruff check`, `ruff format --check`, and any targeted integration tests).
 
@@ -32,9 +32,12 @@ The user-visible result is that `pointline bronze discover`, `pointline bronze i
 - Observation: The architecture docs already define a no-compatibility policy, so the operational risk is not policy disagreement but execution drift during transition.
   Evidence: `/Users/zjx/Documents/pointline/docs/architecture/design.md` and `/Users/zjx/Documents/pointline/docs/architecture/schema-design-v4.md`.
 
+- Observation: Importing legacy top-level modules currently pulls in unrelated table dependencies with missing modules (`pointline.validation_utils`), which can block even isolated v2 tests.
+  Evidence: test collection errors while importing `pointline.config` through legacy initialization paths on 2026-02-13.
+
 ## Decision Log
 
-- Decision: Build the new implementation as an in-repo v2 core (`pointline/schemas` and `pointline/v2`) before the hard cut, then switch CLI/runtime entrypoints in one cutover milestone.
+- Decision: Build the new implementation as an in-repo v2 core (`pointline/schemas` and `pointline/v2`) before the hard cut, and expose stable adapter boundaries for later CLI rewrite.
   Rationale: This keeps implementation isolated while preserving fast feedback from existing tooling and tests, then avoids long-term dual-path maintenance.
   Date/Author: 2026-02-12 / Codex
 
@@ -46,11 +49,15 @@ The user-visible result is that `pointline bronze discover`, `pointline bronze i
   Rationale: The stated architecture allows rebuild/re-ingest; keeping adapters would reintroduce the mixed architecture this cutover is intended to remove.
   Date/Author: 2026-02-12 / Codex
 
+- Decision: Keep exchange-timezone mapping local inside `pointline/v2/ingestion/exchange.py` for initial v2 core, instead of importing legacy config/table modules.
+  Rationale: This avoids accidental runtime coupling to legacy module initialization and keeps the v2 ingestion core independently testable.
+  Date/Author: 2026-02-13 / Codex
+
 ## Outcomes & Retrospective
 
-At plan creation time, no code has been cut over yet. The intended outcome is a single active architecture that matches the v2 design docs and eliminates compatibility-era ambiguity.
+Initial cutover implementation is now in place for the v2 core skeleton: canonical schemas, registry, and a function-first ingestion pipeline with manifest gating, PIT quarantine, timezone partitioning, and deterministic lineage assignment. The intended end state remains a single active architecture that matches the v2 design docs and eliminates compatibility-era ambiguity.
 
-The main delivery risk is transitional coupling between existing CLI commands and legacy services. This plan addresses that risk by introducing test-first boundaries, then a single explicit CLI cutover milestone, followed by immediate legacy deletion and full-suite validation.
+The main delivery risk is accidental coupling between the new v2 core and existing orchestration layers. This plan addresses that risk by introducing explicit adapter boundaries, keeping CLI out of scope, and validating the core with dedicated tests before any downstream integration rewrite.
 
 ## Context and Orientation
 
@@ -60,7 +67,9 @@ Point-in-time correctness (PIT correctness) means answering symbol validity base
 
 The target architecture requires these invariants in code, not only in docs: deterministic manifest identity (`vendor`, `data_type`, `bronze_path`, `file_hash`), deterministic lineage (`file_id`, `file_seq`), exchange-timezone-aware `trading_date`, deterministic quarantine/failure statuses (`pending`, `success`, `failed`, `quarantined`), and explicit replay tie-break ordering.
 
-Relevant current modules are `/Users/zjx/Documents/pointline/pointline/services/generic_ingestion_service.py`, `/Users/zjx/Documents/pointline/pointline/tables/*.py`, `/Users/zjx/Documents/pointline/pointline/io/delta_manifest_repo.py`, `/Users/zjx/Documents/pointline/pointline/cli/commands/ingest.py`, and `/Users/zjx/Documents/pointline/pointline/cli/ingestion_factory.py`. This plan introduces new canonical modules under `/Users/zjx/Documents/pointline/pointline/schemas/` and `/Users/zjx/Documents/pointline/pointline/v2/` and then rewires CLI runtime to those modules.
+Relevant current modules are `/Users/zjx/Documents/pointline/pointline/services/generic_ingestion_service.py`, `/Users/zjx/Documents/pointline/pointline/tables/*.py`, and `/Users/zjx/Documents/pointline/pointline/io/delta_manifest_repo.py`. This plan introduces new canonical modules under `/Users/zjx/Documents/pointline/pointline/schemas/` and `/Users/zjx/Documents/pointline/pointline/v2/`.
+
+Explicit out of scope for this plan: any CLI command refactor, CLI command rewiring, or backward-compatible command surface maintenance. The CLI will be handled by a separate follow-up ExecPlan.
 
 ## Plan of Work
 
@@ -72,7 +81,7 @@ Milestone 3 implements the v2 ingestion core as one function-first pipeline. Add
 
 Milestone 4 ports event flows to v2 semantics. Build parser adapters so existing vendor parser outputs can be canonicalized to the new event schemas (`trades`, `quotes`, `orderbook_updates`), then enforce explicit replay tie-break ordering and deterministic `file_seq`. Keep behavior deterministic across reruns with the same input. This milestone is complete when new determinism tests pass and sample replay order is stable across repeated runs.
 
-Milestone 5 performs the runtime hard cut. Rewire `pointline/cli/commands/ingest.py`, `pointline/cli/ingestion_factory.py`, and related service wiring to call the v2 pipeline only. Remove legacy runtime compatibility branches in the same milestone so the default path cannot fall back to old internals. This milestone is complete when CLI ingestion commands succeed using only v2 imports.
+Milestone 5 defines stable v2 adapter boundaries. Add explicit integration-facing interfaces that a future CLI (or any other orchestrator) can call without importing legacy modules. Remove legacy runtime compatibility branches from the core ingestion path in the same milestone so there is no fallback to old internals. This milestone is complete when adapter-facing tests pass using only v2 imports.
 
 Milestone 6 removes obsolete code and updates docs. Delete superseded ingestion/schema compatibility modules, remove legacy version references in runtime docs, and align architecture and development docs with the single active v2 design. This milestone is complete when repository search no longer shows active runtime references to removed compatibility interfaces and docs point to the new modules.
 
@@ -112,18 +121,17 @@ Implement Milestone 4 event table ports and replay determinism checks:
 
 Expected result: canonical event schemas and tie-break ordering are stable across reruns.
 
-Execute Milestone 5 hard cut and verify CLI behavior on v2-only runtime:
+Execute Milestone 5 boundary validation for v2-only runtime:
 
-    uv run pytest tests/test_cli.py -q
-    uv run pointline bronze discover --help
-    uv run pointline bronze ingest --help
+    uv run pytest tests/v2/test_core_entrypoints_v2.py -q
+    uv run pytest tests/v2/test_core_integration_no_legacy_imports.py -q
 
-Expected result: CLI commands still resolve and test suite passes without importing removed legacy ingestion services.
+Expected result: v2 entrypoint tests pass and core integration no longer imports legacy ingestion services.
 
 Execute Milestone 6 cleanup checks:
 
     rg -n "SNAPSHOT_SCHEMA_VERSION_V1|_write_v1_snapshot|backward compat|compatibility" pointline docs | sed -n '1,200p'
-    rg -n "pointline\\.tables\\.|generic_ingestion_service" pointline/cli pointline/services pointline/v2 | sed -n '1,200p'
+    rg -n "pointline\\.tables\\.|generic_ingestion_service" pointline/services pointline/v2 | sed -n '1,200p'
 
 Expected result: remaining hits are either deleted paths or intentionally historical docs; active runtime files should not depend on legacy compat branches.
 
@@ -142,7 +150,7 @@ Acceptance is behavior-driven. A contributor must be able to ingest Bronze files
 
 A second acceptance signal is PIT correctness: when `dim_symbol` history contains multiple validity windows, events at boundary timestamps must resolve to the correct window (`valid_from_ts_us <= ts < valid_until_ts_us`), with uncovered rows deterministically quarantined.
 
-A third acceptance signal is architecture clarity: running a repository search should show one active schema source (`pointline/schemas/*`) and one active ingestion path (`pointline/v2/ingestion/*`) used by CLI commands. There must be no hidden runtime fallback to removed v1/vcompat paths.
+A third acceptance signal is architecture clarity: running a repository search should show one active schema source (`pointline/schemas/*`) and one active ingestion path (`pointline/v2/ingestion/*`) used by core entrypoints and adapter boundaries. There must be no hidden runtime fallback to removed v1/vcompat paths.
 
 Final acceptance requires passing full quality gates and targeted v2 tests, with outputs recorded in this plan.
 
@@ -156,7 +164,7 @@ If the hard-cut milestone introduces regressions, recover by reverting the cutov
 
 ## Artifacts and Notes
 
-During implementation, keep short evidence snippets in this section as indented text. Include one snippet for each major acceptance claim: schema contract pass, deterministic manifest behavior, timezone partition correctness, PIT quarantine correctness, CLI cutover success, and full quality gate pass.
+During implementation, keep short evidence snippets in this section as indented text. Include one snippet for each major acceptance claim: schema contract pass, deterministic manifest behavior, timezone partition correctness, PIT quarantine correctness, adapter-boundary/core-entrypoint success, and full quality gate pass.
 
 Example evidence format to add as work progresses:
 
@@ -167,6 +175,14 @@ Example evidence format to add as work progresses:
     2026-02-13 10:02Z
     Command: uv run pytest tests/v2/test_replay_determinism_v2.py -q
     Output: 3 passed in 0.41s
+
+    2026-02-13 00:11Z
+    Command: uv run pytest tests/v2/test_schema_contracts.py tests/v2/test_ingestion_pipeline_contract.py tests/v2/test_manifest_semantics.py tests/v2/test_timezone_partitioning.py -q
+    Output: 11 passed in 0.17s
+
+    2026-02-13 00:12Z
+    Command: uv run ruff check pointline/schemas pointline/v2 tests/v2 pointline/__init__.py pointline/_error_messages.py
+    Output: All checks passed!
 
 ## Interfaces and Dependencies
 
@@ -183,8 +199,9 @@ Supporting interfaces must include explicit, testable functions for:
     check_pit_coverage(df, dim_symbol_df) -> (valid_df, quarantined_df, reason)
     update_manifest_status(meta, file_id, status, result) -> None
 
-Use existing repository dependencies where practical (`polars`, `delta-rs` via current repository wrappers), but keep ownership clear: schema ownership in `pointline/schemas/*`, pipeline ownership in `pointline/v2/ingestion/*`, CLI orchestration in `pointline/cli/commands/*`. If an existing dependency cannot satisfy v2 determinism requirements, document the limitation in `Surprises & Discoveries` and adjust the interface in `Decision Log` before implementation continues.
+Use existing repository dependencies where practical (`polars`, `delta-rs` via current repository wrappers), but keep ownership clear: schema ownership in `pointline/schemas/*`, pipeline ownership in `pointline/v2/ingestion/*`, and integration boundary ownership in v2 core entrypoint modules. CLI orchestration is out of scope for this plan. If an existing dependency cannot satisfy v2 determinism requirements, document the limitation in `Surprises & Discoveries` and adjust the interface in `Decision Log` before implementation continues.
 
 ---
 
 Revision Note (2026-02-12 15:24Z): Initial ExecPlan created for the v2 clean-cut rewrite and hard cutover to a single non-compatible runtime path, per explicit request to choose a fresh-start architecture over incremental legacy refactor.
+Revision Note (2026-02-12 15:35Z): Scope narrowed to exclude all CLI work; plan now targets v2 ingestion/core only with explicit adapter boundaries and deferred CLI rewrite.
