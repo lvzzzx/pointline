@@ -115,9 +115,11 @@ def test_load_trades_lazy(mock_scan_table):
     )
 
 
-@patch("pointline.research.core.get_domain")
+@patch("pointline.research.core.get_event_domain")
 @patch("pointline.research.core.read_table")
-def test_load_trades_decoded_keeps_ints_for_requested_columns(mock_read_table, mock_get_domain):
+def test_load_trades_decoded_keeps_ints_for_requested_columns(
+    mock_read_table, mock_get_event_domain
+):
     mock_domain = MagicMock()
     mock_domain.required_decode_columns.return_value = ("exchange", "px_int", "qty_int")
     mock_read_table.return_value = pl.DataFrame(
@@ -132,7 +134,7 @@ def test_load_trades_decoded_keeps_ints_for_requested_columns(mock_read_table, m
             "qty": [0.05],
         }
     )
-    mock_get_domain.return_value = mock_domain
+    mock_get_event_domain.return_value = mock_domain
 
     result = load_trades_decoded(
         exchange="binance-futures",

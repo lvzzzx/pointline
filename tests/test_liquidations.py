@@ -12,10 +12,8 @@ from pointline.io.delta_manifest_repo import DeltaManifestRepository
 from pointline.io.protocols import BronzeFileMetadata
 from pointline.io.vendors.tardis.parsers.liquidations import parse_tardis_liquidations_csv
 from pointline.tables.liquidations import (
+    LIQUIDATIONS_DOMAIN,
     LIQUIDATIONS_SCHEMA,
-    encode_fixed_point,
-    normalize_liquidations_schema,
-    validate_liquidations,
 )
 
 
@@ -114,14 +112,14 @@ def test_normalize_encode_and_validate_liquidations() -> None:
             pl.lit(date(2024, 5, 1)).alias("date"),
         ]
     )
-    encoded = encode_fixed_point(with_meta)
-    normalized = normalize_liquidations_schema(encoded)
+    encoded = LIQUIDATIONS_DOMAIN.encode_storage(with_meta)
+    normalized = LIQUIDATIONS_DOMAIN.normalize_schema(encoded)
     assert list(normalized.schema.keys()) == list(LIQUIDATIONS_SCHEMA.keys())
     # crypto profile: price=1e-9 → 60651.1/1e-9 = 60651100000000
     assert normalized["px_int"][0] == 60651100000000
     # crypto profile: amount=1e-9 → 0.005/1e-9 = 5000000
     assert normalized["qty_int"][0] == 5000000
-    validated = validate_liquidations(normalized)
+    validated = LIQUIDATIONS_DOMAIN.validate(normalized)
     assert validated.height == 1
 
 
@@ -138,8 +136,8 @@ def test_validate_liquidations_filters_invalid_side() -> None:
             pl.lit(date(2024, 5, 1)).alias("date"),
         ]
     )
-    normalized = normalize_liquidations_schema(df)
-    validated = validate_liquidations(normalized)
+    normalized = LIQUIDATIONS_DOMAIN.normalize_schema(df)
+    validated = LIQUIDATIONS_DOMAIN.validate(normalized)
     assert validated.height == 0
 
 

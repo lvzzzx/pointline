@@ -4,10 +4,8 @@ from pointline.io.vendors.tardis.parsers.derivative_ticker import (
     parse_tardis_derivative_ticker_csv,
 )
 from pointline.tables.derivative_ticker import (
+    DERIVATIVE_TICKER_DOMAIN,
     DERIVATIVE_TICKER_SCHEMA,
-    encode_fixed_point,
-    normalize_derivative_ticker_schema,
-    validate_derivative_ticker,
 )
 
 
@@ -80,7 +78,7 @@ def test_normalize_derivative_ticker_schema_fills_optional() -> None:
             pl.lit("2024-05-01").str.strptime(pl.Date, "%Y-%m-%d").alias("date"),
         ]
     )
-    normalized = normalize_derivative_ticker_schema(df)
+    normalized = DERIVATIVE_TICKER_DOMAIN.normalize_schema(df)
     assert list(normalized.schema.keys()) == list(DERIVATIVE_TICKER_SCHEMA.keys())
 
 
@@ -95,7 +93,7 @@ def test_validate_derivative_ticker_accepts_valid() -> None:
             pl.lit("2024-05-01").str.strptime(pl.Date, "%Y-%m-%d").alias("date"),
         ]
     )
-    encoded = encode_fixed_point(df)
-    normalized = normalize_derivative_ticker_schema(encoded)
-    validated = validate_derivative_ticker(normalized)
+    encoded = DERIVATIVE_TICKER_DOMAIN.encode_storage(df)
+    normalized = DERIVATIVE_TICKER_DOMAIN.normalize_schema(encoded)
+    validated = DERIVATIVE_TICKER_DOMAIN.validate(normalized)
     assert validated.height == 1

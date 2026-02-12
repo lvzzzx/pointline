@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
 from dataclasses import dataclass
 
 import polars as pl
@@ -12,7 +11,7 @@ from pointline.tables._base import (
     required_columns_validation_expr,
     timestamp_validation_expr,
 )
-from pointline.tables.domain_contract import TableDomain, TableSpec
+from pointline.tables.domain_contract import EventTableDomain, TableSpec
 from pointline.tables.domain_registry import register_domain
 
 # Required metadata fields for ingestion
@@ -51,7 +50,7 @@ OPTIONS_CHAIN_SCHEMA: dict[str, pl.DataType] = {
 }
 
 
-def normalize_options_chain_schema(df: pl.DataFrame) -> pl.DataFrame:
+def _normalize_schema(df: pl.DataFrame) -> pl.DataFrame:
     """Cast to canonical options_chain schema and select schema columns only."""
     optional_columns = {
         "underlying_symbol",
@@ -103,7 +102,7 @@ def normalize_options_chain_schema(df: pl.DataFrame) -> pl.DataFrame:
     return df.with_columns(casts).select(list(OPTIONS_CHAIN_SCHEMA.keys()))
 
 
-def canonicalize_options_chain_frame(df: pl.DataFrame) -> pl.DataFrame:
+def _canonicalize_vendor_frame(df: pl.DataFrame) -> pl.DataFrame:
     """Apply canonical enum semantics for options-chain vendor-neutral frames."""
     if "option_type" in df.columns or "option_type_raw" not in df.columns:
         return df
@@ -119,7 +118,7 @@ def canonicalize_options_chain_frame(df: pl.DataFrame) -> pl.DataFrame:
     )
 
 
-def encode_fixed_point(df: pl.DataFrame) -> pl.DataFrame:
+def _encode_storage(df: pl.DataFrame) -> pl.DataFrame:
     """Encode options_chain numeric fields into fixed-point integers using asset-class profile."""
     from pointline.encoding import (
         PROFILE_AMOUNT_COL,
@@ -160,7 +159,7 @@ def encode_fixed_point(df: pl.DataFrame) -> pl.DataFrame:
     return result.drop([col for col in PROFILE_SCALAR_COLS if col in result.columns])
 
 
-def validate_options_chain(df: pl.DataFrame) -> pl.DataFrame:
+def _validate(df: pl.DataFrame) -> pl.DataFrame:
     """Apply quality checks to options_chain rows."""
     if df.is_empty():
         return df
@@ -227,7 +226,7 @@ def validate_options_chain(df: pl.DataFrame) -> pl.DataFrame:
     return valid.select(df.columns)
 
 
-def decode_fixed_point(
+def _decode_storage(
     df: pl.DataFrame,
     *,
     keep_ints: bool = False,
@@ -291,7 +290,7 @@ def decode_fixed_point(
     return result.drop([col for col in PROFILE_SCALAR_COLS if col in result.columns])
 
 
-def decode_fixed_point_lazy(
+def _decode_storage_lazy(
     lf: pl.LazyFrame,
     *,
     keep_ints: bool = False,
@@ -356,12 +355,7 @@ def decode_fixed_point_lazy(
     return result.drop(list(PROFILE_SCALAR_COLS))
 
 
-def required_options_chain_columns() -> Sequence[str]:
-    """Columns required for an options_chain DataFrame after normalization."""
-    return tuple(OPTIONS_CHAIN_SCHEMA.keys())
-
-
-def required_decode_columns() -> tuple[str, ...]:
+def _required_decode_columns() -> tuple[str, ...]:
     """Columns needed to decode storage fields for options chain."""
     return (
         "exchange",
@@ -376,9 +370,10 @@ def required_decode_columns() -> tuple[str, ...]:
 
 
 @dataclass(frozen=True)
-class OptionsChainDomain(TableDomain):
+class OptionsChainDomain(EventTableDomain):
     spec: TableSpec = TableSpec(
         table_name="options_chain",
+        table_kind="event",
         schema=OPTIONS_CHAIN_SCHEMA,
         partition_by=("exchange", "date"),
         has_date=True,
@@ -388,33 +383,28 @@ class OptionsChainDomain(TableDomain):
     )
 
     def canonicalize_vendor_frame(self, df: pl.DataFrame) -> pl.DataFrame:
-        return canonicalize_options_chain_frame(df)
+        return _canonicalize_vendor_frame(df)
 
     def encode_storage(self, df: pl.DataFrame) -> pl.DataFrame:
-        return encode_fixed_point(df)
+        return _encode_storage(df)
 
     def normalize_schema(self, df: pl.DataFrame) -> pl.DataFrame:
-        return normalize_options_chain_schema(df)
+        return _normalize_schema(df)
 
     def validate(self, df: pl.DataFrame) -> pl.DataFrame:
-        return validate_options_chain(df)
+        return _validate(df)
 
     def required_decode_columns(self) -> tuple[str, ...]:
-        return required_decode_columns()
+        return _required_decode_columns()
 
     def decode_storage(self, df: pl.DataFrame, *, keep_ints: bool = False) -> pl.DataFrame:
-        return decode_fixed_point(df, keep_ints=keep_ints)
+        return _decode_storage(df, keep_ints=keep_ints)
 
     def decode_storage_lazy(self, lf: pl.LazyFrame, *, keep_ints: bool = False) -> pl.LazyFrame:
-        return decode_fixed_point_lazy(lf, keep_ints=keep_ints)
+        return _decode_storage_lazy(lf, keep_ints=keep_ints)
 
 
-# ---------------------------------------------------------------------------
-# Schema registry registration
-# ---------------------------------------------------------------------------
-from pointline.schema_registry import register_schema as _register_schema  # noqa: E402
+OPTIONS_CHAIN_DOMAIN = OptionsChainDomain()
 
-_register_schema(
-    "options_chain", OPTIONS_CHAIN_SCHEMA, partition_by=["exchange", "date"], has_date=True
-)
-register_domain(OptionsChainDomain())
+
+register_domain(OPTIONS_CHAIN_DOMAIN)

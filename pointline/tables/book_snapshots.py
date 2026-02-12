@@ -5,8 +5,7 @@ This module keeps the implementation storage-agnostic; it operates on Polars Dat
 Example:
     import polars as pl
     from pointline.tables.book_snapshots import (
-        encode_fixed_point,
-        normalize_book_snapshots_schema,
+        BOOK_SNAPSHOTS_DOMAIN,
         parse_tardis_book_snapshots_csv,
         resolve_symbol_ids,
     )
@@ -19,18 +18,17 @@ Example:
         exchange_id=1,
         exchange_symbol="BTCUSDT",
     )
-    encoded = encode_fixed_point(resolved)
-    normalized = normalize_book_snapshots_schema(encoded)
+    encoded = BOOK_SNAPSHOTS_DOMAIN.encode_storage(resolved)
+    normalized = BOOK_SNAPSHOTS_DOMAIN.normalize_schema(encoded)
 """
 
 from __future__ import annotations
 
-from collections.abc import Sequence
 from dataclasses import dataclass
 
 import polars as pl
 
-from pointline.tables.domain_contract import TableDomain, TableSpec
+from pointline.tables.domain_contract import EventTableDomain, TableSpec
 from pointline.tables.domain_registry import register_domain
 
 # Import parser from new location for backward compatibility
@@ -63,7 +61,7 @@ BOOK_SNAPSHOTS_SCHEMA: dict[str, pl.DataType] = {
 }
 
 
-def normalize_book_snapshots_schema(df: pl.DataFrame) -> pl.DataFrame:
+def _normalize_schema(df: pl.DataFrame) -> pl.DataFrame:
     """Cast to the canonical book snapshots schema and select only schema columns.
 
     Ensures all required columns exist and have correct types.
@@ -90,7 +88,7 @@ def normalize_book_snapshots_schema(df: pl.DataFrame) -> pl.DataFrame:
     return df.with_columns(casts).select(list(BOOK_SNAPSHOTS_SCHEMA.keys()))
 
 
-def validate_book_snapshots(df: pl.DataFrame) -> pl.DataFrame:
+def _validate(df: pl.DataFrame) -> pl.DataFrame:
     """Apply quality checks to book snapshots data.
 
     Validates:
@@ -227,7 +225,7 @@ def validate_book_snapshots(df: pl.DataFrame) -> pl.DataFrame:
     return valid
 
 
-def encode_fixed_point(
+def _encode_storage(
     df: pl.DataFrame,
 ) -> pl.DataFrame:
     """Encode bid/ask prices and sizes as fixed-point integers using asset-class profile.
@@ -330,7 +328,7 @@ def encode_fixed_point(
     return result.drop(drop_cols + [col for col in PROFILE_SCALAR_COLS if col in result.columns])
 
 
-def decode_fixed_point(
+def _decode_storage(
     df: pl.DataFrame,
     *,
     keep_ints: bool = False,
@@ -383,7 +381,7 @@ def decode_fixed_point(
     return result.drop([col for col in PROFILE_SCALAR_COLS if col in result.columns])
 
 
-def decode_fixed_point_lazy(
+def _decode_storage_lazy(
     lf: pl.LazyFrame,
     *,
     keep_ints: bool = False,
@@ -424,25 +422,21 @@ def decode_fixed_point_lazy(
     return result.drop(list(PROFILE_SCALAR_COLS))
 
 
-def required_book_snapshots_columns() -> Sequence[str]:
-    """Columns required for a book snapshots DataFrame after normalization."""
-    return tuple(BOOK_SNAPSHOTS_SCHEMA.keys())
-
-
-def canonicalize_book_snapshots_frame(df: pl.DataFrame) -> pl.DataFrame:
+def _canonicalize_vendor_frame(df: pl.DataFrame) -> pl.DataFrame:
     """Book snapshots have no enum remapping at canonicalization stage."""
     return df
 
 
-def required_decode_columns() -> tuple[str, ...]:
+def _required_decode_columns() -> tuple[str, ...]:
     """Columns needed to decode storage fields for book snapshots."""
     return ("exchange", "bids_px_int", "bids_sz_int", "asks_px_int", "asks_sz_int")
 
 
 @dataclass(frozen=True)
-class BookSnapshotsDomain(TableDomain):
+class BookSnapshotsDomain(EventTableDomain):
     spec: TableSpec = TableSpec(
         table_name="book_snapshot_25",
+        table_kind="event",
         schema=BOOK_SNAPSHOTS_SCHEMA,
         partition_by=("exchange", "date"),
         has_date=True,
@@ -452,33 +446,28 @@ class BookSnapshotsDomain(TableDomain):
     )
 
     def canonicalize_vendor_frame(self, df: pl.DataFrame) -> pl.DataFrame:
-        return canonicalize_book_snapshots_frame(df)
+        return _canonicalize_vendor_frame(df)
 
     def encode_storage(self, df: pl.DataFrame) -> pl.DataFrame:
-        return encode_fixed_point(df)
+        return _encode_storage(df)
 
     def normalize_schema(self, df: pl.DataFrame) -> pl.DataFrame:
-        return normalize_book_snapshots_schema(df)
+        return _normalize_schema(df)
 
     def validate(self, df: pl.DataFrame) -> pl.DataFrame:
-        return validate_book_snapshots(df)
+        return _validate(df)
 
     def required_decode_columns(self) -> tuple[str, ...]:
-        return required_decode_columns()
+        return _required_decode_columns()
 
     def decode_storage(self, df: pl.DataFrame, *, keep_ints: bool = False) -> pl.DataFrame:
-        return decode_fixed_point(df, keep_ints=keep_ints)
+        return _decode_storage(df, keep_ints=keep_ints)
 
     def decode_storage_lazy(self, lf: pl.LazyFrame, *, keep_ints: bool = False) -> pl.LazyFrame:
-        return decode_fixed_point_lazy(lf, keep_ints=keep_ints)
+        return _decode_storage_lazy(lf, keep_ints=keep_ints)
 
 
-# ---------------------------------------------------------------------------
-# Schema registry registration
-# ---------------------------------------------------------------------------
-from pointline.schema_registry import register_schema as _register_schema  # noqa: E402
+BOOK_SNAPSHOTS_DOMAIN = BookSnapshotsDomain()
 
-_register_schema(
-    "book_snapshot_25", BOOK_SNAPSHOTS_SCHEMA, partition_by=["exchange", "date"], has_date=True
-)
-register_domain(BookSnapshotsDomain())
+
+register_domain(BOOK_SNAPSHOTS_DOMAIN)

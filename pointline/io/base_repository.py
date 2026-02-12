@@ -99,7 +99,7 @@ class BaseDeltaRepository:
                          If None, table will not be partitioned.
             expected_schema: Optional expected schema for write-time validation.
                             If provided, every write operation validates the DataFrame against it.
-            table_name: Optional table name to auto-lookup schema from the schema registry.
+            table_name: Optional table name to auto-lookup schema from introspection.
                        If both table_name and expected_schema are provided, expected_schema wins.
         """
         self.table_path = str(table_path)
@@ -107,7 +107,7 @@ class BaseDeltaRepository:
         if expected_schema is not None:
             self.expected_schema = expected_schema
         elif table_name is not None:
-            from pointline.schema_registry import get_schema
+            from pointline.introspection import get_schema
 
             self.expected_schema = get_schema(table_name)
         else:

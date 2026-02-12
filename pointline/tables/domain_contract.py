@@ -1,15 +1,17 @@
-"""Canonical table-domain contract for event tables.
+"""Canonical table-domain contracts.
 
-Table domains own canonical semantics: schema, canonicalization, validation,
-encode/decode behavior, and decode column requirements.
+Event table domains own stream semantics (vendor canonicalization, encode/decode).
+Dimension table domains own SCD2 lifecycle semantics (bootstrap/upsert).
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Literal, Protocol, TypeAlias
 
 import polars as pl
+
+DomainKind: TypeAlias = Literal["event", "dimension"]
 
 
 @dataclass(frozen=True)
@@ -17,6 +19,7 @@ class TableSpec:
     """Canonical table metadata used by orchestrators and discovery layers."""
 
     table_name: str
+    table_kind: DomainKind
     schema: dict[str, pl.DataType]
     partition_by: tuple[str, ...]
     has_date: bool
@@ -25,8 +28,8 @@ class TableSpec:
     ts_column: str
 
 
-class TableDomain(Protocol):
-    """Canonical interface implemented by table-domain modules."""
+class EventTableDomain(Protocol):
+    """Canonical interface implemented by event-table domain modules."""
 
     spec: TableSpec
 
@@ -50,3 +53,24 @@ class TableDomain(Protocol):
 
     def decode_storage_lazy(self, lf: pl.LazyFrame, *, keep_ints: bool = False) -> pl.LazyFrame:
         """Decode storage integers lazily into researcher-facing float columns."""
+
+
+class DimensionTableDomain(Protocol):
+    """Canonical interface implemented by dimension-table domain modules."""
+
+    spec: TableSpec
+
+    def normalize_schema(self, df: pl.DataFrame) -> pl.DataFrame:
+        """Cast/select to canonical schema and column order."""
+
+    def validate(self, df: pl.DataFrame) -> pl.DataFrame:
+        """Validate dimension invariants and return normalized rows."""
+
+    def bootstrap(self, snapshot_df: pl.DataFrame) -> pl.DataFrame:
+        """Create initial table state from a full snapshot."""
+
+    def upsert(self, current_df: pl.DataFrame, updates_df: pl.DataFrame) -> pl.DataFrame:
+        """Apply incremental changes and return the next table state."""
+
+
+AnyTableDomain: TypeAlias = EventTableDomain | DimensionTableDomain

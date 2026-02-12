@@ -11,7 +11,7 @@ import pointline.io.vendors  # noqa: F401  # Trigger vendor auto-registration
 from pointline.config import get_table_path
 from pointline.io.base_repository import BaseDeltaRepository
 from pointline.services.generic_ingestion_service import GenericIngestionService
-from pointline.tables.domain_registry import get_domain
+from pointline.tables.domain_registry import get_event_domain
 
 # Partition keys used by Delta maintenance commands.
 # Keep this mapping explicit for CLI ergonomics.
@@ -67,7 +67,7 @@ def create_ingestion_service(data_type: str, manifest_repo, *, interval: str | N
     if table_name not in supported:
         raise ValueError(f"Unsupported data type: {data_type}")
 
-    domain = get_domain(table_name)
+    domain = get_event_domain(table_name)
     repo = BaseDeltaRepository(
         get_table_path(table_name),
         partition_by=list(domain.spec.partition_by),

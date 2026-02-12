@@ -14,12 +14,8 @@ from pointline.io.base_repository import BaseDeltaRepository
 from pointline.io.protocols import BronzeFileMetadata
 from pointline.io.vendors.tardis.parsers.quotes import parse_tardis_quotes_csv
 from pointline.tables.quotes import (
+    QUOTES_DOMAIN,
     QUOTES_SCHEMA,
-    decode_fixed_point,
-    encode_fixed_point,
-    normalize_quotes_schema,
-    required_quotes_columns,
-    validate_quotes,
 )
 from pointline.validation_utils import DataQualityWarning
 
@@ -171,7 +167,7 @@ def test_normalize_quotes_schema():
         }
     )
 
-    normalized = normalize_quotes_schema(df)
+    normalized = QUOTES_DOMAIN.normalize_schema(df)
 
     assert normalized["date"].dtype == pl.Date
     assert normalized["symbol"].dtype == pl.Utf8
@@ -192,7 +188,7 @@ def test_normalize_quotes_schema_missing_required():
     )
 
     with pytest.raises(ValueError, match="missing required columns"):
-        normalize_quotes_schema(df)
+        QUOTES_DOMAIN.normalize_schema(df)
 
 
 def test_validate_quotes_basic():
@@ -211,7 +207,7 @@ def test_validate_quotes_basic():
     )
 
     with pytest.warns(DataQualityWarning, match="validate_quotes: filtered"):
-        validated = validate_quotes(df)
+        validated = QUOTES_DOMAIN.validate(df)
 
     # Should filter out the negative bid price
     assert validated.height == 2
@@ -234,7 +230,7 @@ def test_validate_quotes_crossed_book():
     )
 
     with pytest.warns(DataQualityWarning, match="validate_quotes: filtered"):
-        validated = validate_quotes(df)
+        validated = QUOTES_DOMAIN.validate(df)
 
     # Should filter out the crossed book
     assert validated.height == 2
@@ -258,7 +254,7 @@ def test_validate_quotes_partial_quotes():
         }
     )
 
-    validated = validate_quotes(df)
+    validated = QUOTES_DOMAIN.validate(df)
 
     # Should keep all rows (each has at least one of bid or ask)
     assert validated.height == 3
@@ -305,7 +301,7 @@ def test_validate_quotes_both_missing():
         df = df.with_columns(pl.lit("binance", dtype=pl.Utf8).alias("exchange"))
 
     with pytest.warns(DataQualityWarning, match="validate_quotes: filtered"):
-        validated = validate_quotes(df)
+        validated = QUOTES_DOMAIN.validate(df)
 
     # Should filter out the row with both missing
     assert validated.height == 2
@@ -324,7 +320,7 @@ def test_encode_fixed_point():
         }
     )
 
-    encoded = encode_fixed_point(df)
+    encoded = QUOTES_DOMAIN.encode_storage(df)
 
     assert "bid_px_int" in encoded.columns
     assert "bid_sz_int" in encoded.columns
@@ -352,7 +348,7 @@ def test_encode_fixed_point_with_nulls():
         }
     )
 
-    encoded = encode_fixed_point(df)
+    encoded = QUOTES_DOMAIN.encode_storage(df)
 
     # First row should have all values (crypto profile: price scalar=1e-9)
     assert encoded["bid_px_int"][0] == 50_000_000_000_000
@@ -375,7 +371,7 @@ def test_encode_fixed_point_symmetric_rounding():
         }
     )
 
-    encoded = encode_fixed_point(df)
+    encoded = QUOTES_DOMAIN.encode_storage(df)
 
     # Crypto profile: price scalar=1e-9
     # round(50000.123 / 1e-9) = 50_000_123_000_000
@@ -395,7 +391,7 @@ def test_encode_fixed_point_missing_columns():
     )
 
     with pytest.raises(ValueError, match="df missing columns"):
-        encode_fixed_point(df)
+        QUOTES_DOMAIN.encode_storage(df)
 
 
 def test_decode_fixed_point():
@@ -410,7 +406,7 @@ def test_decode_fixed_point():
         }
     )
 
-    decoded = decode_fixed_point(df)
+    decoded = QUOTES_DOMAIN.decode_storage(df)
 
     assert "bid_px_int" not in decoded.columns
     assert "ask_px_int" not in decoded.columns
@@ -643,7 +639,7 @@ def test_quotes_service_ingest_file_success():
 
 def test_required_quotes_columns():
     """Test that required_quotes_columns() returns all schema columns."""
-    cols = required_quotes_columns()
+    cols = tuple(QUOTES_SCHEMA.keys())
     assert len(cols) == len(QUOTES_SCHEMA)
     assert "date" in cols
     assert "exchange" in cols

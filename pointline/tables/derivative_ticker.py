@@ -5,7 +5,6 @@ This module keeps the implementation storage-agnostic; it operates on Polars Dat
 
 from __future__ import annotations
 
-from collections.abc import Sequence
 from dataclasses import dataclass
 
 import polars as pl
@@ -16,7 +15,7 @@ from pointline.tables._base import (
     required_columns_validation_expr,
     timestamp_validation_expr,
 )
-from pointline.tables.domain_contract import TableDomain, TableSpec
+from pointline.tables.domain_contract import EventTableDomain, TableSpec
 from pointline.tables.domain_registry import register_domain
 
 # Required metadata fields for ingestion
@@ -47,7 +46,7 @@ DERIVATIVE_TICKER_SCHEMA: dict[str, pl.DataType] = {
 }
 
 
-def normalize_derivative_ticker_schema(df: pl.DataFrame) -> pl.DataFrame:
+def _normalize_schema(df: pl.DataFrame) -> pl.DataFrame:
     """Cast to the canonical derivative_ticker schema and select only schema columns."""
     optional_columns = {
         "funding_rate_int",
@@ -79,7 +78,7 @@ def normalize_derivative_ticker_schema(df: pl.DataFrame) -> pl.DataFrame:
     return df.with_columns(casts).select(list(DERIVATIVE_TICKER_SCHEMA.keys()))
 
 
-def validate_derivative_ticker(df: pl.DataFrame) -> pl.DataFrame:
+def _validate(df: pl.DataFrame) -> pl.DataFrame:
     """Apply quality checks to derivative ticker data."""
     if df.is_empty():
         return df
@@ -135,12 +134,12 @@ def validate_derivative_ticker(df: pl.DataFrame) -> pl.DataFrame:
     return valid.select(df.columns)
 
 
-def canonicalize_derivative_ticker_frame(df: pl.DataFrame) -> pl.DataFrame:
+def _canonicalize_vendor_frame(df: pl.DataFrame) -> pl.DataFrame:
     """Derivative ticker has no enum remapping at canonicalization stage."""
     return df
 
 
-def encode_fixed_point(
+def _encode_storage(
     df: pl.DataFrame,
 ) -> pl.DataFrame:
     """Encode derivative ticker float fields to fixed-point integers.
@@ -192,7 +191,7 @@ def encode_fixed_point(
     return result.drop([col for col in PROFILE_SCALAR_COLS if col in result.columns])
 
 
-def decode_fixed_point(
+def _decode_storage(
     df: pl.DataFrame,
     *,
     keep_ints: bool = False,
@@ -256,7 +255,7 @@ def decode_fixed_point(
     return result.drop([col for col in PROFILE_SCALAR_COLS if col in result.columns])
 
 
-def decode_fixed_point_lazy(
+def _decode_storage_lazy(
     lf: pl.LazyFrame,
     *,
     keep_ints: bool = False,
@@ -319,12 +318,7 @@ def decode_fixed_point_lazy(
     return result.drop(list(PROFILE_SCALAR_COLS))
 
 
-def required_derivative_ticker_columns() -> Sequence[str]:
-    """Columns required for a derivative_ticker DataFrame after normalization."""
-    return tuple(DERIVATIVE_TICKER_SCHEMA.keys())
-
-
-def required_decode_columns() -> tuple[str, ...]:
+def _required_decode_columns() -> tuple[str, ...]:
     """Columns needed to decode storage fields for derivative ticker."""
     return (
         "exchange",
@@ -338,9 +332,10 @@ def required_decode_columns() -> tuple[str, ...]:
 
 
 @dataclass(frozen=True)
-class DerivativeTickerDomain(TableDomain):
+class DerivativeTickerDomain(EventTableDomain):
     spec: TableSpec = TableSpec(
         table_name="derivative_ticker",
+        table_kind="event",
         schema=DERIVATIVE_TICKER_SCHEMA,
         partition_by=("exchange", "date"),
         has_date=True,
@@ -350,33 +345,28 @@ class DerivativeTickerDomain(TableDomain):
     )
 
     def canonicalize_vendor_frame(self, df: pl.DataFrame) -> pl.DataFrame:
-        return canonicalize_derivative_ticker_frame(df)
+        return _canonicalize_vendor_frame(df)
 
     def encode_storage(self, df: pl.DataFrame) -> pl.DataFrame:
-        return encode_fixed_point(df)
+        return _encode_storage(df)
 
     def normalize_schema(self, df: pl.DataFrame) -> pl.DataFrame:
-        return normalize_derivative_ticker_schema(df)
+        return _normalize_schema(df)
 
     def validate(self, df: pl.DataFrame) -> pl.DataFrame:
-        return validate_derivative_ticker(df)
+        return _validate(df)
 
     def required_decode_columns(self) -> tuple[str, ...]:
-        return required_decode_columns()
+        return _required_decode_columns()
 
     def decode_storage(self, df: pl.DataFrame, *, keep_ints: bool = False) -> pl.DataFrame:
-        return decode_fixed_point(df, keep_ints=keep_ints)
+        return _decode_storage(df, keep_ints=keep_ints)
 
     def decode_storage_lazy(self, lf: pl.LazyFrame, *, keep_ints: bool = False) -> pl.LazyFrame:
-        return decode_fixed_point_lazy(lf, keep_ints=keep_ints)
+        return _decode_storage_lazy(lf, keep_ints=keep_ints)
 
 
-# ---------------------------------------------------------------------------
-# Schema registry registration
-# ---------------------------------------------------------------------------
-from pointline.schema_registry import register_schema as _register_schema  # noqa: E402
+DERIVATIVE_TICKER_DOMAIN = DerivativeTickerDomain()
 
-_register_schema(
-    "derivative_ticker", DERIVATIVE_TICKER_SCHEMA, partition_by=["exchange", "date"], has_date=True
-)
-register_domain(DerivativeTickerDomain())
+
+register_domain(DERIVATIVE_TICKER_DOMAIN)

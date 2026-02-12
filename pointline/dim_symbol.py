@@ -40,6 +40,9 @@ from dataclasses import dataclass
 
 import polars as pl
 
+from pointline.tables.domain_contract import DimensionTableDomain, TableSpec
+from pointline.tables.domain_registry import register_domain
+
 DEFAULT_VALID_UNTIL_TS_US = 2**63 - 1
 
 NATURAL_KEY_COLS: tuple[str, ...] = ("exchange_id", "exchange_symbol")
@@ -693,9 +696,67 @@ def required_dim_symbol_columns() -> Sequence[str]:
     return tuple(SCHEMA.keys())
 
 
-# ---------------------------------------------------------------------------
-# Schema registry registration
-# ---------------------------------------------------------------------------
-from pointline.schema_registry import register_schema as _register_schema  # noqa: E402
+@dataclass(frozen=True)
+class DimSymbolDomain(DimensionTableDomain):
+    """Dimension-domain contract for dim_symbol SCD2 lifecycle."""
 
-_register_schema("dim_symbol", SCHEMA)
+    spec: TableSpec = TableSpec(
+        table_name="dim_symbol",
+        table_kind="dimension",
+        schema=SCHEMA,
+        partition_by=(),
+        has_date=False,
+        layer="silver",
+        allowed_exchanges=None,
+        ts_column="valid_from_ts",
+    )
+
+    def normalize_schema(self, df: pl.DataFrame) -> pl.DataFrame:
+        return normalize_dim_symbol_schema(df)
+
+    def validate(self, df: pl.DataFrame) -> pl.DataFrame:
+        normalized = normalize_dim_symbol_schema(df)
+        if normalized.is_empty():
+            return normalized
+
+        invalid_windows = normalized.filter(pl.col("valid_until_ts") <= pl.col("valid_from_ts"))
+        if not invalid_windows.is_empty():
+            raise ValueError(
+                "dim_symbol has invalid validity windows: valid_until_ts must be > valid_from_ts."
+            )
+
+        current_dupes = (
+            normalized.filter(pl.col("is_current"))
+            .group_by(list(NATURAL_KEY_COLS))
+            .len()
+            .filter(pl.col("len") > 1)
+        )
+        if not current_dupes.is_empty():
+            raise ValueError("dim_symbol has multiple current rows for the same natural key.")
+
+        sorted_rows = normalized.sort([*NATURAL_KEY_COLS, "valid_from_ts", "valid_until_ts"])
+        overlaps = sorted_rows.with_columns(
+            pl.col("valid_from_ts")
+            .shift(-1)
+            .over(list(NATURAL_KEY_COLS))
+            .alias("_next_valid_from_ts")
+        ).filter(
+            pl.col("_next_valid_from_ts").is_not_null()
+            & (pl.col("valid_until_ts") > pl.col("_next_valid_from_ts"))
+        )
+        if not overlaps.is_empty():
+            raise ValueError(
+                "dim_symbol has overlapping validity windows for the same natural key."
+            )
+
+        return normalized
+
+    def bootstrap(self, snapshot_df: pl.DataFrame) -> pl.DataFrame:
+        return scd2_bootstrap(snapshot_df)
+
+    def upsert(self, current_df: pl.DataFrame, updates_df: pl.DataFrame) -> pl.DataFrame:
+        return scd2_upsert(current_df, updates_df)
+
+
+DIM_SYMBOL_DOMAIN = DimSymbolDomain()
+register_domain(DIM_SYMBOL_DOMAIN)

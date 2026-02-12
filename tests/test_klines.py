@@ -10,12 +10,9 @@ import pytest
 from pointline.encoding import get_profile
 from pointline.io.vendors.binance_vision.parsers.klines import parse_binance_klines_csv
 from pointline.tables.klines import (
+    KLINE_1H_DOMAIN,
     KLINE_SCHEMA,
     check_kline_completeness,
-    decode_fixed_point,
-    encode_fixed_point,
-    normalize_klines_schema,
-    validate_klines,
 )
 from pointline.validation_utils import DataQualityWarning
 
@@ -144,7 +141,7 @@ def test_encode_quote_volume_with_profile():
         }
     )
 
-    result = encode_fixed_point(_with_exchange(df))
+    result = KLINE_1H_DOMAIN.encode_storage(_with_exchange(df))
 
     # Verify quote_volume encoding uses profile.quote_vol
     expected_quote_volume_int = round(2905000.0 / profile.quote_vol)
@@ -175,7 +172,7 @@ def test_encode_fixed_point_multi_symbol():
         }
     )
 
-    result = encode_fixed_point(_with_exchange(df))
+    result = KLINE_1H_DOMAIN.encode_storage(_with_exchange(df))
 
     # All symbols use the same profile scalars
     assert result.height == 3
@@ -211,7 +208,7 @@ def test_encode_fixed_point_unknown_exchange():
     )
 
     with pytest.raises(ValueError, match="Unknown exchange"):
-        encode_fixed_point(_with_exchange(df, "nonexistent-exchange"))
+        KLINE_1H_DOMAIN.encode_storage(_with_exchange(df, "nonexistent-exchange"))
 
 
 # --- Fixed-Point Decoding Tests ---
@@ -238,10 +235,10 @@ def test_decode_quote_volume_roundtrip():
     )
 
     # Encode
-    encoded = encode_fixed_point(_with_exchange(original))
+    encoded = KLINE_1H_DOMAIN.encode_storage(_with_exchange(original))
 
     # Decode (resolve profile from exchange column)
-    decoded = decode_fixed_point(encoded, keep_ints=False)
+    decoded = KLINE_1H_DOMAIN.decode_storage(encoded, keep_ints=False)
 
     # Verify round-trip (within reasonable tolerance for floating-point)
     assert decoded["open_px"][0] == pytest.approx(original["open_px"][0], rel=1e-6)
@@ -271,7 +268,7 @@ def test_decode_fixed_point_keep_ints():
         }
     )
 
-    result = decode_fixed_point(encoded, keep_ints=True)
+    result = KLINE_1H_DOMAIN.decode_storage(encoded, keep_ints=True)
 
     # Should have both float and int columns
     assert "open_px" in result.columns
@@ -287,7 +284,7 @@ def test_decode_fixed_point_missing_columns():
     )  # Missing other *_int columns
 
     with pytest.raises(ValueError, match="missing columns"):
-        decode_fixed_point(df)
+        KLINE_1H_DOMAIN.decode_storage(df)
 
 
 def test_quote_vol_scalar_in_encode_decode():
@@ -312,14 +309,14 @@ def test_quote_vol_scalar_in_encode_decode():
     )
 
     # Encode
-    encoded = encode_fixed_point(_with_exchange(df))
+    encoded = KLINE_1H_DOMAIN.encode_storage(_with_exchange(df))
 
     # Verify encoding used profile.quote_vol
     expected_quote_int = round(29000.0 / profile.quote_vol)
     assert encoded["quote_volume_int"][0] == expected_quote_int
 
     # Verify decoding uses same scalar
-    decoded = decode_fixed_point(encoded)
+    decoded = KLINE_1H_DOMAIN.decode_storage(encoded)
     assert decoded["quote_volume"][0] == pytest.approx(29000.0, rel=1e-6)
 
 
@@ -349,7 +346,7 @@ def test_validate_klines_basic():
         }
     )
 
-    result = validate_klines(df)
+    result = KLINE_1H_DOMAIN.validate(df)
     assert result.height == 1  # All rows valid
 
 
@@ -377,7 +374,7 @@ def test_validate_klines_filters_invalid():
     )
 
     with pytest.warns(DataQualityWarning, match="validate_klines: filtered"):
-        result = validate_klines(df)
+        result = KLINE_1H_DOMAIN.validate(df)
     assert result.height == 1  # Only first row valid
 
 
@@ -405,7 +402,7 @@ def test_validate_klines_high_lt_low():
     )
 
     with pytest.warns(DataQualityWarning, match="validate_klines: filtered"):
-        result = validate_klines(df)
+        result = KLINE_1H_DOMAIN.validate(df)
     assert result.is_empty()  # Invalid row filtered
 
 
@@ -540,7 +537,7 @@ def test_normalize_klines_schema():
         }
     )
 
-    result = normalize_klines_schema(df)
+    result = KLINE_1H_DOMAIN.normalize_schema(df)
 
     # Should have all schema columns
     assert set(result.columns) == set(KLINE_SCHEMA.keys())
@@ -571,12 +568,12 @@ def test_full_pipeline_parse_encode_decode(raw_kline_data: pl.DataFrame):
     )
 
     # Encode
-    encoded = encode_fixed_point(_with_exchange(with_meta))
+    encoded = KLINE_1H_DOMAIN.encode_storage(_with_exchange(with_meta))
     assert "quote_volume_int" in encoded.columns
     assert "quote_volume" not in encoded.columns  # Original dropped
 
     # Decode (exchange column in df)
-    decoded = decode_fixed_point(encoded)
+    decoded = KLINE_1H_DOMAIN.decode_storage(encoded)
     assert "quote_volume" in decoded.columns
     assert "quote_volume_int" not in decoded.columns  # Integers dropped
 

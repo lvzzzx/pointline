@@ -13,12 +13,8 @@ from pointline.io.delta_manifest_repo import DeltaManifestRepository
 from pointline.io.protocols import BronzeFileMetadata
 from pointline.io.vendors.tardis.parsers.book_snapshots import parse_tardis_book_snapshots_csv
 from pointline.tables.book_snapshots import (
+    BOOK_SNAPSHOTS_DOMAIN,
     BOOK_SNAPSHOTS_SCHEMA,
-    decode_fixed_point,
-    encode_fixed_point,
-    normalize_book_snapshots_schema,
-    required_book_snapshots_columns,
-    validate_book_snapshots,
 )
 from pointline.validation_utils import DataQualityWarning
 
@@ -174,7 +170,7 @@ def test_normalize_book_snapshots_schema():
         }
     )
 
-    normalized = normalize_book_snapshots_schema(df)
+    normalized = BOOK_SNAPSHOTS_DOMAIN.normalize_schema(df)
 
     # Check all schema columns are present
     assert set(normalized.columns) == set(BOOK_SNAPSHOTS_SCHEMA.keys())
@@ -216,7 +212,7 @@ def test_validate_book_snapshots_basic():
         }
     )
 
-    validated = validate_book_snapshots(df)
+    validated = BOOK_SNAPSHOTS_DOMAIN.validate(df)
     assert validated.height == 2  # All rows should be valid
 
 
@@ -237,7 +233,7 @@ def test_validate_book_snapshots_crossed_book():
     )
 
     with pytest.warns(DataQualityWarning, match="validate_book_snapshots: filtered"):
-        validated = validate_book_snapshots(df)
+        validated = BOOK_SNAPSHOTS_DOMAIN.validate(df)
     assert validated.height == 0  # Should filter out crossed book
 
 
@@ -258,7 +254,7 @@ def test_validate_book_snapshots_invalid_ordering():
     )
 
     with pytest.warns(DataQualityWarning, match="validate_book_snapshots: filtered"):
-        validated = validate_book_snapshots(df)
+        validated = BOOK_SNAPSHOTS_DOMAIN.validate(df)
     # Should filter out invalid ordering
     assert validated.height == 0
 
@@ -284,7 +280,7 @@ def test_encode_fixed_point():
         }
     )
 
-    encoded = encode_fixed_point(df)
+    encoded = BOOK_SNAPSHOTS_DOMAIN.encode_storage(df)
 
     # Check types are now Int64 lists
     assert encoded["bids_px_int"].dtype == pl.List(pl.Int64)
@@ -321,7 +317,7 @@ def test_encode_fixed_point_multi_symbol():
         }
     )
 
-    encoded = encode_fixed_point(df)
+    encoded = BOOK_SNAPSHOTS_DOMAIN.encode_storage(df)
 
     # crypto profile: price scalar = 1e-9
     # Due to IEEE 754 precision, floor/ceil may land 1 unit off the "exact" value.
@@ -354,7 +350,7 @@ def test_decode_fixed_point():
         }
     )
 
-    decoded = decode_fixed_point(df)
+    decoded = BOOK_SNAPSHOTS_DOMAIN.decode_storage(df)
 
     assert decoded["bids_px"].dtype == pl.List(pl.Float64)
     assert decoded["bids_sz"].dtype == pl.List(pl.Float64)
@@ -385,7 +381,7 @@ def test_decode_fixed_point_multi_symbol():
         }
     )
 
-    decoded = decode_fixed_point(df)
+    decoded = BOOK_SNAPSHOTS_DOMAIN.decode_storage(df)
 
     assert decoded["bids_px"][0][0] == pytest.approx(50000.0)
     assert decoded["asks_px"][0][0] == pytest.approx(50000.5)
@@ -407,7 +403,7 @@ def test_decode_fixed_point_multi_exchange():
         }
     )
 
-    decoded = decode_fixed_point(df)
+    decoded = BOOK_SNAPSHOTS_DOMAIN.decode_storage(df)
 
     assert decoded["bids_px"][0][0] == pytest.approx(50000.0)
     assert decoded["bids_sz"][0][0] == pytest.approx(0.1)
@@ -417,7 +413,7 @@ def test_decode_fixed_point_multi_exchange():
 
 def test_required_book_snapshots_columns():
     """Test required columns function."""
-    required = required_book_snapshots_columns()
+    required = tuple(BOOK_SNAPSHOTS_SCHEMA.keys())
     assert isinstance(required, tuple)
     assert len(required) == len(BOOK_SNAPSHOTS_SCHEMA)
     assert all(col in BOOK_SNAPSHOTS_SCHEMA for col in required)

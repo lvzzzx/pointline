@@ -18,9 +18,9 @@ from pointline.cli.utils import (
 from pointline.config import get_exchange_id, get_table_path
 from pointline.io.protocols import BronzeFileMetadata
 from pointline.io.vendors import get_vendor
-from pointline.tables.domain_registry import get_domain
-from pointline.tables.quotes import QUOTES_SCHEMA, normalize_quotes_schema
-from pointline.tables.trades import TRADES_SCHEMA, normalize_trades_schema
+from pointline.tables.domain_registry import get_event_domain
+from pointline.tables.quotes import QUOTES_DOMAIN, QUOTES_SCHEMA
+from pointline.tables.trades import TRADES_SCHEMA
 from pointline.tables.validation_log import create_validation_record
 
 logger = logging.getLogger(__name__)
@@ -93,11 +93,11 @@ def cmd_validate_quotes(args: argparse.Namespace) -> int:
     # Rename exchange_symbol -> symbol (canonical event table column)
     if "exchange_symbol" in parsed_df.columns and "symbol" not in parsed_df.columns:
         parsed_df = parsed_df.rename({"exchange_symbol": "symbol"})
-    domain = get_domain("quotes")
+    domain = get_event_domain("quotes")
     canonical_df = domain.canonicalize_vendor_frame(parsed_df)
     encoded_df = domain.encode_storage(canonical_df)
     expected_df = add_lineage(encoded_df, file_id)
-    expected_df = normalize_quotes_schema(expected_df)
+    expected_df = QUOTES_DOMAIN.normalize_schema(expected_df)
 
     ingested_lf = (
         pl.scan_delta(str(get_table_path("quotes")))
@@ -251,11 +251,11 @@ def cmd_validate_trades(args: argparse.Namespace) -> int:
     # Rename exchange_symbol -> symbol (canonical event table column)
     if "exchange_symbol" in parsed_df.columns and "symbol" not in parsed_df.columns:
         parsed_df = parsed_df.rename({"exchange_symbol": "symbol"})
-    domain = get_domain("trades")
+    domain = get_event_domain("trades")
     canonical_df = domain.canonicalize_vendor_frame(parsed_df)
     encoded_df = domain.encode_storage(canonical_df)
     expected_df = add_lineage(encoded_df, file_id)
-    expected_df = normalize_trades_schema(expected_df)
+    expected_df = domain.normalize_schema(expected_df)
 
     ingested_lf = (
         pl.scan_delta(str(get_table_path("trades")))

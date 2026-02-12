@@ -9,17 +9,15 @@ from pointline.tables.l3_orders import (
     ALLOWED_EXCHANGES as L3_ORDERS_ALLOWED,
 )
 from pointline.tables.l3_orders import (
+    L3_ORDERS_DOMAIN,
     L3_ORDERS_SCHEMA,
-    normalize_l3_orders_schema,
-    validate_l3_orders,
 )
 from pointline.tables.l3_ticks import (
     ALLOWED_EXCHANGES as L3_TICKS_ALLOWED,
 )
 from pointline.tables.l3_ticks import (
+    L3_TICKS_DOMAIN,
     L3_TICKS_SCHEMA,
-    normalize_l3_ticks_schema,
-    validate_l3_ticks,
 )
 
 
@@ -41,7 +39,7 @@ def test_normalize_l3_orders_derives_trading_phase() -> None:
             "file_line_number": [1],
         }
     )
-    normalized = normalize_l3_orders_schema(df)
+    normalized = L3_ORDERS_DOMAIN.normalize_schema(df)
     assert list(normalized.schema.keys()) == list(L3_ORDERS_SCHEMA.keys())
     assert normalized["trading_phase"][0] == 1
 
@@ -65,7 +63,7 @@ def test_validate_l3_orders_accepts_valid() -> None:
         },
         schema=L3_ORDERS_SCHEMA,
     )
-    validated = validate_l3_orders(df)
+    validated = L3_ORDERS_DOMAIN.validate(df)
     assert validated.height == 1
 
 
@@ -88,7 +86,7 @@ def test_normalize_l3_ticks_derives_trading_phase() -> None:
             "file_line_number": [1],
         }
     )
-    normalized = normalize_l3_ticks_schema(df)
+    normalized = L3_TICKS_DOMAIN.normalize_schema(df)
     assert list(normalized.schema.keys()) == list(L3_TICKS_SCHEMA.keys())
     assert normalized["trading_phase"][0] == 3
 
@@ -113,7 +111,7 @@ def test_validate_l3_ticks_filters_invalid_tick_semantics() -> None:
         },
         schema=L3_TICKS_SCHEMA,
     )
-    validated = validate_l3_ticks(df)
+    validated = L3_TICKS_DOMAIN.validate(df)
     assert validated.height == 0
 
 
@@ -144,7 +142,7 @@ def test_validate_l3_orders_rejects_non_cn_exchange() -> None:
         schema=L3_ORDERS_SCHEMA,
     )
     with pytest.raises(ValueError, match="not allowed"):
-        validate_l3_orders(df)
+        L3_ORDERS_DOMAIN.validate(df)
 
 
 def test_validate_l3_ticks_rejects_non_cn_exchange() -> None:
@@ -169,4 +167,4 @@ def test_validate_l3_ticks_rejects_non_cn_exchange() -> None:
         schema=L3_TICKS_SCHEMA,
     )
     with pytest.raises(ValueError, match="not allowed"):
-        validate_l3_ticks(df)
+        L3_TICKS_DOMAIN.validate(df)

@@ -12,9 +12,8 @@ from pointline.io.delta_manifest_repo import DeltaManifestRepository
 from pointline.io.protocols import BronzeFileMetadata
 from pointline.io.vendors.tardis.parsers.options_chain import parse_tardis_options_chain_csv
 from pointline.tables.options_chain import (
+    OPTIONS_CHAIN_DOMAIN,
     OPTIONS_CHAIN_SCHEMA,
-    normalize_options_chain_schema,
-    validate_options_chain,
 )
 
 
@@ -119,10 +118,10 @@ def test_normalize_and_validate_options_chain() -> None:
             pl.lit(date(2024, 5, 1)).alias("date"),
         ]
     )
-    normalized = normalize_options_chain_schema(df)
+    normalized = OPTIONS_CHAIN_DOMAIN.normalize_schema(df)
     assert list(normalized.schema.keys()) == list(OPTIONS_CHAIN_SCHEMA.keys())
 
-    validated = validate_options_chain(normalized)
+    validated = OPTIONS_CHAIN_DOMAIN.validate(normalized)
     assert validated.height == 1
 
 

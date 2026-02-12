@@ -32,7 +32,7 @@ from pointline.io.protocols import (
 )
 from pointline.io.vendors import get_vendor
 from pointline.services.base_service import BaseService
-from pointline.tables.domain_contract import TableDomain
+from pointline.tables.domain_contract import EventTableDomain
 from pointline.tables.validation_log import create_ingestion_record
 
 logger = logging.getLogger(__name__)
@@ -59,7 +59,7 @@ class GenericIngestionService(BaseService):
     def __init__(
         self,
         table_name: str,
-        table_domain: TableDomain,
+        table_domain: EventTableDomain,
         repo: TableRepository,
         dim_symbol_repo: TableRepository,
         manifest_repo: IngestionManifestRepository,

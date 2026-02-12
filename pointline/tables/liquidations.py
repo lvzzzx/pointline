@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
 from dataclasses import dataclass
 
 import polars as pl
@@ -12,7 +11,7 @@ from pointline.tables._base import (
     required_columns_validation_expr,
     timestamp_validation_expr,
 )
-from pointline.tables.domain_contract import TableDomain, TableSpec
+from pointline.tables.domain_contract import EventTableDomain, TableSpec
 from pointline.tables.domain_registry import register_domain
 
 # Required metadata fields for ingestion
@@ -36,7 +35,7 @@ LIQUIDATIONS_SCHEMA: dict[str, pl.DataType] = {
 }
 
 
-def normalize_liquidations_schema(df: pl.DataFrame) -> pl.DataFrame:
+def _normalize_schema(df: pl.DataFrame) -> pl.DataFrame:
     """Cast to canonical liquidations schema and select schema columns only."""
     optional_columns = {"liq_id"}
 
@@ -69,7 +68,7 @@ def normalize_liquidations_schema(df: pl.DataFrame) -> pl.DataFrame:
     return df.with_columns(casts).select(list(LIQUIDATIONS_SCHEMA.keys()))
 
 
-def canonicalize_liquidations_frame(df: pl.DataFrame) -> pl.DataFrame:
+def _canonicalize_vendor_frame(df: pl.DataFrame) -> pl.DataFrame:
     """Apply canonical enum semantics for liquidation vendor-neutral frames."""
     if "side" in df.columns or "side_raw" not in df.columns:
         return df
@@ -85,7 +84,7 @@ def canonicalize_liquidations_frame(df: pl.DataFrame) -> pl.DataFrame:
     )
 
 
-def encode_fixed_point(df: pl.DataFrame) -> pl.DataFrame:
+def _encode_storage(df: pl.DataFrame) -> pl.DataFrame:
     """Encode liquidation price and quantity fields to fixed-point integers."""
     from pointline.encoding import (
         PROFILE_AMOUNT_COL,
@@ -111,7 +110,7 @@ def encode_fixed_point(df: pl.DataFrame) -> pl.DataFrame:
     return result.drop([col for col in PROFILE_SCALAR_COLS if col in result.columns])
 
 
-def validate_liquidations(df: pl.DataFrame) -> pl.DataFrame:
+def _validate(df: pl.DataFrame) -> pl.DataFrame:
     """Apply quality checks to liquidation rows."""
     if df.is_empty():
         return df
@@ -152,7 +151,7 @@ def validate_liquidations(df: pl.DataFrame) -> pl.DataFrame:
     return valid.select(df.columns)
 
 
-def decode_fixed_point(
+def _decode_storage(
     df: pl.DataFrame,
     *,
     keep_ints: bool = False,
@@ -188,7 +187,7 @@ def decode_fixed_point(
     return result.drop([col for col in PROFILE_SCALAR_COLS if col in result.columns])
 
 
-def decode_fixed_point_lazy(
+def _decode_storage_lazy(
     lf: pl.LazyFrame,
     *,
     keep_ints: bool = False,
@@ -225,20 +224,16 @@ def decode_fixed_point_lazy(
     return result.drop(list(PROFILE_SCALAR_COLS))
 
 
-def required_liquidations_columns() -> Sequence[str]:
-    """Columns required for a liquidations DataFrame after normalization."""
-    return tuple(LIQUIDATIONS_SCHEMA.keys())
-
-
-def required_decode_columns() -> tuple[str, ...]:
+def _required_decode_columns() -> tuple[str, ...]:
     """Columns needed to decode storage fields for liquidations."""
     return ("exchange", "px_int", "qty_int")
 
 
 @dataclass(frozen=True)
-class LiquidationsDomain(TableDomain):
+class LiquidationsDomain(EventTableDomain):
     spec: TableSpec = TableSpec(
         table_name="liquidations",
+        table_kind="event",
         schema=LIQUIDATIONS_SCHEMA,
         partition_by=("exchange", "date"),
         has_date=True,
@@ -248,33 +243,28 @@ class LiquidationsDomain(TableDomain):
     )
 
     def canonicalize_vendor_frame(self, df: pl.DataFrame) -> pl.DataFrame:
-        return canonicalize_liquidations_frame(df)
+        return _canonicalize_vendor_frame(df)
 
     def encode_storage(self, df: pl.DataFrame) -> pl.DataFrame:
-        return encode_fixed_point(df)
+        return _encode_storage(df)
 
     def normalize_schema(self, df: pl.DataFrame) -> pl.DataFrame:
-        return normalize_liquidations_schema(df)
+        return _normalize_schema(df)
 
     def validate(self, df: pl.DataFrame) -> pl.DataFrame:
-        return validate_liquidations(df)
+        return _validate(df)
 
     def required_decode_columns(self) -> tuple[str, ...]:
-        return required_decode_columns()
+        return _required_decode_columns()
 
     def decode_storage(self, df: pl.DataFrame, *, keep_ints: bool = False) -> pl.DataFrame:
-        return decode_fixed_point(df, keep_ints=keep_ints)
+        return _decode_storage(df, keep_ints=keep_ints)
 
     def decode_storage_lazy(self, lf: pl.LazyFrame, *, keep_ints: bool = False) -> pl.LazyFrame:
-        return decode_fixed_point_lazy(lf, keep_ints=keep_ints)
+        return _decode_storage_lazy(lf, keep_ints=keep_ints)
 
 
-# ---------------------------------------------------------------------------
-# Schema registry registration
-# ---------------------------------------------------------------------------
-from pointline.schema_registry import register_schema as _register_schema  # noqa: E402
+LIQUIDATIONS_DOMAIN = LiquidationsDomain()
 
-_register_schema(
-    "liquidations", LIQUIDATIONS_SCHEMA, partition_by=["exchange", "date"], has_date=True
-)
-register_domain(LiquidationsDomain())
+
+register_domain(LIQUIDATIONS_DOMAIN)

@@ -14,12 +14,8 @@ from pointline.io.base_repository import BaseDeltaRepository
 from pointline.io.protocols import BronzeFileMetadata
 from pointline.io.vendors.tardis.parsers.trades import parse_tardis_trades_csv
 from pointline.tables.trades import (
+    TRADES_DOMAIN,
     TRADES_SCHEMA,
-    decode_fixed_point,
-    encode_fixed_point,
-    normalize_trades_schema,
-    required_trades_columns,
-    validate_trades,
 )
 from pointline.validation_utils import DataQualityWarning
 
@@ -182,7 +178,7 @@ def test_normalize_trades_schema():
         }
     )
 
-    normalized = normalize_trades_schema(df)
+    normalized = TRADES_DOMAIN.normalize_schema(df)
 
     assert normalized["date"].dtype == pl.Date
     assert normalized["symbol"].dtype == pl.Utf8
@@ -199,7 +195,7 @@ def test_normalize_trades_schema_missing_required():
     )
 
     with pytest.raises(ValueError, match="missing required columns"):
-        normalize_trades_schema(df)
+        TRADES_DOMAIN.normalize_schema(df)
 
 
 def test_validate_trades_basic():
@@ -217,7 +213,7 @@ def test_validate_trades_basic():
     )
 
     with pytest.warns(DataQualityWarning, match="validate_trades: filtered"):
-        validated = validate_trades(df)
+        validated = TRADES_DOMAIN.validate(df)
 
     # Should filter out the negative price
     assert validated.height == 2
@@ -239,7 +235,7 @@ def test_validate_trades_invalid_side():
     )
 
     with pytest.warns(DataQualityWarning, match="validate_trades: filtered"):
-        validated = validate_trades(df)
+        validated = TRADES_DOMAIN.validate(df)
 
     assert validated.height == 2
 
@@ -255,7 +251,7 @@ def test_encode_fixed_point():
         }
     )
 
-    encoded = encode_fixed_point(df)
+    encoded = TRADES_DOMAIN.encode_storage(df)
 
     assert "px_int" in encoded.columns
     assert "qty_int" in encoded.columns
@@ -278,7 +274,7 @@ def test_encode_fixed_point_missing_columns():
     )
 
     with pytest.raises(ValueError, match="df missing columns"):
-        encode_fixed_point(df)
+        TRADES_DOMAIN.encode_storage(df)
 
 
 def test_decode_fixed_point():
@@ -291,7 +287,7 @@ def test_decode_fixed_point():
         }
     )
 
-    decoded = decode_fixed_point(df)
+    decoded = TRADES_DOMAIN.decode_storage(df)
 
     assert "px_int" not in decoded.columns
     assert "qty_int" not in decoded.columns
@@ -311,7 +307,7 @@ def test_decode_fixed_point_multi_exchange():
         }
     )
 
-    decoded = decode_fixed_point(df)
+    decoded = TRADES_DOMAIN.decode_storage(df)
 
     assert decoded["price_px"][0] == pytest.approx(50000.0)
     assert decoded["qty"][0] == pytest.approx(0.1)
@@ -324,7 +320,7 @@ def test_decode_fixed_point_missing_exchange_column():
     df = pl.DataFrame({"px_int": [50_000_000_000_000], "qty_int": [100_000_000]})
 
     with pytest.raises(ValueError, match="no 'exchange' column"):
-        decode_fixed_point(df)
+        TRADES_DOMAIN.decode_storage(df)
 
 
 def test_trades_service_validate():
@@ -585,7 +581,7 @@ def test_trades_service_ingest_file_success():
 
 def test_required_trades_columns():
     """Test that required_trades_columns() returns all schema columns."""
-    cols = required_trades_columns()
+    cols = tuple(TRADES_DOMAIN.spec.schema.keys())
     assert len(cols) == len(TRADES_SCHEMA)
     assert "date" in cols
     assert "exchange" in cols

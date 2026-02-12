@@ -1,17 +1,7 @@
-"""Central schema registry for all Pointline tables.
+"""Lightweight runtime schema registry.
 
-Provides a single source of truth for table schemas, replacing scattered schema
-dicts across 16+ modules. Each table module registers its schema at import time.
-
-Usage:
-    from pointline.schema_registry import register_schema, get_schema, get_entry
-
-    # In table modules (at module level):
-    register_schema("trades", TRADES_SCHEMA, partition_by=["exchange", "date"], has_date=True)
-
-    # In consumers:
-    schema = get_schema("trades")
-    entry = get_entry("trades")
+This registry remains available for explicit schema registration use-cases and tests.
+Event-table canonical metadata now lives in table domains (`pointline.tables.domain_registry`).
 """
 
 from __future__ import annotations

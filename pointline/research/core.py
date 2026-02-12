@@ -14,7 +14,7 @@ from pointline._error_messages import (
     timestamp_required_error,
 )
 from pointline.config import TABLE_HAS_DATE, TABLE_PATHS, get_table_path
-from pointline.tables.domain_registry import get_domain
+from pointline.tables.domain_registry import get_event_domain
 from pointline.types import TableName, TimestampInput
 
 
@@ -658,7 +658,7 @@ def _load_decoded_table(
     keep_ints: bool,
     lazy: bool,
 ) -> pl.DataFrame | pl.LazyFrame:
-    domain = get_domain(table_name)
+    domain = get_event_domain(table_name)
     requested_columns = list(columns) if columns is not None else None
     decode_required = list(domain.required_decode_columns())
     int_like_cols = [col for col in decode_required if col.endswith("_int")]
