@@ -2,6 +2,21 @@
 
 This document describes the **downloadable CSV datasets** provided by Tardis.dev, covering cryptocurrency market data from 26+ exchanges.
 
+> **Official Documentation:** https://docs.tardis.dev/downloadable-csv-files
+>
+> This document is based on the official Tardis.dev documentation. For the most up-to-date information, please refer to the official source.
+
+---
+
+## Document Reference
+
+| Resource | URL |
+| :--- | :--- |
+| **CSV Format Details** | https://docs.tardis.dev/downloadable-csv-files#csv-format-details |
+| **Data Types** | https://docs.tardis.dev/downloadable-csv-files#data-types |
+| **Datasets API** | https://docs.tardis.dev/api/datasets |
+| **Main Website** | https://tardis.dev |
+
 ---
 
 ## 1. Source Overview
@@ -97,7 +112,9 @@ All data types share these common fields:
 
 ### 5.1 incremental_book_L2
 
-**Description:** Tick-level incremental order book L2 updates collected from exchanges' real-time WebSocket feeds. Data depth matches the underlying exchange feed.
+**Reference:** https://docs.tardis.dev/downloadable-csv-files#incremental_book_l2
+
+**Description:** Tick-level incremental order book L2 updates collected from exchanges' real-time WebSocket order book L2 data feeds. Data depth matches the underlying exchange feed.
 
 **Use Case:** Full order book reconstruction.
 
@@ -123,7 +140,9 @@ All data types share these common fields:
 
 ### 5.2 book_snapshot_25
 
-**Description:** Tick-level reconstructed order book snapshots (top 25 levels). Each row represents the full top-25 book state recorded every time any of the tracked levels changed.
+**Reference:** https://docs.tardis.dev/downloadable-csv-files#book_snapshot_25
+
+**Description:** Tick-level order book snapshots reconstructed from exchanges' real-time WebSocket order book L2 data feeds. Each row represents **top 25 levels** from each side of the limit order book recorded every time any of the tracked bids/asks top 25 levels have changed.
 
 **Use Case:** Research requiring order book state without reconstruction.
 
@@ -135,10 +154,10 @@ All data types share these common fields:
 | `symbol` | String | Instrument symbol |
 | `timestamp` | Integer | Exchange timestamp (µs) |
 | `local_timestamp` | Integer | Arrival timestamp (µs) |
-| `asks[0-24].price` | Float | Ask prices in **ascending order** (level 0 = best ask) |
-| `asks[0-24].amount` | Float | Ask amounts corresponding to prices |
-| `bids[0-24].price` | Float | Bid prices in **descending order** (level 0 = best bid) |
-| `bids[0-24].amount` | Float | Bid amounts corresponding to prices |
+| `asks[0].price` ... `asks[24].price` | Float | Ask prices in **ascending order** (index 0 = best ask) |
+| `asks[0].amount` ... `asks[24].amount` | Float | Ask amounts corresponding to prices |
+| `bids[0].price` ... `bids[24].price` | Float | Bid prices in **descending order** (index 0 = best bid) |
+| `bids[0].amount` ... `bids[24].amount` | Float | Bid amounts corresponding to prices |
 
 **Notes:**
 - Empty values if insufficient price levels available
@@ -148,7 +167,9 @@ All data types share these common fields:
 
 ### 5.3 book_snapshot_5
 
-**Description:** Tick-level reconstructed order book snapshots (top 5 levels). Same as `book_snapshot_25` but limited to top 5 levels.
+**Reference:** https://docs.tardis.dev/downloadable-csv-files#book_snapshot_5
+
+**Description:** Tick-level order book snapshots reconstructed from exchanges' real-time WebSocket order book L2 data feeds. Each row represents **top 5 levels** from each side of the limit order book recorded every time any of the tracked bids/asks top 5 levels have changed.
 
 **Schema**
 
@@ -158,16 +179,18 @@ All data types share these common fields:
 | `symbol` | String | Instrument symbol |
 | `timestamp` | Integer | Exchange timestamp (µs) |
 | `local_timestamp` | Integer | Arrival timestamp (µs) |
-| `asks[0-4].price` | Float | Ask prices in **ascending order** |
-| `asks[0-4].amount` | Float | Ask amounts |
-| `bids[0-4].price` | Float | Bid prices in **descending order** |
-| `bids[0-4].amount` | Float | Bid amounts |
+| `asks[0].price` ... `asks[4].price` | Float | Ask prices in **ascending order** (index 0 = best ask) |
+| `asks[0].amount` ... `asks[4].amount` | Float | Ask amounts |
+| `bids[0].price` ... `bids[4].price` | Float | Bid prices in **descending order** (index 0 = best bid) |
+| `bids[0].amount` ... `bids[4].amount` | Float | Bid amounts |
 
 ---
 
 ### 5.4 trades
 
-**Description:** Individual trades collected from exchanges' real-time WebSocket trades feeds.
+**Reference:** https://docs.tardis.dev/downloadable-csv-files#trades
+
+**Description:** Individual trades data collected from exchanges' real-time WebSocket trades data feeds.
 
 **Schema**
 
@@ -191,6 +214,8 @@ All data types share these common fields:
 
 ### 5.5 quotes
 
+**Reference:** https://docs.tardis.dev/downloadable-csv-files#quotes
+
 **Description:** Top-of-book (best bid/ask) quotes. Typically sourced from exchange `bookTicker` or similar top-of-book feeds.
 
 **Schema**
@@ -209,6 +234,8 @@ All data types share these common fields:
 ---
 
 ### 5.6 derivative_ticker
+
+**Reference:** https://docs.tardis.dev/downloadable-csv-files#derivative_ticker
 
 **Description:** Derivative market data including mark price, index price, funding rate, open interest, and predicted funding. Available for futures and perpetual contracts.
 
@@ -237,6 +264,8 @@ All data types share these common fields:
 
 ### 5.7 liquidations
 
+**Reference:** https://docs.tardis.dev/downloadable-csv-files#liquidations
+
 **Description:** Liquidation events from exchanges' real-time liquidation feeds.
 
 **Schema**
@@ -260,7 +289,9 @@ All data types share these common fields:
 
 ### 5.8 options_chain
 
-**Description:** Tick-level options summary data (strikes, expirations, OI, IV, greeks) for all active options instruments. Available for Deribit and OKEx Options.
+**Reference:** https://docs.tardis.dev/downloadable-csv-files#options_chain
+
+**Description:** Tick-level options summary info (strike prices, expiration dates, open interest, implied volatility, greeks, etc.) for all active options instruments collected from exchanges' real-time WebSocket options tickers data feeds. Available for Deribit (sourced from ticker channel) and OKEx Options (sourced from option/summary and index/ticker channels).
 
 **Symbol Convention:** For `options_chain` data type, use `OPTIONS` as symbol (one file per day containing all options).
 
