@@ -10,7 +10,6 @@ def assign_lineage(
     file_id: int,
     *,
     file_seq_col: str = "file_seq",
-    line_number_col: str = "file_line_number",
 ) -> pl.DataFrame:
     if df.is_empty():
         return df.with_columns(
@@ -20,8 +19,6 @@ def assign_lineage(
 
     if file_seq_col in df.columns:
         seq_expr = pl.col(file_seq_col).cast(pl.Int64)
-    elif line_number_col in df.columns:
-        seq_expr = pl.col(line_number_col).cast(pl.Int64)
     else:
         seq_expr = (pl.int_range(0, pl.len(), eager=False) + 1).cast(pl.Int64)
 

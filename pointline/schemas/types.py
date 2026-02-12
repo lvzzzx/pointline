@@ -78,3 +78,9 @@ class TableSpec:
             if column.name == name:
                 return column
         raise KeyError(f"Column '{name}' not found in table '{self.name}'")
+
+    def scaled_columns(self) -> tuple[str, ...]:
+        return tuple(col.name for col in self.column_specs if col.scale is not None)
+
+    def scale_for(self, name: str) -> int | None:
+        return self.get_column(name).scale

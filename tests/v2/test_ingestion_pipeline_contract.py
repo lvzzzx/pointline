@@ -195,3 +195,49 @@ def test_ingest_file_skips_when_manifest_already_success_and_not_forced() -> Non
     assert result.skipped is True
     assert called["parser"] is False
     assert writer.calls == []
+
+
+def test_ingest_file_fails_when_scaled_numeric_fields_are_not_pre_scaled() -> None:
+    manifest = FakeManifestRepo()
+    writer = CapturingWriter()
+
+    event_ts = _ts_us(datetime(2024, 9, 29, 16, 30, tzinfo=ZoneInfo("UTC")))
+
+    def parser(_meta: BronzeFileMetadata) -> pl.DataFrame:
+        return pl.DataFrame(
+            {
+                "exchange": ["szse"],
+                "symbol": ["000001.SZ"],
+                "ts_event_us": [event_ts],
+                "ts_local_us": [event_ts],
+                "side": ["buy"],
+                "is_buyer_maker": [False],
+                # Raw decimal values must be encoded before schema normalization.
+                "price": [12.345],
+                "qty": [100.0],
+            }
+        )
+
+    dim_symbol = pl.DataFrame(
+        {
+            "exchange": ["szse"],
+            "exchange_symbol": ["000001.SZ"],
+            "symbol_id": [42],
+            "valid_from_ts_us": [event_ts - 1],
+            "valid_until_ts_us": [event_ts + 1],
+        }
+    )
+
+    result = ingest_file(
+        _meta(),
+        parser=parser,
+        manifest_repo=manifest,
+        writer=writer,
+        dim_symbol_df=dim_symbol,
+    )
+
+    assert result.status == "failed"
+    assert result.failure_reason == "pipeline_error"
+    assert result.error_message is not None
+    assert "pre-scaled Int64" in result.error_message
+    assert writer.calls == []

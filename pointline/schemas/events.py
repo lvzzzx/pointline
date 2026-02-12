@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import polars as pl
 
-from pointline.schemas.types import ColumnSpec, TableSpec
+from pointline.schemas.types import PRICE_SCALE, QTY_SCALE, ColumnSpec, TableSpec
 
 
 def _common_event_columns() -> tuple[ColumnSpec, ...]:
@@ -27,8 +27,8 @@ TRADES = TableSpec(
         *_common_event_columns(),
         ColumnSpec("side", pl.Utf8),
         ColumnSpec("is_buyer_maker", pl.Boolean),
-        ColumnSpec("price", pl.Int64),
-        ColumnSpec("qty", pl.Int64),
+        ColumnSpec("price", pl.Int64, scale=PRICE_SCALE),
+        ColumnSpec("qty", pl.Int64, scale=QTY_SCALE),
     ),
     partition_by=("exchange", "trading_date"),
     business_keys=(),
@@ -42,10 +42,10 @@ QUOTES = TableSpec(
     kind="event",
     column_specs=(
         *_common_event_columns(),
-        ColumnSpec("bid_price", pl.Int64),
-        ColumnSpec("bid_qty", pl.Int64),
-        ColumnSpec("ask_price", pl.Int64),
-        ColumnSpec("ask_qty", pl.Int64),
+        ColumnSpec("bid_price", pl.Int64, scale=PRICE_SCALE),
+        ColumnSpec("bid_qty", pl.Int64, scale=QTY_SCALE),
+        ColumnSpec("ask_price", pl.Int64, scale=PRICE_SCALE),
+        ColumnSpec("ask_qty", pl.Int64, scale=QTY_SCALE),
         ColumnSpec("seq_num", pl.Int64, nullable=True),
     ),
     partition_by=("exchange", "trading_date"),
@@ -62,8 +62,8 @@ ORDERBOOK_UPDATES = TableSpec(
         *_common_event_columns(),
         ColumnSpec("book_seq", pl.Int64),
         ColumnSpec("side", pl.Utf8),
-        ColumnSpec("price", pl.Int64),
-        ColumnSpec("qty", pl.Int64),
+        ColumnSpec("price", pl.Int64, scale=PRICE_SCALE),
+        ColumnSpec("qty", pl.Int64, scale=QTY_SCALE),
         ColumnSpec("is_snapshot", pl.Boolean),
     ),
     partition_by=("exchange", "trading_date"),

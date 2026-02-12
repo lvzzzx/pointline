@@ -3,7 +3,7 @@ from __future__ import annotations
 import polars as pl
 
 from pointline.schemas.registry import get_table_spec, list_table_specs
-from pointline.schemas.types import INGEST_STATUS_VALUES
+from pointline.schemas.types import INGEST_STATUS_VALUES, PRICE_SCALE, QTY_SCALE
 
 
 def test_registry_contains_v2_core_tables() -> None:
@@ -32,3 +32,15 @@ def test_table_spec_to_polars_schema() -> None:
     assert schema["bid_price"] == pl.Int64
     assert schema["trading_date"] == pl.Date
     assert schema["file_seq"] == pl.Int64
+
+
+def test_scaled_numeric_columns_are_explicitly_annotated() -> None:
+    trades = get_table_spec("trades")
+    assert trades.scale_for("price") == PRICE_SCALE
+    assert trades.scale_for("qty") == QTY_SCALE
+
+    quotes = get_table_spec("quotes")
+    assert quotes.scale_for("bid_price") == PRICE_SCALE
+    assert quotes.scale_for("bid_qty") == QTY_SCALE
+    assert quotes.scale_for("ask_price") == PRICE_SCALE
+    assert quotes.scale_for("ask_qty") == QTY_SCALE

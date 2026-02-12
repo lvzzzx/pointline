@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import polars as pl
 
-from pointline.schemas.types import ColumnSpec, TableSpec
+from pointline.schemas.types import PRICE_SCALE, QTY_SCALE, ColumnSpec, TableSpec
 
 DIM_SYMBOL = TableSpec(
     name="dim_symbol",
@@ -20,9 +20,9 @@ DIM_SYMBOL = TableSpec(
         ColumnSpec("valid_from_ts_us", pl.Int64),
         ColumnSpec("valid_until_ts_us", pl.Int64),
         ColumnSpec("is_current", pl.Boolean),
-        ColumnSpec("tick_size", pl.Int64, nullable=True),
-        ColumnSpec("lot_size", pl.Int64, nullable=True),
-        ColumnSpec("contract_size", pl.Int64, nullable=True),
+        ColumnSpec("tick_size", pl.Int64, nullable=True, scale=PRICE_SCALE),
+        ColumnSpec("lot_size", pl.Int64, nullable=True, scale=QTY_SCALE),
+        ColumnSpec("contract_size", pl.Int64, nullable=True, scale=QTY_SCALE),
         ColumnSpec("updated_at_ts_us", pl.Int64),
     ),
     partition_by=(),
