@@ -9,8 +9,6 @@ from __future__ import annotations
 import importlib
 import logging
 import time
-from collections.abc import Callable
-from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -18,7 +16,6 @@ from zoneinfo import ZoneInfo
 import polars as pl
 
 from pointline.config import (
-    TABLE_ALLOWED_EXCHANGES,
     get_bronze_root,
     get_exchange_id,
     get_exchange_timezone,
@@ -35,27 +32,10 @@ from pointline.io.protocols import (
 )
 from pointline.io.vendors import get_vendor
 from pointline.services.base_service import BaseService
+from pointline.tables.domain_contract import TableDomain
 from pointline.tables.validation_log import create_ingestion_record
 
 logger = logging.getLogger(__name__)
-
-
-@dataclass
-class TableStrategy:
-    """Table-specific functions (encoding, validation, normalization).
-
-    This encapsulates all the table-specific domain logic while keeping the
-    ingestion pipeline vendor-agnostic.
-
-    Attributes:
-        encode_fixed_point: Convert float prices/quantities to fixed-point integers (df, dim_symbol, exchange)
-        validate: Apply quality checks and filter invalid rows
-        normalize_schema: Cast to canonical schema and select only schema columns
-    """
-
-    encode_fixed_point: Callable[[pl.DataFrame, pl.DataFrame, str], pl.DataFrame]
-    validate: Callable[[pl.DataFrame], pl.DataFrame]
-    normalize_schema: Callable[[pl.DataFrame], pl.DataFrame]
 
 
 class GenericIngestionService(BaseService):
@@ -79,7 +59,7 @@ class GenericIngestionService(BaseService):
     def __init__(
         self,
         table_name: str,
-        table_strategy: TableStrategy,
+        table_domain: TableDomain,
         repo: TableRepository,
         dim_symbol_repo: TableRepository,
         manifest_repo: IngestionManifestRepository,
@@ -88,20 +68,20 @@ class GenericIngestionService(BaseService):
 
         Args:
             table_name: Name of the table (e.g., "trades", "quotes", "l3_orders")
-            table_strategy: Table-specific functions for this data type
+            table_domain: Canonical table-domain implementation
             repo: Repository for the target Silver table
             dim_symbol_repo: Repository for dim_symbol table
             manifest_repo: Repository for ingestion manifest
         """
         self.table_name = table_name
-        self.strategy = table_strategy
+        self.domain = table_domain
         self.repo = repo
         self.dim_symbol_repo = dim_symbol_repo
         self.manifest_repo = manifest_repo
 
     def validate(self, data: pl.DataFrame) -> pl.DataFrame:
         """Validate data using table-specific validation logic."""
-        return self.strategy.validate(data)
+        return self.domain.validate(data)
 
     def compute_state(self, valid_data: pl.DataFrame) -> pl.DataFrame:
         """Transform validated data to final Silver format.
@@ -109,7 +89,7 @@ class GenericIngestionService(BaseService):
         Note: This is called by the BaseService.update() template method.
         For ingestion from files, use ingest_file() instead.
         """
-        return self.strategy.normalize_schema(valid_data)
+        return self.domain.normalize_schema(valid_data)
 
     def write(self, result: pl.DataFrame, *, use_merge: bool = False) -> None:
         """Append data to the Delta table.
@@ -295,7 +275,7 @@ class GenericIngestionService(BaseService):
                 return result
 
             # 3b. Check table-level exchange restrictions (e.g., l3_* → szse/sse only)
-            allowed = TABLE_ALLOWED_EXCHANGES.get(self.table_name)
+            allowed = self.domain.spec.allowed_exchanges
             if allowed is not None:
                 disallowed = sorted(set(unique_exchanges) - allowed)
                 if disallowed:
@@ -317,6 +297,9 @@ class GenericIngestionService(BaseService):
 
             # 2b. Rename exchange_symbol → symbol (canonical event table column)
             df = df.rename({"exchange_symbol": "symbol"})
+
+            # 2c. Canonicalize vendor-neutral frame to table semantics
+            df = self.domain.canonicalize_vendor_frame(df)
 
             # 4. Validate date partition alignment against exchange-local timezone
             ts_col = "ts_bucket_start_us" if "ts_bucket_start_us" in df.columns else "ts_local_us"
@@ -366,15 +349,13 @@ class GenericIngestionService(BaseService):
                 )
 
             # 7. Encode fixed-point (price/qty → integers)
-            # Use first exchange from data — files are single-exchange by convention
-            exchange = unique_exchanges[0]
-            encoded_df = self.strategy.encode_fixed_point(df, dim_symbol, exchange)
+            encoded_df = self.domain.encode_storage(df)
 
             # 8. Add lineage columns (file_id, file_line_number)
             lineage_df = self._add_lineage(encoded_df, file_id)
 
             # 9. Normalize schema (enforce canonical schema)
-            normalized_df = self.strategy.normalize_schema(lineage_df)
+            normalized_df = self.domain.normalize_schema(lineage_df)
 
             # 10. Validate (quality checks)
             validated_df = self.validate(normalized_df)

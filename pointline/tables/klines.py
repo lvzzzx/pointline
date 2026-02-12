@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Sequence
+from dataclasses import dataclass
 
 import polars as pl
 
@@ -13,6 +14,8 @@ from pointline.tables._base import (
     required_columns_validation_expr,
     timestamp_validation_expr,
 )
+from pointline.tables.domain_contract import TableDomain, TableSpec
+from pointline.tables.domain_registry import register_domain
 
 logger = logging.getLogger(__name__)
 
@@ -70,33 +73,54 @@ RAW_KLINE_COLUMNS = [
 ]
 
 
-def encode_fixed_point(df: pl.DataFrame, dim_symbol: pl.DataFrame, exchange: str) -> pl.DataFrame:
+def encode_fixed_point(df: pl.DataFrame) -> pl.DataFrame:
     """Encode OHLC and volume fields using per-asset-class scalar profile.
 
     Uses profile.price for OHLC, profile.amount for base volumes,
     and profile.quote_vol for quote volumes.
     """
-    from pointline.encoding import get_profile
+    from pointline.encoding import (
+        PROFILE_AMOUNT_COL,
+        PROFILE_PRICE_COL,
+        PROFILE_QUOTE_VOL_COL,
+        PROFILE_SCALAR_COLS,
+        with_profile_scalars,
+    )
 
-    profile = get_profile(exchange)
+    working = with_profile_scalars(df)
 
     # Encode all fields
-    result = df.with_columns(
+    result = working.with_columns(
         [
-            (pl.col("open_px") / profile.price).round().cast(pl.Int64).alias("open_px_int"),
-            (pl.col("high_px") / profile.price).round().cast(pl.Int64).alias("high_px_int"),
-            (pl.col("low_px") / profile.price).round().cast(pl.Int64).alias("low_px_int"),
-            (pl.col("close_px") / profile.price).round().cast(pl.Int64).alias("close_px_int"),
-            (pl.col("volume") / profile.amount).round().cast(pl.Int64).alias("volume_qty_int"),
-            (pl.col("quote_volume") / profile.quote_vol)
+            (pl.col("open_px") / pl.col(PROFILE_PRICE_COL))
+            .round()
+            .cast(pl.Int64)
+            .alias("open_px_int"),
+            (pl.col("high_px") / pl.col(PROFILE_PRICE_COL))
+            .round()
+            .cast(pl.Int64)
+            .alias("high_px_int"),
+            (pl.col("low_px") / pl.col(PROFILE_PRICE_COL))
+            .round()
+            .cast(pl.Int64)
+            .alias("low_px_int"),
+            (pl.col("close_px") / pl.col(PROFILE_PRICE_COL))
+            .round()
+            .cast(pl.Int64)
+            .alias("close_px_int"),
+            (pl.col("volume") / pl.col(PROFILE_AMOUNT_COL))
+            .round()
+            .cast(pl.Int64)
+            .alias("volume_qty_int"),
+            (pl.col("quote_volume") / pl.col(PROFILE_QUOTE_VOL_COL))
             .round()
             .cast(pl.Int64)
             .alias("quote_volume_int"),
-            (pl.col("taker_buy_base_volume") / profile.amount)
+            (pl.col("taker_buy_base_volume") / pl.col(PROFILE_AMOUNT_COL))
             .round()
             .cast(pl.Int64)
             .alias("taker_buy_base_qty_int"),
-            (pl.col("taker_buy_quote_volume") / profile.quote_vol)
+            (pl.col("taker_buy_quote_volume") / pl.col(PROFILE_QUOTE_VOL_COL))
             .round()
             .cast(pl.Int64)
             .alias("taker_buy_quote_qty_int"),
@@ -113,7 +137,7 @@ def encode_fixed_point(df: pl.DataFrame, dim_symbol: pl.DataFrame, exchange: str
         "taker_buy_base_volume",
         "taker_buy_quote_volume",
     ]
-    return result.drop(drop_cols)
+    return result.drop(drop_cols + [col for col in PROFILE_SCALAR_COLS if col in result.columns])
 
 
 def decode_fixed_point(
@@ -182,6 +206,61 @@ def decode_fixed_point(
     if not keep_ints:
         result = result.drop(required_cols)
     return result.drop([col for col in PROFILE_SCALAR_COLS if col in result.columns])
+
+
+def decode_fixed_point_lazy(
+    lf: pl.LazyFrame,
+    *,
+    keep_ints: bool = False,
+) -> pl.LazyFrame:
+    """Decode fixed-point integers lazily into float OHLC and volume columns."""
+    from pointline.encoding import (
+        PROFILE_AMOUNT_COL,
+        PROFILE_PRICE_COL,
+        PROFILE_QUOTE_VOL_COL,
+        PROFILE_SCALAR_COLS,
+        with_profile_scalars_lazy,
+    )
+
+    schema = lf.collect_schema()
+    required_cols = [
+        "open_px_int",
+        "high_px_int",
+        "low_px_int",
+        "close_px_int",
+        "volume_qty_int",
+        "quote_volume_int",
+        "taker_buy_base_qty_int",
+        "taker_buy_quote_qty_int",
+    ]
+    missing = [c for c in required_cols if c not in schema]
+    if missing:
+        raise ValueError(f"decode_fixed_point: df missing columns: {missing}")
+
+    working = with_profile_scalars_lazy(lf)
+    result = working.with_columns(
+        [
+            (pl.col("open_px_int") * pl.col(PROFILE_PRICE_COL)).cast(pl.Float64).alias("open_px"),
+            (pl.col("high_px_int") * pl.col(PROFILE_PRICE_COL)).cast(pl.Float64).alias("high_px"),
+            (pl.col("low_px_int") * pl.col(PROFILE_PRICE_COL)).cast(pl.Float64).alias("low_px"),
+            (pl.col("close_px_int") * pl.col(PROFILE_PRICE_COL)).cast(pl.Float64).alias("close_px"),
+            (pl.col("volume_qty_int") * pl.col(PROFILE_AMOUNT_COL))
+            .cast(pl.Float64)
+            .alias("volume"),
+            (pl.col("quote_volume_int") * pl.col(PROFILE_QUOTE_VOL_COL))
+            .cast(pl.Float64)
+            .alias("quote_volume"),
+            (pl.col("taker_buy_base_qty_int") * pl.col(PROFILE_AMOUNT_COL))
+            .cast(pl.Float64)
+            .alias("taker_buy_base_volume"),
+            (pl.col("taker_buy_quote_qty_int") * pl.col(PROFILE_QUOTE_VOL_COL))
+            .cast(pl.Float64)
+            .alias("taker_buy_quote_volume"),
+        ]
+    )
+    if not keep_ints:
+        result = result.drop(required_cols)
+    return result.drop(list(PROFILE_SCALAR_COLS))
 
 
 def normalize_klines_schema(df: pl.DataFrame) -> pl.DataFrame:
@@ -306,8 +385,15 @@ def check_kline_completeness(
         to combine hours across different symbol_id versions on transition days.
     """
     if df.is_empty():
-        group_col = "exchange_symbol" if by_exchange_symbol else "symbol_id"
-        col_type = pl.Utf8 if by_exchange_symbol else pl.Int64
+        if by_exchange_symbol:
+            group_col = "exchange_symbol"
+            col_type = pl.Utf8
+        elif "symbol_id" in df.columns:
+            group_col = "symbol_id"
+            col_type = pl.Int64
+        else:
+            group_col = "symbol"
+            col_type = pl.Utf8
         return pl.DataFrame(
             schema={
                 "date": pl.Date,
@@ -327,11 +413,20 @@ def check_kline_completeness(
             )
         group_cols = ["date", "exchange_symbol"]
     else:
-        if "date" not in df.columns or "symbol_id" not in df.columns:
+        if "date" not in df.columns:
             raise ValueError(
-                "check_kline_completeness: df must have 'date' and 'symbol_id' columns"
+                "check_kline_completeness: df must have 'date' plus one of "
+                "'symbol_id' or 'symbol' columns"
             )
-        group_cols = ["date", "symbol_id"]
+        if "symbol_id" in df.columns:
+            group_cols = ["date", "symbol_id"]
+        elif "symbol" in df.columns:
+            group_cols = ["date", "symbol"]
+        else:
+            raise ValueError(
+                "check_kline_completeness: df must have 'date' plus one of "
+                "'symbol_id' or 'symbol' columns"
+            )
 
     expected_count = KLINE_INTERVAL_ROWS_PER_DAY.get(interval)
     if expected_count is None:
@@ -357,7 +452,7 @@ def check_kline_completeness(
         incomplete = completeness.filter(~pl.col("is_complete"))
         if not incomplete.is_empty():
             total_incomplete = incomplete.height
-            group_desc = "exchange_symbol" if by_exchange_symbol else "symbol_id"
+            group_desc = "exchange_symbol" if by_exchange_symbol else group_cols[1]
             logger.warning(
                 f"Found {total_incomplete} incomplete day(s) for interval '{interval}' "
                 f"(expected {expected_count} rows/day, grouped by {group_desc}). "
@@ -373,6 +468,52 @@ def check_kline_completeness(
 def required_kline_columns() -> Sequence[str]:
     """Columns required for kline DataFrame after normalization."""
     return tuple(KLINE_SCHEMA.keys())
+
+
+def canonicalize_klines_frame(df: pl.DataFrame) -> pl.DataFrame:
+    """Klines have no enum remapping at canonicalization stage."""
+    return df
+
+
+def required_decode_columns() -> tuple[str, ...]:
+    """Columns needed to decode storage fields for kline tables."""
+    return (
+        "exchange",
+        "open_px_int",
+        "high_px_int",
+        "low_px_int",
+        "close_px_int",
+        "volume_qty_int",
+        "quote_volume_int",
+        "taker_buy_base_qty_int",
+        "taker_buy_quote_qty_int",
+    )
+
+
+@dataclass(frozen=True)
+class _KlineDomain(TableDomain):
+    spec: TableSpec
+
+    def canonicalize_vendor_frame(self, df: pl.DataFrame) -> pl.DataFrame:
+        return canonicalize_klines_frame(df)
+
+    def encode_storage(self, df: pl.DataFrame) -> pl.DataFrame:
+        return encode_fixed_point(df)
+
+    def normalize_schema(self, df: pl.DataFrame) -> pl.DataFrame:
+        return normalize_klines_schema(df)
+
+    def validate(self, df: pl.DataFrame) -> pl.DataFrame:
+        return validate_klines(df)
+
+    def required_decode_columns(self) -> tuple[str, ...]:
+        return required_decode_columns()
+
+    def decode_storage(self, df: pl.DataFrame, *, keep_ints: bool = False) -> pl.DataFrame:
+        return decode_fixed_point(df, keep_ints=keep_ints)
+
+    def decode_storage_lazy(self, lf: pl.LazyFrame, *, keep_ints: bool = False) -> pl.LazyFrame:
+        return decode_fixed_point_lazy(lf, keep_ints=keep_ints)
 
 
 def _ensure_raw_columns(df: pl.DataFrame) -> pl.DataFrame:
@@ -416,3 +557,29 @@ from pointline.schema_registry import register_schema as _register_schema  # noq
 
 _register_schema("kline_1h", KLINE_SCHEMA, partition_by=["exchange", "date"], has_date=True)
 _register_schema("kline_1d", KLINE_SCHEMA, partition_by=["exchange", "date"], has_date=True)
+register_domain(
+    _KlineDomain(
+        spec=TableSpec(
+            table_name="kline_1h",
+            schema=KLINE_SCHEMA,
+            partition_by=("exchange", "date"),
+            has_date=True,
+            layer="silver",
+            allowed_exchanges=None,
+            ts_column="ts_bucket_start_us",
+        )
+    )
+)
+register_domain(
+    _KlineDomain(
+        spec=TableSpec(
+            table_name="kline_1d",
+            schema=KLINE_SCHEMA,
+            partition_by=("exchange", "date"),
+            has_date=True,
+            layer="silver",
+            allowed_exchanges=None,
+            ts_column="ts_bucket_start_us",
+        )
+    )
+)

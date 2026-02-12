@@ -14,11 +14,7 @@ from pointline._error_messages import (
     timestamp_required_error,
 )
 from pointline.config import TABLE_HAS_DATE, TABLE_PATHS, get_table_path
-from pointline.encoding import get_profile
-from pointline.tables.book_snapshots import decode_fixed_point as decode_book_snapshots
-from pointline.tables.klines import decode_fixed_point as decode_klines
-from pointline.tables.quotes import decode_fixed_point as decode_quotes
-from pointline.tables.trades import decode_fixed_point as decode_trades
+from pointline.tables.domain_registry import get_domain
 from pointline.types import TableName, TimestampInput
 
 
@@ -433,36 +429,17 @@ def load_trades_decoded(
 
     If lazy=True, returns a LazyFrame with decode expressions applied.
     """
-    required_ints = ["px_int", "qty_int"]
-    requested_columns = list(columns) if columns is not None else None
-    effective_keep_ints = keep_ints or (
-        requested_columns is not None and any(col in required_ints for col in requested_columns)
-    )
-
-    if lazy:
-        lf = scan_table(
-            "trades",
-            exchange=exchange,
-            symbol=symbol,
-            start_ts_us=start_ts_us,
-            end_ts_us=end_ts_us,
-            ts_col=ts_col,
-            columns=_merge_decode_columns(columns, ["exchange", *required_ints]),
-        )
-        decoded = _decode_trades_lazy(lf, keep_ints=effective_keep_ints)
-        return decoded.select(requested_columns) if requested_columns is not None else decoded
-
-    df = read_table(
-        "trades",
+    return _load_decoded_table(
+        table_name="trades",
         exchange=exchange,
         symbol=symbol,
         start_ts_us=start_ts_us,
         end_ts_us=end_ts_us,
         ts_col=ts_col,
-        columns=_merge_decode_columns(columns, ["exchange", *required_ints]),
+        columns=columns,
+        keep_ints=keep_ints,
+        lazy=lazy,
     )
-    decoded = decode_trades(df, keep_ints=effective_keep_ints)
-    return decoded.select(requested_columns) if requested_columns is not None else decoded
 
 
 def load_quotes_decoded(
@@ -480,36 +457,17 @@ def load_quotes_decoded(
 
     If lazy=True, returns a LazyFrame with decode expressions applied.
     """
-    required_ints = ["bid_px_int", "bid_sz_int", "ask_px_int", "ask_sz_int"]
-    requested_columns = list(columns) if columns is not None else None
-    effective_keep_ints = keep_ints or (
-        requested_columns is not None and any(col in required_ints for col in requested_columns)
-    )
-
-    if lazy:
-        lf = scan_table(
-            "quotes",
-            exchange=exchange,
-            symbol=symbol,
-            start_ts_us=start_ts_us,
-            end_ts_us=end_ts_us,
-            ts_col=ts_col,
-            columns=_merge_decode_columns(columns, ["exchange", *required_ints]),
-        )
-        decoded = _decode_quotes_lazy(lf, keep_ints=effective_keep_ints)
-        return decoded.select(requested_columns) if requested_columns is not None else decoded
-
-    df = read_table(
-        "quotes",
+    return _load_decoded_table(
+        table_name="quotes",
         exchange=exchange,
         symbol=symbol,
         start_ts_us=start_ts_us,
         end_ts_us=end_ts_us,
         ts_col=ts_col,
-        columns=_merge_decode_columns(columns, ["exchange", *required_ints]),
+        columns=columns,
+        keep_ints=keep_ints,
+        lazy=lazy,
     )
-    decoded = decode_quotes(df, keep_ints=effective_keep_ints)
-    return decoded.select(requested_columns) if requested_columns is not None else decoded
 
 
 def load_book_snapshot_25_decoded(
@@ -526,33 +484,42 @@ def load_book_snapshot_25_decoded(
 
     If lazy=True, returns a LazyFrame with decode expressions applied.
     """
-    required_lists = ["bids_px_int", "bids_sz_int", "asks_px_int", "asks_sz_int"]
-    requested_columns = list(columns) if columns is not None else None
-
-    if lazy:
-        lf = scan_table(
-            "book_snapshot_25",
-            exchange=exchange,
-            symbol=symbol,
-            start_ts_us=start_ts_us,
-            end_ts_us=end_ts_us,
-            ts_col=ts_col,
-            columns=_merge_decode_columns(columns, ["exchange", *required_lists]),
-        )
-        decoded = _decode_book_snapshot_25_lazy(lf)
-        return decoded.select(requested_columns) if requested_columns is not None else decoded
-
-    df = read_table(
-        "book_snapshot_25",
+    return _load_decoded_table(
+        table_name="book_snapshot_25",
         exchange=exchange,
         symbol=symbol,
         start_ts_us=start_ts_us,
         end_ts_us=end_ts_us,
         ts_col=ts_col,
-        columns=_merge_decode_columns(columns, ["exchange", *required_lists]),
+        columns=columns,
+        keep_ints=False,
+        lazy=lazy,
     )
-    decoded = decode_book_snapshots(df)
-    return decoded.select(requested_columns) if requested_columns is not None else decoded
+
+
+def load_derivative_ticker_decoded(
+    *,
+    exchange: str | None = None,
+    symbol: str | Iterable[str] | None = None,
+    start_ts_us: TimestampInput | None = None,
+    end_ts_us: TimestampInput | None = None,
+    ts_col: str = "ts_local_us",
+    columns: Sequence[str] | None = None,
+    keep_ints: bool = False,
+    lazy: bool = False,
+) -> pl.DataFrame | pl.LazyFrame:
+    """Load derivative ticker and decode fixed-point integers into float columns."""
+    return _load_decoded_table(
+        table_name="derivative_ticker",
+        exchange=exchange,
+        symbol=symbol,
+        start_ts_us=start_ts_us,
+        end_ts_us=end_ts_us,
+        ts_col=ts_col,
+        columns=columns,
+        keep_ints=keep_ints,
+        lazy=lazy,
+    )
 
 
 def load_kline_1h_decoded(
@@ -570,45 +537,17 @@ def load_kline_1h_decoded(
 
     If lazy=True, returns a LazyFrame with decode expressions applied.
     """
-    required_ints = [
-        "open_px_int",
-        "high_px_int",
-        "low_px_int",
-        "close_px_int",
-        "volume_qty_int",
-        "quote_volume_int",
-        "taker_buy_base_qty_int",
-        "taker_buy_quote_qty_int",
-    ]
-    requested_columns = list(columns) if columns is not None else None
-    effective_keep_ints = keep_ints or (
-        requested_columns is not None and any(col in required_ints for col in requested_columns)
-    )
-
-    if lazy:
-        lf = scan_table(
-            "kline_1h",
-            exchange=exchange,
-            symbol=symbol,
-            start_ts_us=start_ts_us,
-            end_ts_us=end_ts_us,
-            ts_col=ts_col,
-            columns=_merge_decode_columns(columns, ["exchange", *required_ints]),
-        )
-        decoded = _decode_klines_lazy(lf, keep_ints=effective_keep_ints)
-        return decoded.select(requested_columns) if requested_columns is not None else decoded
-
-    df = read_table(
-        "kline_1h",
+    return _load_decoded_table(
+        table_name="kline_1h",
         exchange=exchange,
         symbol=symbol,
         start_ts_us=start_ts_us,
         end_ts_us=end_ts_us,
         ts_col=ts_col,
-        columns=_merge_decode_columns(columns, ["exchange", *required_ints]),
+        columns=columns,
+        keep_ints=keep_ints,
+        lazy=lazy,
     )
-    decoded = decode_klines(df, keep_ints=effective_keep_ints)
-    return decoded.select(requested_columns) if requested_columns is not None else decoded
 
 
 def load_kline_1d_decoded(
@@ -626,45 +565,17 @@ def load_kline_1d_decoded(
 
     If lazy=True, returns a LazyFrame with decode expressions applied.
     """
-    required_ints = [
-        "open_px_int",
-        "high_px_int",
-        "low_px_int",
-        "close_px_int",
-        "volume_qty_int",
-        "quote_volume_int",
-        "taker_buy_base_qty_int",
-        "taker_buy_quote_qty_int",
-    ]
-    requested_columns = list(columns) if columns is not None else None
-    effective_keep_ints = keep_ints or (
-        requested_columns is not None and any(col in required_ints for col in requested_columns)
-    )
-
-    if lazy:
-        lf = scan_table(
-            "kline_1d",
-            exchange=exchange,
-            symbol=symbol,
-            start_ts_us=start_ts_us,
-            end_ts_us=end_ts_us,
-            ts_col=ts_col,
-            columns=_merge_decode_columns(columns, ["exchange", *required_ints]),
-        )
-        decoded = _decode_klines_lazy(lf, keep_ints=effective_keep_ints)
-        return decoded.select(requested_columns) if requested_columns is not None else decoded
-
-    df = read_table(
-        "kline_1d",
+    return _load_decoded_table(
+        table_name="kline_1d",
         exchange=exchange,
         symbol=symbol,
         start_ts_us=start_ts_us,
         end_ts_us=end_ts_us,
         ts_col=ts_col,
-        columns=_merge_decode_columns(columns, ["exchange", *required_ints]),
+        columns=columns,
+        keep_ints=keep_ints,
+        lazy=lazy,
     )
-    decoded = decode_klines(df, keep_ints=effective_keep_ints)
-    return decoded.select(requested_columns) if requested_columns is not None else decoded
 
 
 def _apply_filters(
@@ -735,127 +646,51 @@ def _merge_decode_columns(
     return merged
 
 
-def _resolve_exchange(lf: pl.LazyFrame) -> str:
-    """Extract the single exchange name from a LazyFrame (partition column)."""
-    sample = lf.select("exchange").first().collect()
-    if sample.height == 0:
-        raise ValueError("Cannot decode empty LazyFrame")
-    return sample["exchange"][0]
-
-
-def _decode_trades_lazy(
-    lf: pl.LazyFrame,
+def _load_decoded_table(
     *,
+    table_name: TableName,
+    exchange: str | None,
+    symbol: str | Iterable[str] | None,
+    start_ts_us: TimestampInput | None,
+    end_ts_us: TimestampInput | None,
+    ts_col: str,
+    columns: Sequence[str] | None,
     keep_ints: bool,
-) -> pl.LazyFrame:
-    profile = get_profile(_resolve_exchange(lf))
-    result = lf.with_columns(
-        [
-            (pl.col("px_int") * profile.price).cast(pl.Float64).alias("price_px"),
-            (pl.col("qty_int") * profile.amount).cast(pl.Float64).alias("qty"),
-        ]
+    lazy: bool,
+) -> pl.DataFrame | pl.LazyFrame:
+    domain = get_domain(table_name)
+    requested_columns = list(columns) if columns is not None else None
+    decode_required = list(domain.required_decode_columns())
+    int_like_cols = [col for col in decode_required if col.endswith("_int")]
+    effective_keep_ints = keep_ints or (
+        requested_columns is not None and any(col in int_like_cols for col in requested_columns)
     )
-    if not keep_ints:
-        result = result.drop(["px_int", "qty_int"])
-    return result
+    scan_columns = _merge_decode_columns(columns, decode_required)
 
-
-def _decode_quotes_lazy(
-    lf: pl.LazyFrame,
-    *,
-    keep_ints: bool,
-) -> pl.LazyFrame:
-    from pointline.encoding import decode_nullable_amount, decode_nullable_price
-
-    profile = get_profile(_resolve_exchange(lf))
-    result = lf.with_columns(
-        [
-            decode_nullable_price("bid_px_int", profile).alias("bid_px"),
-            decode_nullable_amount("bid_sz_int", profile).alias("bid_sz"),
-            decode_nullable_price("ask_px_int", profile).alias("ask_px"),
-            decode_nullable_amount("ask_sz_int", profile).alias("ask_sz"),
-        ]
-    )
-    if not keep_ints:
-        result = result.drop(["bid_px_int", "bid_sz_int", "ask_px_int", "ask_sz_int"])
-    return result
-
-
-def _decode_book_snapshot_25_lazy(
-    lf: pl.LazyFrame,
-) -> pl.LazyFrame:
-    profile = get_profile(_resolve_exchange(lf))
-    result = lf.with_columns(
-        [
-            pl.col("bids_px_int")
-            .list.eval(
-                pl.when(pl.element().is_not_null())
-                .then((pl.element() * pl.lit(profile.price)).cast(pl.Float64))
-                .otherwise(None)
-            )
-            .alias("bids_px"),
-            pl.col("bids_sz_int")
-            .list.eval(
-                pl.when(pl.element().is_not_null())
-                .then((pl.element() * pl.lit(profile.amount)).cast(pl.Float64))
-                .otherwise(None)
-            )
-            .alias("bids_sz"),
-            pl.col("asks_px_int")
-            .list.eval(
-                pl.when(pl.element().is_not_null())
-                .then((pl.element() * pl.lit(profile.price)).cast(pl.Float64))
-                .otherwise(None)
-            )
-            .alias("asks_px"),
-            pl.col("asks_sz_int")
-            .list.eval(
-                pl.when(pl.element().is_not_null())
-                .then((pl.element() * pl.lit(profile.amount)).cast(pl.Float64))
-                .otherwise(None)
-            )
-            .alias("asks_sz"),
-        ]
-    )
-    return result.drop(["bids_px_int", "bids_sz_int", "asks_px_int", "asks_sz_int"])
-
-
-def _decode_klines_lazy(
-    lf: pl.LazyFrame,
-    *,
-    keep_ints: bool,
-) -> pl.LazyFrame:
-    profile = get_profile(_resolve_exchange(lf))
-    result = lf.with_columns(
-        [
-            (pl.col("open_px_int") * profile.price).cast(pl.Float64).alias("open_px"),
-            (pl.col("high_px_int") * profile.price).cast(pl.Float64).alias("high_px"),
-            (pl.col("low_px_int") * profile.price).cast(pl.Float64).alias("low_px"),
-            (pl.col("close_px_int") * profile.price).cast(pl.Float64).alias("close_px"),
-            (pl.col("volume_qty_int") * profile.amount).cast(pl.Float64).alias("volume"),
-            (pl.col("quote_volume_int") * profile.quote_vol).cast(pl.Float64).alias("quote_volume"),
-            (pl.col("taker_buy_base_qty_int") * profile.amount)
-            .cast(pl.Float64)
-            .alias("taker_buy_base_volume"),
-            (pl.col("taker_buy_quote_qty_int") * profile.quote_vol)
-            .cast(pl.Float64)
-            .alias("taker_buy_quote_volume"),
-        ]
-    )
-    if not keep_ints:
-        result = result.drop(
-            [
-                "open_px_int",
-                "high_px_int",
-                "low_px_int",
-                "close_px_int",
-                "volume_qty_int",
-                "quote_volume_int",
-                "taker_buy_base_qty_int",
-                "taker_buy_quote_qty_int",
-            ]
+    if lazy:
+        lf = scan_table(
+            table_name,
+            exchange=exchange,
+            symbol=symbol,
+            start_ts_us=start_ts_us,
+            end_ts_us=end_ts_us,
+            ts_col=ts_col,
+            columns=scan_columns,
         )
-    return result
+        decoded = domain.decode_storage_lazy(lf, keep_ints=effective_keep_ints)
+        return decoded.select(requested_columns) if requested_columns is not None else decoded
+
+    df = read_table(
+        table_name,
+        exchange=exchange,
+        symbol=symbol,
+        start_ts_us=start_ts_us,
+        end_ts_us=end_ts_us,
+        ts_col=ts_col,
+        columns=scan_columns,
+    )
+    decoded = domain.decode_storage(df, keep_ints=effective_keep_ints)
+    return decoded.select(requested_columns) if requested_columns is not None else decoded
 
 
 def _derive_date_bounds_from_ts(

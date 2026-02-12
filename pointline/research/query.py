@@ -288,6 +288,17 @@ def derivative_ticker(
     start_ts_us = core._normalize_timestamp(start, "start")
     end_ts_us = core._normalize_timestamp(end, "end")
 
+    if decoded:
+        return core.load_derivative_ticker_decoded(
+            exchange=exchange,
+            symbol=symbol,
+            start_ts_us=start_ts_us,
+            end_ts_us=end_ts_us,
+            ts_col=ts_col,
+            columns=columns,
+            lazy=lazy,
+        )
+
     lf = core.scan_table(
         "derivative_ticker",
         exchange=exchange,
@@ -297,14 +308,6 @@ def derivative_ticker(
         ts_col=ts_col,
         columns=columns,
     )
-
-    if decoded:
-        from pointline.tables.derivative_ticker import decode_fixed_point as decode_deriv_ticker
-
-        if lazy:
-            df = lf.collect()
-            return decode_deriv_ticker(df).lazy()
-        return decode_deriv_ticker(lf.collect())
 
     return lf if lazy else lf.collect()
 

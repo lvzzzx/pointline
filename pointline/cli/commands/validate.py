@@ -18,20 +18,9 @@ from pointline.cli.utils import (
 from pointline.config import get_exchange_id, get_table_path
 from pointline.io.protocols import BronzeFileMetadata
 from pointline.io.vendors import get_vendor
-from pointline.tables.quotes import (
-    QUOTES_SCHEMA,
-    normalize_quotes_schema,
-)
-from pointline.tables.quotes import (
-    encode_fixed_point as encode_quotes_fixed_point,
-)
-from pointline.tables.trades import (
-    TRADES_SCHEMA,
-    normalize_trades_schema,
-)
-from pointline.tables.trades import (
-    encode_fixed_point as encode_trades_fixed_point,
-)
+from pointline.tables.domain_registry import get_domain
+from pointline.tables.quotes import QUOTES_SCHEMA, normalize_quotes_schema
+from pointline.tables.trades import TRADES_SCHEMA, normalize_trades_schema
 from pointline.tables.validation_log import create_validation_record
 
 logger = logging.getLogger(__name__)
@@ -104,8 +93,9 @@ def cmd_validate_quotes(args: argparse.Namespace) -> int:
     # Rename exchange_symbol -> symbol (canonical event table column)
     if "exchange_symbol" in parsed_df.columns and "symbol" not in parsed_df.columns:
         parsed_df = parsed_df.rename({"exchange_symbol": "symbol"})
-    dim_symbol = pl.read_delta(str(get_table_path("dim_symbol")))
-    encoded_df = encode_quotes_fixed_point(parsed_df, dim_symbol, unique_exchanges[0])
+    domain = get_domain("quotes")
+    canonical_df = domain.canonicalize_vendor_frame(parsed_df)
+    encoded_df = domain.encode_storage(canonical_df)
     expected_df = add_lineage(encoded_df, file_id)
     expected_df = normalize_quotes_schema(expected_df)
 
@@ -261,8 +251,9 @@ def cmd_validate_trades(args: argparse.Namespace) -> int:
     # Rename exchange_symbol -> symbol (canonical event table column)
     if "exchange_symbol" in parsed_df.columns and "symbol" not in parsed_df.columns:
         parsed_df = parsed_df.rename({"exchange_symbol": "symbol"})
-    dim_symbol = pl.read_delta(str(get_table_path("dim_symbol")))
-    encoded_df = encode_trades_fixed_point(parsed_df, dim_symbol, unique_exchanges[0])
+    domain = get_domain("trades")
+    canonical_df = domain.canonicalize_vendor_frame(parsed_df)
+    encoded_df = domain.encode_storage(canonical_df)
     expected_df = add_lineage(encoded_df, file_id)
     expected_df = normalize_trades_schema(expected_df)
 

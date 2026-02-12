@@ -35,6 +35,7 @@ For cross-channel merge:        sort by ``(ts_local_us, file_id, file_line_numbe
 from __future__ import annotations
 
 from collections.abc import Sequence
+from dataclasses import dataclass
 
 import polars as pl
 
@@ -51,6 +52,8 @@ from pointline.tables.cn_trading_phase import (
     TRADING_PHASE_UNKNOWN,
     derive_cn_trading_phase_expr,
 )
+from pointline.tables.domain_contract import TableDomain, TableSpec
+from pointline.tables.domain_registry import register_domain
 
 # L3 tables are exclusive to Chinese stock exchanges (SZSE, SSE).
 # These tables use channel_no, appl_seq_num sequencing, and CN trading phases
@@ -212,10 +215,24 @@ def validate_l3_ticks(df: pl.DataFrame) -> pl.DataFrame:
     return valid.select(df.columns)
 
 
+def canonicalize_l3_ticks_frame(df: pl.DataFrame) -> pl.DataFrame:
+    """Apply canonical enum semantics for L3 tick vendor-neutral frames."""
+    if "exec_type" in df.columns or "exec_type_raw" not in df.columns:
+        return df
+
+    exec_type_raw = pl.col("exec_type_raw").cast(pl.Utf8).str.to_lowercase().str.strip_chars()
+    return df.with_columns(
+        pl.when(exec_type_raw.is_in(["fill", "f", "0"]))
+        .then(pl.lit(EXEC_TYPE_FILL, dtype=pl.UInt8))
+        .when(exec_type_raw.is_in(["cancel", "c", "1", "4"]))
+        .then(pl.lit(EXEC_TYPE_CANCEL, dtype=pl.UInt8))
+        .otherwise(pl.lit(255, dtype=pl.UInt8))
+        .alias("exec_type")
+    )
+
+
 def encode_fixed_point(
     df: pl.DataFrame,
-    dim_symbol: pl.DataFrame,
-    exchange: str,
 ) -> pl.DataFrame:
     """Encode price and quantity as fixed-point integers using asset-class scalar profile.
 
@@ -223,21 +240,28 @@ def encode_fixed_point(
 
     Returns DataFrame with px_int, qty_int columns added.
     """
-    from pointline.encoding import encode_amount, encode_price, get_profile
+    from pointline.encoding import (
+        PROFILE_AMOUNT_COL,
+        PROFILE_PRICE_COL,
+        PROFILE_SCALAR_COLS,
+        with_profile_scalars,
+    )
 
     required_cols = ["price_px", "qty"]
     missing = [c for c in required_cols if c not in df.columns]
     if missing:
         raise ValueError(f"encode_fixed_point: df missing columns: {missing}")
 
-    profile = get_profile(exchange)
-    result = df.with_columns(
+    working = with_profile_scalars(df)
+    result = working.with_columns(
         [
-            encode_price("price_px", profile).alias("px_int"),
-            encode_amount("qty", profile).alias("qty_int"),
+            (pl.col("price_px") / pl.col(PROFILE_PRICE_COL)).round().cast(pl.Int64).alias("px_int"),
+            (pl.col("qty") / pl.col(PROFILE_AMOUNT_COL)).round().cast(pl.Int64).alias("qty_int"),
         ]
     )
-    return result.drop(["price_px", "qty"])
+    return result.drop(
+        ["price_px", "qty"] + [c for c in PROFILE_SCALAR_COLS if c in result.columns]
+    )
 
 
 def decode_fixed_point(
@@ -276,9 +300,80 @@ def decode_fixed_point(
     return result.drop([col for col in PROFILE_SCALAR_COLS if col in result.columns])
 
 
+def decode_fixed_point_lazy(
+    lf: pl.LazyFrame,
+    *,
+    keep_ints: bool = False,
+) -> pl.LazyFrame:
+    """Decode fixed-point integers lazily into float price and int quantity."""
+    from pointline.encoding import (
+        PROFILE_AMOUNT_COL,
+        PROFILE_PRICE_COL,
+        PROFILE_SCALAR_COLS,
+        with_profile_scalars_lazy,
+    )
+
+    schema = lf.collect_schema()
+    required_cols = ["px_int", "qty_int"]
+    missing = [c for c in required_cols if c not in schema]
+    if missing:
+        raise ValueError(f"decode_fixed_point: df missing columns: {missing}")
+
+    working = with_profile_scalars_lazy(lf)
+    result = working.with_columns(
+        [
+            (pl.col("px_int") * pl.col(PROFILE_PRICE_COL)).cast(pl.Float64).alias("price_px"),
+            (pl.col("qty_int") * pl.col(PROFILE_AMOUNT_COL)).cast(pl.Int64).alias("qty"),
+        ]
+    )
+
+    if not keep_ints:
+        result = result.drop(required_cols)
+    return result.drop(list(PROFILE_SCALAR_COLS))
+
+
 def required_l3_ticks_columns() -> Sequence[str]:
     """Columns required for a l3_ticks DataFrame after normalization."""
     return tuple(L3_TICKS_SCHEMA.keys())
+
+
+def required_decode_columns() -> tuple[str, ...]:
+    """Columns needed to decode storage fields for l3_ticks."""
+    return ("exchange", "px_int", "qty_int")
+
+
+@dataclass(frozen=True)
+class L3TicksDomain(TableDomain):
+    spec: TableSpec = TableSpec(
+        table_name="l3_ticks",
+        schema=L3_TICKS_SCHEMA,
+        partition_by=("exchange", "date"),
+        has_date=True,
+        layer="silver",
+        allowed_exchanges=ALLOWED_EXCHANGES,
+        ts_column="ts_local_us",
+    )
+
+    def canonicalize_vendor_frame(self, df: pl.DataFrame) -> pl.DataFrame:
+        return canonicalize_l3_ticks_frame(df)
+
+    def encode_storage(self, df: pl.DataFrame) -> pl.DataFrame:
+        return encode_fixed_point(df)
+
+    def normalize_schema(self, df: pl.DataFrame) -> pl.DataFrame:
+        return normalize_l3_ticks_schema(df)
+
+    def validate(self, df: pl.DataFrame) -> pl.DataFrame:
+        return validate_l3_ticks(df)
+
+    def required_decode_columns(self) -> tuple[str, ...]:
+        return required_decode_columns()
+
+    def decode_storage(self, df: pl.DataFrame, *, keep_ints: bool = False) -> pl.DataFrame:
+        return decode_fixed_point(df, keep_ints=keep_ints)
+
+    def decode_storage_lazy(self, lf: pl.LazyFrame, *, keep_ints: bool = False) -> pl.LazyFrame:
+        return decode_fixed_point_lazy(lf, keep_ints=keep_ints)
 
 
 # ---------------------------------------------------------------------------
@@ -287,3 +382,4 @@ def required_l3_ticks_columns() -> Sequence[str]:
 from pointline.schema_registry import register_schema as _register_schema  # noqa: E402
 
 _register_schema("l3_ticks", L3_TICKS_SCHEMA, partition_by=["exchange", "date"], has_date=True)
+register_domain(L3TicksDomain())

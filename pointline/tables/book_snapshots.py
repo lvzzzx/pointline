@@ -19,15 +19,19 @@ Example:
         exchange_id=1,
         exchange_symbol="BTCUSDT",
     )
-    encoded = encode_fixed_point(resolved, dim_symbol, exchange="binance-futures")
+    encoded = encode_fixed_point(resolved)
     normalized = normalize_book_snapshots_schema(encoded)
 """
 
 from __future__ import annotations
 
 from collections.abc import Sequence
+from dataclasses import dataclass
 
 import polars as pl
+
+from pointline.tables.domain_contract import TableDomain, TableSpec
+from pointline.tables.domain_registry import register_domain
 
 # Import parser from new location for backward compatibility
 from pointline.validation_utils import DataQualityWarning
@@ -225,8 +229,6 @@ def validate_book_snapshots(df: pl.DataFrame) -> pl.DataFrame:
 
 def encode_fixed_point(
     df: pl.DataFrame,
-    dim_symbol: pl.DataFrame,
-    exchange: str,
 ) -> pl.DataFrame:
     """Encode bid/ask prices and sizes as fixed-point integers using asset-class profile.
 
@@ -243,10 +245,12 @@ def encode_fixed_point(
 
     Returns DataFrame with bids_px_int, bids_sz_int, asks_px_int, asks_sz_int as Int64 lists.
     """
-    from pointline.encoding import get_profile
-
-    if "symbol_id" not in df.columns:
-        raise ValueError("encode_fixed_point: df must have 'symbol_id' column")
+    from pointline.encoding import (
+        PROFILE_AMOUNT_COL,
+        PROFILE_PRICE_COL,
+        PROFILE_SCALAR_COLS,
+        with_profile_scalars,
+    )
 
     asks_price_cols = [f"asks[{i}].price" for i in range(25)]
     asks_amount_cols = [f"asks[{i}].amount" for i in range(25)]
@@ -258,20 +262,17 @@ def encode_fixed_point(
     if not has_raw_cols:
         raise ValueError("encode_fixed_point: df must contain raw level columns")
 
-    profile = get_profile(exchange)
-
     def encode_list(
         cols: list[str],
         existing_cols: list[str],
-        scalar: float,
+        scalar_col: str,
         *,
         mode: str,
     ) -> pl.Expr:
         list_exprs: list[pl.Expr] = []
-        inc = pl.lit(scalar)
         for col in cols:
             if col in existing_cols:
-                scaled = pl.col(col) / inc
+                scaled = pl.col(col) / pl.col(scalar_col)
                 if mode == "floor":
                     scaled = scaled.floor()
                 elif mode == "ceil":
@@ -295,37 +296,38 @@ def encode_fixed_point(
     existing_bids_price = [c for c in bids_price_cols if c in df.columns]
     existing_bids_amount = [c for c in bids_amount_cols if c in df.columns]
 
-    result = df.with_columns(
+    working = with_profile_scalars(df)
+    result = working.with_columns(
         [
             encode_list(
                 asks_price_cols,
                 existing_asks_price,
-                profile.price,
+                PROFILE_PRICE_COL,
                 mode="ceil",
             ).alias("asks_px_int"),
             encode_list(
                 asks_amount_cols,
                 existing_asks_amount,
-                profile.amount,
+                PROFILE_AMOUNT_COL,
                 mode="round",
             ).alias("asks_sz_int"),
             encode_list(
                 bids_price_cols,
                 existing_bids_price,
-                profile.price,
+                PROFILE_PRICE_COL,
                 mode="floor",
             ).alias("bids_px_int"),
             encode_list(
                 bids_amount_cols,
                 existing_bids_amount,
-                profile.amount,
+                PROFILE_AMOUNT_COL,
                 mode="round",
             ).alias("bids_sz_int"),
         ]
     )
 
     drop_cols = [c for c in raw_cols if c in result.columns]
-    return result.drop(drop_cols)
+    return result.drop(drop_cols + [col for col in PROFILE_SCALAR_COLS if col in result.columns])
 
 
 def decode_fixed_point(
@@ -381,9 +383,94 @@ def decode_fixed_point(
     return result.drop([col for col in PROFILE_SCALAR_COLS if col in result.columns])
 
 
+def decode_fixed_point_lazy(
+    lf: pl.LazyFrame,
+    *,
+    keep_ints: bool = False,
+) -> pl.LazyFrame:
+    """Decode fixed-point list columns lazily into float lists."""
+    from pointline.encoding import (
+        PROFILE_AMOUNT_COL,
+        PROFILE_PRICE_COL,
+        PROFILE_SCALAR_COLS,
+        with_profile_scalars_lazy,
+    )
+
+    schema = lf.collect_schema()
+    int_cols = ["bids_px_int", "bids_sz_int", "asks_px_int", "asks_sz_int"]
+    missing = [c for c in int_cols if c not in schema]
+    if missing:
+        raise ValueError(f"decode_fixed_point: df missing columns: {missing}")
+
+    working = with_profile_scalars_lazy(lf)
+    result = working.with_columns(
+        [
+            (pl.col("bids_px_int") * pl.col(PROFILE_PRICE_COL))
+            .cast(pl.List(pl.Float64))
+            .alias("bids_px"),
+            (pl.col("bids_sz_int") * pl.col(PROFILE_AMOUNT_COL))
+            .cast(pl.List(pl.Float64))
+            .alias("bids_sz"),
+            (pl.col("asks_px_int") * pl.col(PROFILE_PRICE_COL))
+            .cast(pl.List(pl.Float64))
+            .alias("asks_px"),
+            (pl.col("asks_sz_int") * pl.col(PROFILE_AMOUNT_COL))
+            .cast(pl.List(pl.Float64))
+            .alias("asks_sz"),
+        ]
+    )
+    if not keep_ints:
+        result = result.drop(int_cols)
+    return result.drop(list(PROFILE_SCALAR_COLS))
+
+
 def required_book_snapshots_columns() -> Sequence[str]:
     """Columns required for a book snapshots DataFrame after normalization."""
     return tuple(BOOK_SNAPSHOTS_SCHEMA.keys())
+
+
+def canonicalize_book_snapshots_frame(df: pl.DataFrame) -> pl.DataFrame:
+    """Book snapshots have no enum remapping at canonicalization stage."""
+    return df
+
+
+def required_decode_columns() -> tuple[str, ...]:
+    """Columns needed to decode storage fields for book snapshots."""
+    return ("exchange", "bids_px_int", "bids_sz_int", "asks_px_int", "asks_sz_int")
+
+
+@dataclass(frozen=True)
+class BookSnapshotsDomain(TableDomain):
+    spec: TableSpec = TableSpec(
+        table_name="book_snapshot_25",
+        schema=BOOK_SNAPSHOTS_SCHEMA,
+        partition_by=("exchange", "date"),
+        has_date=True,
+        layer="silver",
+        allowed_exchanges=None,
+        ts_column="ts_local_us",
+    )
+
+    def canonicalize_vendor_frame(self, df: pl.DataFrame) -> pl.DataFrame:
+        return canonicalize_book_snapshots_frame(df)
+
+    def encode_storage(self, df: pl.DataFrame) -> pl.DataFrame:
+        return encode_fixed_point(df)
+
+    def normalize_schema(self, df: pl.DataFrame) -> pl.DataFrame:
+        return normalize_book_snapshots_schema(df)
+
+    def validate(self, df: pl.DataFrame) -> pl.DataFrame:
+        return validate_book_snapshots(df)
+
+    def required_decode_columns(self) -> tuple[str, ...]:
+        return required_decode_columns()
+
+    def decode_storage(self, df: pl.DataFrame, *, keep_ints: bool = False) -> pl.DataFrame:
+        return decode_fixed_point(df, keep_ints=keep_ints)
+
+    def decode_storage_lazy(self, lf: pl.LazyFrame, *, keep_ints: bool = False) -> pl.LazyFrame:
+        return decode_fixed_point_lazy(lf, keep_ints=keep_ints)
 
 
 # ---------------------------------------------------------------------------
@@ -394,3 +481,4 @@ from pointline.schema_registry import register_schema as _register_schema  # noq
 _register_schema(
     "book_snapshot_25", BOOK_SNAPSHOTS_SCHEMA, partition_by=["exchange", "date"], has_date=True
 )
+register_domain(BookSnapshotsDomain())

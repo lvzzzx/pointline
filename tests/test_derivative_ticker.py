@@ -95,7 +95,7 @@ def test_validate_derivative_ticker_accepts_valid() -> None:
             pl.lit("2024-05-01").str.strptime(pl.Date, "%Y-%m-%d").alias("date"),
         ]
     )
-    encoded = encode_fixed_point(df, pl.DataFrame(), "binance-futures")
+    encoded = encode_fixed_point(df)
     normalized = normalize_derivative_ticker_schema(encoded)
     validated = validate_derivative_ticker(normalized)
     assert validated.height == 1

@@ -6,6 +6,7 @@ This module keeps the implementation storage-agnostic; it operates on Polars Dat
 from __future__ import annotations
 
 from collections.abc import Sequence
+from dataclasses import dataclass
 
 import polars as pl
 
@@ -15,6 +16,8 @@ from pointline.tables._base import (
     required_columns_validation_expr,
     timestamp_validation_expr,
 )
+from pointline.tables.domain_contract import TableDomain, TableSpec
+from pointline.tables.domain_registry import register_domain
 
 # Required metadata fields for ingestion
 REQUIRED_METADATA_FIELDS: set[str] = set()
@@ -132,10 +135,13 @@ def validate_derivative_ticker(df: pl.DataFrame) -> pl.DataFrame:
     return valid.select(df.columns)
 
 
+def canonicalize_derivative_ticker_frame(df: pl.DataFrame) -> pl.DataFrame:
+    """Derivative ticker has no enum remapping at canonicalization stage."""
+    return df
+
+
 def encode_fixed_point(
     df: pl.DataFrame,
-    dim_symbol: pl.DataFrame,
-    exchange: str,
 ) -> pl.DataFrame:
     """Encode derivative ticker float fields to fixed-point integers.
 
@@ -143,38 +149,47 @@ def encode_fixed_point(
     Open interest → profile.amount scalar
     Funding rates → profile.rate scalar
     """
-    from pointline.encoding import get_profile
+    from pointline.encoding import (
+        PROFILE_AMOUNT_COL,
+        PROFILE_PRICE_COL,
+        PROFILE_RATE_COL,
+        PROFILE_SCALAR_COLS,
+        with_profile_scalars,
+    )
 
-    profile = get_profile(exchange)
+    working = with_profile_scalars(df)
 
-    return df.with_columns(
+    result = working.with_columns(
         [
             pl.when(pl.col("mark_px").is_not_null())
-            .then((pl.col("mark_px") / profile.price).round().cast(pl.Int64))
+            .then((pl.col("mark_px") / pl.col(PROFILE_PRICE_COL)).round().cast(pl.Int64))
             .otherwise(None)
             .alias("mark_px_int"),
             pl.when(pl.col("index_px").is_not_null())
-            .then((pl.col("index_px") / profile.price).round().cast(pl.Int64))
+            .then((pl.col("index_px") / pl.col(PROFILE_PRICE_COL)).round().cast(pl.Int64))
             .otherwise(None)
             .alias("index_px_int"),
             pl.when(pl.col("last_px").is_not_null())
-            .then((pl.col("last_px") / profile.price).round().cast(pl.Int64))
+            .then((pl.col("last_px") / pl.col(PROFILE_PRICE_COL)).round().cast(pl.Int64))
             .otherwise(None)
             .alias("last_px_int"),
             pl.when(pl.col("funding_rate").is_not_null())
-            .then((pl.col("funding_rate") / profile.rate).round().cast(pl.Int64))
+            .then((pl.col("funding_rate") / pl.col(PROFILE_RATE_COL)).round().cast(pl.Int64))
             .otherwise(None)
             .alias("funding_rate_int"),
             pl.when(pl.col("predicted_funding_rate").is_not_null())
-            .then((pl.col("predicted_funding_rate") / profile.rate).round().cast(pl.Int64))
+            .then(
+                (pl.col("predicted_funding_rate") / pl.col(PROFILE_RATE_COL)).round().cast(pl.Int64)
+            )
             .otherwise(None)
             .alias("predicted_funding_rate_int"),
             pl.when(pl.col("open_interest").is_not_null())
-            .then((pl.col("open_interest") / profile.amount).round().cast(pl.Int64))
+            .then((pl.col("open_interest") / pl.col(PROFILE_AMOUNT_COL)).round().cast(pl.Int64))
             .otherwise(None)
             .alias("oi_int"),
         ]
     )
+    return result.drop([col for col in PROFILE_SCALAR_COLS if col in result.columns])
 
 
 def decode_fixed_point(
@@ -241,9 +256,119 @@ def decode_fixed_point(
     return result.drop([col for col in PROFILE_SCALAR_COLS if col in result.columns])
 
 
+def decode_fixed_point_lazy(
+    lf: pl.LazyFrame,
+    *,
+    keep_ints: bool = False,
+) -> pl.LazyFrame:
+    """Decode derivative ticker fixed-point integers lazily to floats."""
+    from pointline.encoding import (
+        PROFILE_AMOUNT_COL,
+        PROFILE_PRICE_COL,
+        PROFILE_RATE_COL,
+        PROFILE_SCALAR_COLS,
+        with_profile_scalars_lazy,
+    )
+
+    schema = lf.collect_schema()
+    int_cols = [
+        "mark_px_int",
+        "index_px_int",
+        "last_px_int",
+        "funding_rate_int",
+        "predicted_funding_rate_int",
+        "oi_int",
+    ]
+    missing = [c for c in int_cols if c not in schema]
+    if missing:
+        raise ValueError(f"decode_fixed_point: df missing columns: {missing}")
+
+    working = with_profile_scalars_lazy(lf)
+    result = working.with_columns(
+        [
+            pl.when(pl.col("mark_px_int").is_not_null())
+            .then((pl.col("mark_px_int") * pl.col(PROFILE_PRICE_COL)).cast(pl.Float64))
+            .otherwise(None)
+            .alias("mark_px"),
+            pl.when(pl.col("index_px_int").is_not_null())
+            .then((pl.col("index_px_int") * pl.col(PROFILE_PRICE_COL)).cast(pl.Float64))
+            .otherwise(None)
+            .alias("index_px"),
+            pl.when(pl.col("last_px_int").is_not_null())
+            .then((pl.col("last_px_int") * pl.col(PROFILE_PRICE_COL)).cast(pl.Float64))
+            .otherwise(None)
+            .alias("last_px"),
+            pl.when(pl.col("funding_rate_int").is_not_null())
+            .then((pl.col("funding_rate_int") * pl.col(PROFILE_RATE_COL)).cast(pl.Float64))
+            .otherwise(None)
+            .alias("funding_rate"),
+            pl.when(pl.col("predicted_funding_rate_int").is_not_null())
+            .then(
+                (pl.col("predicted_funding_rate_int") * pl.col(PROFILE_RATE_COL)).cast(pl.Float64)
+            )
+            .otherwise(None)
+            .alias("predicted_funding_rate"),
+            pl.when(pl.col("oi_int").is_not_null())
+            .then((pl.col("oi_int") * pl.col(PROFILE_AMOUNT_COL)).cast(pl.Float64))
+            .otherwise(None)
+            .alias("open_interest"),
+        ]
+    )
+    if not keep_ints:
+        result = result.drop(int_cols)
+    return result.drop(list(PROFILE_SCALAR_COLS))
+
+
 def required_derivative_ticker_columns() -> Sequence[str]:
     """Columns required for a derivative_ticker DataFrame after normalization."""
     return tuple(DERIVATIVE_TICKER_SCHEMA.keys())
+
+
+def required_decode_columns() -> tuple[str, ...]:
+    """Columns needed to decode storage fields for derivative ticker."""
+    return (
+        "exchange",
+        "mark_px_int",
+        "index_px_int",
+        "last_px_int",
+        "funding_rate_int",
+        "predicted_funding_rate_int",
+        "oi_int",
+    )
+
+
+@dataclass(frozen=True)
+class DerivativeTickerDomain(TableDomain):
+    spec: TableSpec = TableSpec(
+        table_name="derivative_ticker",
+        schema=DERIVATIVE_TICKER_SCHEMA,
+        partition_by=("exchange", "date"),
+        has_date=True,
+        layer="silver",
+        allowed_exchanges=None,
+        ts_column="ts_local_us",
+    )
+
+    def canonicalize_vendor_frame(self, df: pl.DataFrame) -> pl.DataFrame:
+        return canonicalize_derivative_ticker_frame(df)
+
+    def encode_storage(self, df: pl.DataFrame) -> pl.DataFrame:
+        return encode_fixed_point(df)
+
+    def normalize_schema(self, df: pl.DataFrame) -> pl.DataFrame:
+        return normalize_derivative_ticker_schema(df)
+
+    def validate(self, df: pl.DataFrame) -> pl.DataFrame:
+        return validate_derivative_ticker(df)
+
+    def required_decode_columns(self) -> tuple[str, ...]:
+        return required_decode_columns()
+
+    def decode_storage(self, df: pl.DataFrame, *, keep_ints: bool = False) -> pl.DataFrame:
+        return decode_fixed_point(df, keep_ints=keep_ints)
+
+    def decode_storage_lazy(self, lf: pl.LazyFrame, *, keep_ints: bool = False) -> pl.LazyFrame:
+        return decode_fixed_point_lazy(lf, keep_ints=keep_ints)
 
 
 # ---------------------------------------------------------------------------
@@ -254,3 +379,4 @@ from pointline.schema_registry import register_schema as _register_schema  # noq
 _register_schema(
     "derivative_ticker", DERIVATIVE_TICKER_SCHEMA, partition_by=["exchange", "date"], has_date=True
 )
+register_domain(DerivativeTickerDomain())

@@ -14,6 +14,7 @@ Example:
 from __future__ import annotations
 
 from collections.abc import Sequence
+from dataclasses import dataclass
 
 import polars as pl
 
@@ -23,6 +24,8 @@ from pointline.tables._base import (
     required_columns_validation_expr,
     timestamp_validation_expr,
 )
+from pointline.tables.domain_contract import TableDomain, TableSpec
+from pointline.tables.domain_registry import register_domain
 
 # Required metadata fields for ingestion
 REQUIRED_METADATA_FIELDS: set[str] = set()
@@ -159,10 +162,28 @@ def validate_trades(df: pl.DataFrame) -> pl.DataFrame:
     return valid.select(df.columns)
 
 
+def canonicalize_trades_frame(df: pl.DataFrame) -> pl.DataFrame:
+    """Apply canonical enum semantics for trades vendor-neutral frames."""
+    if "side" in df.columns:
+        return df
+    if "side_raw" not in df.columns:
+        return df
+
+    side_raw = pl.col("side_raw").cast(pl.Utf8).str.to_lowercase().str.strip_chars()
+    return df.with_columns(
+        pl.when(side_raw.is_in(["buy", "b", "0"]))
+        .then(pl.lit(SIDE_BUY, dtype=pl.UInt8))
+        .when(side_raw.is_in(["sell", "s", "1"]))
+        .then(pl.lit(SIDE_SELL, dtype=pl.UInt8))
+        .when(side_raw.is_in(["2", "unknown", "u"]))
+        .then(pl.lit(SIDE_UNKNOWN, dtype=pl.UInt8))
+        .otherwise(pl.lit(SIDE_UNKNOWN, dtype=pl.UInt8))
+        .alias("side")
+    )
+
+
 def encode_fixed_point(
     df: pl.DataFrame,
-    dim_symbol: pl.DataFrame,
-    exchange: str,
     *,
     price_col: str = "price_px",
     qty_col: str = "qty",
@@ -178,15 +199,25 @@ def encode_fixed_point(
 
     Returns DataFrame with px_int and qty_int columns added.
     """
-    from pointline.encoding import encode_amount, encode_price, get_profile
+    from pointline.encoding import (
+        PROFILE_AMOUNT_COL,
+        PROFILE_PRICE_COL,
+        PROFILE_SCALAR_COLS,
+        with_profile_scalars,
+    )
 
-    profile = get_profile(exchange)
-    return df.with_columns(
+    if price_col not in df.columns or qty_col not in df.columns:
+        missing = [c for c in [price_col, qty_col] if c not in df.columns]
+        raise ValueError(f"encode_fixed_point: df missing columns: {missing}")
+
+    working = with_profile_scalars(df)
+    result = working.with_columns(
         [
-            encode_price(price_col, profile).alias("px_int"),
-            encode_amount(qty_col, profile).alias("qty_int"),
+            (pl.col(price_col) / pl.col(PROFILE_PRICE_COL)).round().cast(pl.Int64).alias("px_int"),
+            (pl.col(qty_col) / pl.col(PROFILE_AMOUNT_COL)).round().cast(pl.Int64).alias("qty_int"),
         ]
     )
+    return result.drop([col for col in PROFILE_SCALAR_COLS if col in result.columns])
 
 
 def decode_fixed_point(
@@ -231,9 +262,81 @@ def decode_fixed_point(
     return result.drop([col for col in PROFILE_SCALAR_COLS if col in result.columns])
 
 
+def decode_fixed_point_lazy(
+    lf: pl.LazyFrame,
+    *,
+    price_col: str = "price_px",
+    qty_col: str = "qty",
+    keep_ints: bool = False,
+) -> pl.LazyFrame:
+    """Decode fixed-point columns lazily."""
+    from pointline.encoding import (
+        PROFILE_AMOUNT_COL,
+        PROFILE_PRICE_COL,
+        PROFILE_SCALAR_COLS,
+        with_profile_scalars_lazy,
+    )
+
+    schema = lf.collect_schema()
+    required_cols = ["px_int", "qty_int"]
+    missing = [c for c in required_cols if c not in schema]
+    if missing:
+        raise ValueError(f"decode_fixed_point: df missing columns: {missing}")
+
+    working = with_profile_scalars_lazy(lf)
+    result = working.with_columns(
+        [
+            (pl.col("px_int") * pl.col(PROFILE_PRICE_COL)).cast(pl.Float64).alias(price_col),
+            (pl.col("qty_int") * pl.col(PROFILE_AMOUNT_COL)).cast(pl.Float64).alias(qty_col),
+        ]
+    )
+    if not keep_ints:
+        result = result.drop(required_cols)
+    return result.drop(list(PROFILE_SCALAR_COLS))
+
+
 def required_trades_columns() -> Sequence[str]:
     """Columns required for a trades DataFrame after normalization."""
     return tuple(TRADES_SCHEMA.keys())
+
+
+def required_decode_columns() -> tuple[str, ...]:
+    """Columns needed to decode storage fields for trades."""
+    return ("exchange", "px_int", "qty_int")
+
+
+@dataclass(frozen=True)
+class TradesDomain(TableDomain):
+    spec: TableSpec = TableSpec(
+        table_name="trades",
+        schema=TRADES_SCHEMA,
+        partition_by=("exchange", "date"),
+        has_date=True,
+        layer="silver",
+        allowed_exchanges=None,
+        ts_column="ts_local_us",
+    )
+
+    def canonicalize_vendor_frame(self, df: pl.DataFrame) -> pl.DataFrame:
+        return canonicalize_trades_frame(df)
+
+    def encode_storage(self, df: pl.DataFrame) -> pl.DataFrame:
+        return encode_fixed_point(df)
+
+    def normalize_schema(self, df: pl.DataFrame) -> pl.DataFrame:
+        return normalize_trades_schema(df)
+
+    def validate(self, df: pl.DataFrame) -> pl.DataFrame:
+        return validate_trades(df)
+
+    def required_decode_columns(self) -> tuple[str, ...]:
+        return required_decode_columns()
+
+    def decode_storage(self, df: pl.DataFrame, *, keep_ints: bool = False) -> pl.DataFrame:
+        return decode_fixed_point(df, keep_ints=keep_ints)
+
+    def decode_storage_lazy(self, lf: pl.LazyFrame, *, keep_ints: bool = False) -> pl.LazyFrame:
+        return decode_fixed_point_lazy(lf, keep_ints=keep_ints)
 
 
 # ---------------------------------------------------------------------------
@@ -242,3 +345,4 @@ def required_trades_columns() -> Sequence[str]:
 from pointline.schema_registry import register_schema as _register_schema  # noqa: E402
 
 _register_schema("trades", TRADES_SCHEMA, partition_by=["exchange", "date"], has_date=True)
+register_domain(TradesDomain())

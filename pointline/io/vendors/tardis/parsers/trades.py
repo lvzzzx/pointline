@@ -7,11 +7,6 @@ import polars as pl
 
 from pointline.io.vendors.registry import register_parser
 
-# Side encoding constants (duplicated from tables/trades.py to avoid circular imports)
-SIDE_BUY = 0
-SIDE_SELL = 1
-SIDE_UNKNOWN = 2
-
 
 @register_parser(vendor="tardis", data_type="trades")
 def parse_tardis_trades_csv(df: pl.DataFrame) -> pl.DataFrame:
@@ -34,7 +29,7 @@ def parse_tardis_trades_csv(df: pl.DataFrame) -> pl.DataFrame:
         - ts_local_us (i64): local timestamp in microseconds since epoch
         - ts_exch_us (i64): exchange timestamp in microseconds since epoch (nullable)
         - trade_id (str): trade identifier (nullable)
-        - side (u8): 0=buy, 1=sell, 2=unknown
+        - side_raw (str): vendor-side value normalized to lowercase string
         - price_px (f64): trade price
         - qty (f64): trade quantity
 
@@ -96,27 +91,11 @@ def parse_tardis_trades_csv(df: pl.DataFrame) -> pl.DataFrame:
             break
 
     if side_col:
-        # Vectorized side encoding (replaces map_elements for 10-100x performance)
-        # Handle both integer and string side values
-        side_expr = pl.col(side_col)
-
-        # Try to cast to string for uniform processing (handles both int and string inputs)
-        side_str = side_expr.cast(pl.Utf8).str.to_lowercase().str.strip_chars()
-
-        # Map string values to codes
-        side_code = (
-            pl.when(side_str.is_in(["buy", "b", "0"]))
-            .then(pl.lit(SIDE_BUY, dtype=pl.UInt8))
-            .when(side_str.is_in(["sell", "s", "1"]))
-            .then(pl.lit(SIDE_SELL, dtype=pl.UInt8))
-            .when(side_str.is_in(["2"]))
-            .then(pl.lit(SIDE_UNKNOWN, dtype=pl.UInt8))
-            .otherwise(pl.lit(SIDE_UNKNOWN, dtype=pl.UInt8))
+        result = result.with_columns(
+            pl.col(side_col).cast(pl.Utf8).str.to_lowercase().str.strip_chars().alias("side_raw")
         )
-
-        result = result.with_columns(side_code.alias("side"))
     else:
-        result = result.with_columns(pl.lit(SIDE_UNKNOWN, dtype=pl.UInt8).alias("side"))
+        result = result.with_columns(pl.lit("unknown", dtype=pl.Utf8).alias("side_raw"))
 
     # Find price column
     price_col = None
@@ -149,7 +128,7 @@ def parse_tardis_trades_csv(df: pl.DataFrame) -> pl.DataFrame:
         "ts_local_us",
         "ts_exch_us",
         "trade_id",
-        "side",
+        "side_raw",
         "price_px",
         "qty",
     ]

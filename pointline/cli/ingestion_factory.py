@@ -1,18 +1,20 @@
 """Ingestion service factory for CLI.
 
 This factory creates vendor-agnostic ingestion services using the GenericIngestionService
-with table-specific strategies.
+with canonical table-domain modules.
 """
 
 from __future__ import annotations
 
 # Ensure parsers are registered by importing the package
 import pointline.io.vendors  # noqa: F401  # Trigger vendor auto-registration
-from pointline import tables
 from pointline.config import get_table_path
 from pointline.io.base_repository import BaseDeltaRepository
-from pointline.services.generic_ingestion_service import GenericIngestionService, TableStrategy
+from pointline.services.generic_ingestion_service import GenericIngestionService
+from pointline.tables.domain_registry import get_domain
 
+# Partition keys used by Delta maintenance commands.
+# Keep this mapping explicit for CLI ergonomics.
 TABLE_PARTITIONS = {
     "trades": ["exchange", "date"],
     "quotes": ["exchange", "date"],
@@ -21,6 +23,7 @@ TABLE_PARTITIONS = {
     "liquidations": ["exchange", "date"],
     "options_chain": ["exchange", "date"],
     "kline_1h": ["exchange", "date"],
+    "kline_1d": ["exchange", "date"],
     "l3_orders": ["exchange", "date"],
     "l3_ticks": ["exchange", "date"],
 }
@@ -44,132 +47,29 @@ def create_ingestion_service(data_type: str, manifest_repo, *, interval: str | N
     """
     dim_symbol_repo = BaseDeltaRepository(get_table_path("dim_symbol"))
 
-    # Trades
-    if data_type == "trades":
-        repo = BaseDeltaRepository(
-            get_table_path("trades"),
-            partition_by=["exchange", "date"],
-        )
-        strategy = TableStrategy(
-            encode_fixed_point=tables.trades.encode_fixed_point,
-            validate=tables.trades.validate_trades,
-            normalize_schema=tables.trades.normalize_trades_schema,
-        )
-        return GenericIngestionService("trades", strategy, repo, dim_symbol_repo, manifest_repo)
-
-    # Quotes
-    if data_type == "quotes":
-        repo = BaseDeltaRepository(
-            get_table_path("quotes"),
-            partition_by=["exchange", "date"],
-        )
-        strategy = TableStrategy(
-            encode_fixed_point=tables.quotes.encode_fixed_point,
-            validate=tables.quotes.validate_quotes,
-            normalize_schema=tables.quotes.normalize_quotes_schema,
-        )
-        return GenericIngestionService("quotes", strategy, repo, dim_symbol_repo, manifest_repo)
-
-    # Book snapshots
-    if data_type == "book_snapshot_25":
-        repo = BaseDeltaRepository(
-            get_table_path("book_snapshot_25"),
-            partition_by=["exchange", "date"],
-        )
-        strategy = TableStrategy(
-            encode_fixed_point=tables.book_snapshots.encode_fixed_point,
-            validate=tables.book_snapshots.validate_book_snapshots,
-            normalize_schema=tables.book_snapshots.normalize_book_snapshots_schema,
-        )
-        return GenericIngestionService(
-            "book_snapshot_25", strategy, repo, dim_symbol_repo, manifest_repo
-        )
-
-    # Derivative ticker
-    if data_type == "derivative_ticker":
-        repo = BaseDeltaRepository(
-            get_table_path("derivative_ticker"),
-            partition_by=["exchange", "date"],
-        )
-        strategy = TableStrategy(
-            encode_fixed_point=tables.derivative_ticker.encode_fixed_point,
-            validate=tables.derivative_ticker.validate_derivative_ticker,
-            normalize_schema=tables.derivative_ticker.normalize_derivative_ticker_schema,
-        )
-        return GenericIngestionService(
-            "derivative_ticker", strategy, repo, dim_symbol_repo, manifest_repo
-        )
-
-    # Options chain
-    if data_type == "options_chain":
-        repo = BaseDeltaRepository(
-            get_table_path("options_chain"),
-            partition_by=["exchange", "date"],
-        )
-        strategy = TableStrategy(
-            encode_fixed_point=tables.options_chain.encode_fixed_point,
-            validate=tables.options_chain.validate_options_chain,
-            normalize_schema=tables.options_chain.normalize_options_chain_schema,
-        )
-        return GenericIngestionService(
-            "options_chain", strategy, repo, dim_symbol_repo, manifest_repo
-        )
-
-    # Liquidations
-    if data_type == "liquidations":
-        repo = BaseDeltaRepository(
-            get_table_path("liquidations"),
-            partition_by=["exchange", "date"],
-        )
-        strategy = TableStrategy(
-            encode_fixed_point=tables.liquidations.encode_fixed_point,
-            validate=tables.liquidations.validate_liquidations,
-            normalize_schema=tables.liquidations.normalize_liquidations_schema,
-        )
-        return GenericIngestionService(
-            "liquidations", strategy, repo, dim_symbol_repo, manifest_repo
-        )
-
-    # Klines
+    table_name = data_type
     if data_type == "klines":
         if not interval:
             raise ValueError("Klines data requires 'interval' to be specified (e.g., '1h', '4h')")
         table_name = f"kline_{interval}"
-        repo = BaseDeltaRepository(
-            get_table_path(table_name),
-            partition_by=["exchange", "date"],
-        )
-        strategy = TableStrategy(
-            encode_fixed_point=tables.klines.encode_fixed_point,
-            validate=tables.klines.validate_klines,
-            normalize_schema=tables.klines.normalize_klines_schema,
-        )
-        return GenericIngestionService(table_name, strategy, repo, dim_symbol_repo, manifest_repo)
+    supported = {
+        "trades",
+        "quotes",
+        "book_snapshot_25",
+        "derivative_ticker",
+        "liquidations",
+        "options_chain",
+        "kline_1h",
+        "kline_1d",
+        "l3_orders",
+        "l3_ticks",
+    }
+    if table_name not in supported:
+        raise ValueError(f"Unsupported data type: {data_type}")
 
-    # SZSE L3 Orders
-    if data_type == "l3_orders":
-        repo = BaseDeltaRepository(
-            get_table_path("l3_orders"),
-            partition_by=["exchange", "date"],
-        )
-        strategy = TableStrategy(
-            encode_fixed_point=tables.l3_orders.encode_fixed_point,
-            validate=tables.l3_orders.validate_l3_orders,
-            normalize_schema=tables.l3_orders.normalize_l3_orders_schema,
-        )
-        return GenericIngestionService("l3_orders", strategy, repo, dim_symbol_repo, manifest_repo)
-
-    # SZSE L3 Ticks
-    if data_type == "l3_ticks":
-        repo = BaseDeltaRepository(
-            get_table_path("l3_ticks"),
-            partition_by=["exchange", "date"],
-        )
-        strategy = TableStrategy(
-            encode_fixed_point=tables.l3_ticks.encode_fixed_point,
-            validate=tables.l3_ticks.validate_l3_ticks,
-            normalize_schema=tables.l3_ticks.normalize_l3_ticks_schema,
-        )
-        return GenericIngestionService("l3_ticks", strategy, repo, dim_symbol_repo, manifest_repo)
-
-    raise ValueError(f"Unsupported data type: {data_type}")
+    domain = get_domain(table_name)
+    repo = BaseDeltaRepository(
+        get_table_path(table_name),
+        partition_by=list(domain.spec.partition_by),
+    )
+    return GenericIngestionService(table_name, domain, repo, dim_symbol_repo, manifest_repo)

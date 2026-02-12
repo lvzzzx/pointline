@@ -313,10 +313,9 @@ def test_validate_quotes_both_missing():
 
 def test_encode_fixed_point():
     """Test fixed-point encoding using asset-class scalar profile."""
-    dim_symbol = _sample_dim_symbol()
-
     df = pl.DataFrame(
         {
+            "exchange": ["binance-futures"] * 3,
             "symbol": ["BTCUSDT"] * 3,
             "bid_px": [50000.0, 50001.0, 50002.0],
             "bid_sz": [0.1, 0.2, 0.15],
@@ -325,7 +324,7 @@ def test_encode_fixed_point():
         }
     )
 
-    encoded = encode_fixed_point(df, dim_symbol, "binance-futures")
+    encoded = encode_fixed_point(df)
 
     assert "bid_px_int" in encoded.columns
     assert "bid_sz_int" in encoded.columns
@@ -342,10 +341,9 @@ def test_encode_fixed_point():
 
 def test_encode_fixed_point_with_nulls():
     """Test fixed-point encoding preserves nulls for empty bid/ask."""
-    dim_symbol = _sample_dim_symbol()
-
     df = pl.DataFrame(
         {
+            "exchange": ["binance-futures"] * 2,
             "symbol": ["BTCUSDT"] * 2,
             "bid_px": [50000.0, None],
             "bid_sz": [0.1, None],
@@ -354,7 +352,7 @@ def test_encode_fixed_point_with_nulls():
         }
     )
 
-    encoded = encode_fixed_point(df, dim_symbol, "binance-futures")
+    encoded = encode_fixed_point(df)
 
     # First row should have all values (crypto profile: price scalar=1e-9)
     assert encoded["bid_px_int"][0] == 50_000_000_000_000
@@ -368,6 +366,7 @@ def test_encode_fixed_point_symmetric_rounding():
     """With universal scalar, bid and ask both use symmetric round()."""
     df = pl.DataFrame(
         {
+            "exchange": ["binance-futures"],
             "symbol": ["BTCUSDT"],
             "bid_px": [50000.123],
             "bid_sz": [0.1],
@@ -376,7 +375,7 @@ def test_encode_fixed_point_symmetric_rounding():
         }
     )
 
-    encoded = encode_fixed_point(df, pl.DataFrame(), "binance-futures")
+    encoded = encode_fixed_point(df)
 
     # Crypto profile: price scalar=1e-9
     # round(50000.123 / 1e-9) = 50_000_123_000_000
@@ -388,6 +387,7 @@ def test_encode_fixed_point_missing_columns():
     """Test that missing float columns raise error."""
     df = pl.DataFrame(
         {
+            "exchange": ["binance-futures"],
             "symbol": ["BTCUSDT"],
             "bid_px": [50000.0],
             # Missing bid_sz, ask_px, ask_sz
@@ -395,7 +395,7 @@ def test_encode_fixed_point_missing_columns():
     )
 
     with pytest.raises(ValueError, match="df missing columns"):
-        encode_fixed_point(df, pl.DataFrame(), "binance-futures")
+        encode_fixed_point(df)
 
 
 def test_decode_fixed_point():

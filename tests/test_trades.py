@@ -14,9 +14,6 @@ from pointline.io.base_repository import BaseDeltaRepository
 from pointline.io.protocols import BronzeFileMetadata
 from pointline.io.vendors.tardis.parsers.trades import parse_tardis_trades_csv
 from pointline.tables.trades import (
-    SIDE_BUY,
-    SIDE_SELL,
-    SIDE_UNKNOWN,
     TRADES_SCHEMA,
     decode_fixed_point,
     encode_fixed_point,
@@ -81,7 +78,7 @@ def test_parse_tardis_trades_csv_basic():
     assert "ts_local_us" in parsed.columns
     assert "ts_exch_us" in parsed.columns
     assert "trade_id" in parsed.columns
-    assert "side" in parsed.columns
+    assert "side_raw" in parsed.columns
     assert "price_px" in parsed.columns
     assert "qty" in parsed.columns
 
@@ -90,9 +87,9 @@ def test_parse_tardis_trades_csv_basic():
     assert parsed["ts_exch_us"].dtype == pl.Int64
     assert parsed["ts_local_us"].min() > 0
 
-    # Check side encoding
-    assert parsed["side"].dtype == pl.UInt8
-    assert set(parsed["side"].unique().to_list()) == {SIDE_BUY, SIDE_SELL}
+    # Check side canonical raw values
+    assert parsed["side_raw"].dtype == pl.Utf8
+    assert set(parsed["side_raw"].unique().to_list()) == {"buy", "sell"}
 
 
 def test_parse_tardis_trades_csv_preserves_file_line_number():
@@ -122,7 +119,7 @@ def test_parse_tardis_trades_csv_alternative_columns():
     parsed = parse_tardis_trades_csv(raw_df)
 
     assert parsed.height == 1
-    assert parsed["side"][0] == SIDE_SELL
+    assert parsed["side_raw"][0] == "sell"
     assert parsed["price_px"][0] == 50000.0
     assert parsed["qty"][0] == 0.1
 
@@ -146,8 +143,8 @@ def test_parse_tardis_trades_csv_missing_optional():
     assert parsed["trade_id"][0] is None
 
 
-def test_parse_tardis_trades_csv_side_encoding():
-    """Test side string to code mapping."""
+def test_parse_tardis_trades_csv_side_raw_normalization():
+    """Test side normalization in parser output."""
     base_ts = 1714557600000000  # 2024-05-01T10:00:00.000000Z
     raw_df = pl.DataFrame(
         {
@@ -160,10 +157,10 @@ def test_parse_tardis_trades_csv_side_encoding():
 
     parsed = parse_tardis_trades_csv(raw_df)
 
-    assert parsed["side"][0] == SIDE_BUY
-    assert parsed["side"][1] == SIDE_SELL
-    assert parsed["side"][2] == SIDE_UNKNOWN
-    assert parsed["side"][3] == SIDE_UNKNOWN
+    assert parsed["side_raw"][0] == "buy"
+    assert parsed["side_raw"][1] == "sell"
+    assert parsed["side_raw"][2] == "unknown"
+    assert parsed["side_raw"][3] is None
 
 
 def test_normalize_trades_schema():
@@ -249,17 +246,16 @@ def test_validate_trades_invalid_side():
 
 def test_encode_fixed_point():
     """Test fixed-point encoding using asset-class scalar profile."""
-    dim_symbol = _sample_dim_symbol()
-
     df = pl.DataFrame(
         {
+            "exchange": ["binance"] * 3,
             "symbol": ["BTCUSDT"] * 3,
             "price_px": [50000.0, 50001.0, 50002.0],
             "qty": [0.1, 0.2, 0.15],
         }
     )
 
-    encoded = encode_fixed_point(df, dim_symbol, "binance")
+    encoded = encode_fixed_point(df)
 
     assert "px_int" in encoded.columns
     assert "qty_int" in encoded.columns
@@ -274,14 +270,15 @@ def test_encode_fixed_point_missing_columns():
     """Test that missing float columns raise error."""
     df = pl.DataFrame(
         {
+            "exchange": ["binance"],
             "symbol": ["BTCUSDT"],
             "price_px": [50000.0],
             # Missing "qty" column
         }
     )
 
-    with pytest.raises(pl.exceptions.ColumnNotFoundError):
-        encode_fixed_point(df, pl.DataFrame(), "binance")
+    with pytest.raises(ValueError, match="df missing columns"):
+        encode_fixed_point(df)
 
 
 def test_decode_fixed_point():

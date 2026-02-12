@@ -8,10 +8,6 @@ import polars as pl
 from pointline.io.vendors.quant360.parsers.utils import parse_quant360_timestamp
 from pointline.io.vendors.registry import register_parser
 
-# Execution type codes
-EXEC_TYPE_FILL = 0
-EXEC_TYPE_CANCEL = 1
-
 
 @register_parser(vendor="quant360", data_type="l3_ticks")
 def parse_quant360_ticks_csv(df: pl.DataFrame) -> pl.DataFrame:
@@ -30,7 +26,7 @@ def parse_quant360_ticks_csv(df: pl.DataFrame) -> pl.DataFrame:
         - appl_seq_num (i64) - Tick ID
         - bid_appl_seq_num (i64) - Buy order ID (0 if N/A)
         - offer_appl_seq_num (i64) - Sell order ID (0 if N/A)
-        - exec_type (u8) - 0=fill, 1=cancel (remapped from Quant360's 'F'/4)
+        - exec_type_raw (str) - vendor exec type code/value
         - price_px (f64) - Price in CNY (will be encoded to px_int later)
         - qty (i64) - Quantity in shares (will be encoded to qty_int later)
         - channel_no (i32) - Exchange channel ID
@@ -65,13 +61,7 @@ def parse_quant360_ticks_csv(df: pl.DataFrame) -> pl.DataFrame:
             # Order IDs (0 if not applicable)
             pl.col("BidApplSeqNum").cast(pl.Int64).alias("bid_appl_seq_num"),
             pl.col("OfferApplSeqNum").cast(pl.Int64).alias("offer_appl_seq_num"),
-            # Execution type: Quant360 uses 'F'=fill, 4=cancel → remap to 0=fill, 1=cancel
-            pl.when(pl.col("ExecType").cast(pl.Utf8).str.to_uppercase() == "F")
-            .then(pl.lit(EXEC_TYPE_FILL, dtype=pl.UInt8))
-            .when(pl.col("ExecType").cast(pl.Utf8) == "4")
-            .then(pl.lit(EXEC_TYPE_CANCEL, dtype=pl.UInt8))
-            .otherwise(pl.lit(255, dtype=pl.UInt8))  # Invalid marker
-            .alias("exec_type"),
+            pl.col("ExecType").cast(pl.Utf8).str.to_lowercase().alias("exec_type_raw"),
             # Price and quantity (keep as float/int for now, will encode later)
             pl.col("Price").cast(pl.Float64).alias("price_px"),
             pl.col("Qty").cast(pl.Int64).alias("qty"),
@@ -85,7 +75,7 @@ def parse_quant360_ticks_csv(df: pl.DataFrame) -> pl.DataFrame:
         "appl_seq_num",
         "bid_appl_seq_num",
         "offer_appl_seq_num",
-        "exec_type",
+        "exec_type_raw",
         "price_px",
         "qty",
         "channel_no",

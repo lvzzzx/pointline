@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from dataclasses import dataclass
 
 import polars as pl
 
@@ -11,6 +12,8 @@ from pointline.tables._base import (
     required_columns_validation_expr,
     timestamp_validation_expr,
 )
+from pointline.tables.domain_contract import TableDomain, TableSpec
+from pointline.tables.domain_registry import register_domain
 
 # Required metadata fields for ingestion
 REQUIRED_METADATA_FIELDS: set[str] = set()
@@ -100,16 +103,37 @@ def normalize_options_chain_schema(df: pl.DataFrame) -> pl.DataFrame:
     return df.with_columns(casts).select(list(OPTIONS_CHAIN_SCHEMA.keys()))
 
 
-def encode_fixed_point(df: pl.DataFrame, dim_symbol: pl.DataFrame, exchange: str) -> pl.DataFrame:
-    """Encode options_chain numeric fields into fixed-point integers using asset-class profile."""
-    from pointline.encoding import get_profile
+def canonicalize_options_chain_frame(df: pl.DataFrame) -> pl.DataFrame:
+    """Apply canonical enum semantics for options-chain vendor-neutral frames."""
+    if "option_type" in df.columns or "option_type_raw" not in df.columns:
+        return df
 
-    profile = get_profile(exchange)
+    option_type_raw = pl.col("option_type_raw").cast(pl.Utf8).str.to_lowercase().str.strip_chars()
+    return df.with_columns(
+        pl.when(option_type_raw.is_in(["call", "c", "0"]))
+        .then(pl.lit(OPTION_TYPE_CALL, dtype=pl.UInt8))
+        .when(option_type_raw.is_in(["put", "p", "1"]))
+        .then(pl.lit(OPTION_TYPE_PUT, dtype=pl.UInt8))
+        .otherwise(pl.lit(None, dtype=pl.UInt8))
+        .alias("option_type")
+    )
+
+
+def encode_fixed_point(df: pl.DataFrame) -> pl.DataFrame:
+    """Encode options_chain numeric fields into fixed-point integers using asset-class profile."""
+    from pointline.encoding import (
+        PROFILE_AMOUNT_COL,
+        PROFILE_PRICE_COL,
+        PROFILE_SCALAR_COLS,
+        with_profile_scalars,
+    )
+
+    working = with_profile_scalars(df)
 
     def _enc_px(float_col: str, out_col: str) -> pl.Expr:
         return (
             pl.when(pl.col(float_col).is_not_null())
-            .then((pl.col(float_col) / profile.price).round(0).cast(pl.Int64))
+            .then((pl.col(float_col) / pl.col(PROFILE_PRICE_COL)).round(0).cast(pl.Int64))
             .otherwise(None)
             .alias(out_col)
         )
@@ -117,12 +141,12 @@ def encode_fixed_point(df: pl.DataFrame, dim_symbol: pl.DataFrame, exchange: str
     def _enc_amt(float_col: str, out_col: str) -> pl.Expr:
         return (
             pl.when(pl.col(float_col).is_not_null())
-            .then((pl.col(float_col) / profile.amount).round(0).cast(pl.Int64))
+            .then((pl.col(float_col) / pl.col(PROFILE_AMOUNT_COL)).round(0).cast(pl.Int64))
             .otherwise(None)
             .alias(out_col)
         )
 
-    return df.with_columns(
+    result = working.with_columns(
         [
             _enc_px("strike_px", "strike_int"),
             _enc_px("bid_px", "bid_px_int"),
@@ -133,6 +157,7 @@ def encode_fixed_point(df: pl.DataFrame, dim_symbol: pl.DataFrame, exchange: str
             _enc_amt("ask_sz", "ask_sz_int"),
         ]
     )
+    return result.drop([col for col in PROFILE_SCALAR_COLS if col in result.columns])
 
 
 def validate_options_chain(df: pl.DataFrame) -> pl.DataFrame:
@@ -202,9 +227,186 @@ def validate_options_chain(df: pl.DataFrame) -> pl.DataFrame:
     return valid.select(df.columns)
 
 
+def decode_fixed_point(
+    df: pl.DataFrame,
+    *,
+    keep_ints: bool = False,
+) -> pl.DataFrame:
+    """Decode options-chain fixed-point integers to float fields."""
+    from pointline.encoding import (
+        PROFILE_AMOUNT_COL,
+        PROFILE_PRICE_COL,
+        PROFILE_SCALAR_COLS,
+        with_profile_scalars,
+    )
+
+    int_cols = [
+        "strike_int",
+        "bid_px_int",
+        "ask_px_int",
+        "mark_px_int",
+        "underlying_px_int",
+        "bid_sz_int",
+        "ask_sz_int",
+    ]
+    missing = [c for c in int_cols if c not in df.columns]
+    if missing:
+        raise ValueError(f"decode_fixed_point: df missing columns: {missing}")
+
+    working = with_profile_scalars(df)
+    result = working.with_columns(
+        [
+            pl.when(pl.col("strike_int").is_not_null())
+            .then((pl.col("strike_int") * pl.col(PROFILE_PRICE_COL)).cast(pl.Float64))
+            .otherwise(None)
+            .alias("strike_px"),
+            pl.when(pl.col("bid_px_int").is_not_null())
+            .then((pl.col("bid_px_int") * pl.col(PROFILE_PRICE_COL)).cast(pl.Float64))
+            .otherwise(None)
+            .alias("bid_px"),
+            pl.when(pl.col("ask_px_int").is_not_null())
+            .then((pl.col("ask_px_int") * pl.col(PROFILE_PRICE_COL)).cast(pl.Float64))
+            .otherwise(None)
+            .alias("ask_px"),
+            pl.when(pl.col("mark_px_int").is_not_null())
+            .then((pl.col("mark_px_int") * pl.col(PROFILE_PRICE_COL)).cast(pl.Float64))
+            .otherwise(None)
+            .alias("mark_px"),
+            pl.when(pl.col("underlying_px_int").is_not_null())
+            .then((pl.col("underlying_px_int") * pl.col(PROFILE_PRICE_COL)).cast(pl.Float64))
+            .otherwise(None)
+            .alias("underlying_px"),
+            pl.when(pl.col("bid_sz_int").is_not_null())
+            .then((pl.col("bid_sz_int") * pl.col(PROFILE_AMOUNT_COL)).cast(pl.Float64))
+            .otherwise(None)
+            .alias("bid_sz"),
+            pl.when(pl.col("ask_sz_int").is_not_null())
+            .then((pl.col("ask_sz_int") * pl.col(PROFILE_AMOUNT_COL)).cast(pl.Float64))
+            .otherwise(None)
+            .alias("ask_sz"),
+        ]
+    )
+    if not keep_ints:
+        result = result.drop(int_cols)
+    return result.drop([col for col in PROFILE_SCALAR_COLS if col in result.columns])
+
+
+def decode_fixed_point_lazy(
+    lf: pl.LazyFrame,
+    *,
+    keep_ints: bool = False,
+) -> pl.LazyFrame:
+    """Decode options-chain fixed-point integers lazily to float fields."""
+    from pointline.encoding import (
+        PROFILE_AMOUNT_COL,
+        PROFILE_PRICE_COL,
+        PROFILE_SCALAR_COLS,
+        with_profile_scalars_lazy,
+    )
+
+    schema = lf.collect_schema()
+    int_cols = [
+        "strike_int",
+        "bid_px_int",
+        "ask_px_int",
+        "mark_px_int",
+        "underlying_px_int",
+        "bid_sz_int",
+        "ask_sz_int",
+    ]
+    missing = [c for c in int_cols if c not in schema]
+    if missing:
+        raise ValueError(f"decode_fixed_point: df missing columns: {missing}")
+
+    working = with_profile_scalars_lazy(lf)
+    result = working.with_columns(
+        [
+            pl.when(pl.col("strike_int").is_not_null())
+            .then((pl.col("strike_int") * pl.col(PROFILE_PRICE_COL)).cast(pl.Float64))
+            .otherwise(None)
+            .alias("strike_px"),
+            pl.when(pl.col("bid_px_int").is_not_null())
+            .then((pl.col("bid_px_int") * pl.col(PROFILE_PRICE_COL)).cast(pl.Float64))
+            .otherwise(None)
+            .alias("bid_px"),
+            pl.when(pl.col("ask_px_int").is_not_null())
+            .then((pl.col("ask_px_int") * pl.col(PROFILE_PRICE_COL)).cast(pl.Float64))
+            .otherwise(None)
+            .alias("ask_px"),
+            pl.when(pl.col("mark_px_int").is_not_null())
+            .then((pl.col("mark_px_int") * pl.col(PROFILE_PRICE_COL)).cast(pl.Float64))
+            .otherwise(None)
+            .alias("mark_px"),
+            pl.when(pl.col("underlying_px_int").is_not_null())
+            .then((pl.col("underlying_px_int") * pl.col(PROFILE_PRICE_COL)).cast(pl.Float64))
+            .otherwise(None)
+            .alias("underlying_px"),
+            pl.when(pl.col("bid_sz_int").is_not_null())
+            .then((pl.col("bid_sz_int") * pl.col(PROFILE_AMOUNT_COL)).cast(pl.Float64))
+            .otherwise(None)
+            .alias("bid_sz"),
+            pl.when(pl.col("ask_sz_int").is_not_null())
+            .then((pl.col("ask_sz_int") * pl.col(PROFILE_AMOUNT_COL)).cast(pl.Float64))
+            .otherwise(None)
+            .alias("ask_sz"),
+        ]
+    )
+    if not keep_ints:
+        result = result.drop(int_cols)
+    return result.drop(list(PROFILE_SCALAR_COLS))
+
+
 def required_options_chain_columns() -> Sequence[str]:
     """Columns required for an options_chain DataFrame after normalization."""
     return tuple(OPTIONS_CHAIN_SCHEMA.keys())
+
+
+def required_decode_columns() -> tuple[str, ...]:
+    """Columns needed to decode storage fields for options chain."""
+    return (
+        "exchange",
+        "strike_int",
+        "bid_px_int",
+        "ask_px_int",
+        "mark_px_int",
+        "underlying_px_int",
+        "bid_sz_int",
+        "ask_sz_int",
+    )
+
+
+@dataclass(frozen=True)
+class OptionsChainDomain(TableDomain):
+    spec: TableSpec = TableSpec(
+        table_name="options_chain",
+        schema=OPTIONS_CHAIN_SCHEMA,
+        partition_by=("exchange", "date"),
+        has_date=True,
+        layer="silver",
+        allowed_exchanges=None,
+        ts_column="ts_local_us",
+    )
+
+    def canonicalize_vendor_frame(self, df: pl.DataFrame) -> pl.DataFrame:
+        return canonicalize_options_chain_frame(df)
+
+    def encode_storage(self, df: pl.DataFrame) -> pl.DataFrame:
+        return encode_fixed_point(df)
+
+    def normalize_schema(self, df: pl.DataFrame) -> pl.DataFrame:
+        return normalize_options_chain_schema(df)
+
+    def validate(self, df: pl.DataFrame) -> pl.DataFrame:
+        return validate_options_chain(df)
+
+    def required_decode_columns(self) -> tuple[str, ...]:
+        return required_decode_columns()
+
+    def decode_storage(self, df: pl.DataFrame, *, keep_ints: bool = False) -> pl.DataFrame:
+        return decode_fixed_point(df, keep_ints=keep_ints)
+
+    def decode_storage_lazy(self, lf: pl.LazyFrame, *, keep_ints: bool = False) -> pl.LazyFrame:
+        return decode_fixed_point_lazy(lf, keep_ints=keep_ints)
 
 
 # ---------------------------------------------------------------------------
@@ -215,3 +417,4 @@ from pointline.schema_registry import register_schema as _register_schema  # noq
 _register_schema(
     "options_chain", OPTIONS_CHAIN_SCHEMA, partition_by=["exchange", "date"], has_date=True
 )
+register_domain(OptionsChainDomain())

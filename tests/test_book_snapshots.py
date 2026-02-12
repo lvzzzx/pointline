@@ -265,12 +265,12 @@ def test_validate_book_snapshots_invalid_ordering():
 
 def test_encode_fixed_point():
     """Test fixed-point encoding from raw level columns using asset-class profile."""
-    dim_symbol = _sample_dim_symbol()
     base_ts = 1714557600000000
 
     # Create DataFrame with symbol and raw float columns
     df = pl.DataFrame(
         {
+            "exchange": ["binance-futures", "binance-futures"],
             "symbol": ["BTCUSDT", "BTCUSDT"],
             "ts_local_us": [base_ts, base_ts + 1_000_000],
             "bids[0].price": [50000.0, 50001.0],
@@ -284,7 +284,7 @@ def test_encode_fixed_point():
         }
     )
 
-    encoded = encode_fixed_point(df, dim_symbol, "binance-futures")
+    encoded = encode_fixed_point(df)
 
     # Check types are now Int64 lists
     assert encoded["bids_px_int"].dtype == pl.List(pl.Int64)
@@ -309,23 +309,9 @@ def test_encode_fixed_point():
 
 def test_encode_fixed_point_multi_symbol():
     """Encode with multiple symbol values — same profile scalar for all."""
-    updates = pl.DataFrame(
-        {
-            "exchange_id": [1, 1],
-            "exchange_symbol": ["BTCUSDT", "ETHUSDT"],
-            "base_asset": ["BTC", "ETH"],
-            "quote_asset": ["USDT", "USDT"],
-            "asset_type": [0, 0],
-            "tick_size": [0.01, 0.1],
-            "lot_size": [0.00001, 0.001],
-            "contract_size": [1.0, 1.0],
-            "valid_from_ts": [1000000000000000, 1000000000000000],
-        }
-    )
-    dim_symbol = scd2_bootstrap(updates)
-
     df = pl.DataFrame(
         {
+            "exchange": ["binance-futures", "binance-futures"],
             "symbol": ["BTCUSDT", "ETHUSDT"],
             "ts_local_us": [1714557600000000, 1714557600000001],
             "asks[0].price": [50000.01, 250.01],
@@ -335,7 +321,7 @@ def test_encode_fixed_point_multi_symbol():
         }
     )
 
-    encoded = encode_fixed_point(df, dim_symbol, "binance-futures")
+    encoded = encode_fixed_point(df)
 
     # crypto profile: price scalar = 1e-9
     # Due to IEEE 754 precision, floor/ceil may land 1 unit off the "exact" value.

@@ -23,6 +23,13 @@ from pointline.validation_utils import DataQualityWarning
 EXCHANGE = "binance-futures"
 
 
+def _with_exchange(df: pl.DataFrame, exchange: str = EXCHANGE) -> pl.DataFrame:
+    """Attach exchange column for encode/decode tests."""
+    if "exchange" in df.columns:
+        return df
+    return df.with_columns(pl.lit(exchange, dtype=pl.Utf8).alias("exchange"))
+
+
 @pytest.fixture
 def raw_kline_data() -> pl.DataFrame:
     """Raw Binance kline CSV data (without headers)."""
@@ -137,7 +144,7 @@ def test_encode_quote_volume_with_profile():
         }
     )
 
-    result = encode_fixed_point(df, None, EXCHANGE)
+    result = encode_fixed_point(_with_exchange(df))
 
     # Verify quote_volume encoding uses profile.quote_vol
     expected_quote_volume_int = round(2905000.0 / profile.quote_vol)
@@ -168,7 +175,7 @@ def test_encode_fixed_point_multi_symbol():
         }
     )
 
-    result = encode_fixed_point(df, None, EXCHANGE)
+    result = encode_fixed_point(_with_exchange(df))
 
     # All symbols use the same profile scalars
     assert result.height == 3
@@ -204,7 +211,7 @@ def test_encode_fixed_point_unknown_exchange():
     )
 
     with pytest.raises(ValueError, match="Unknown exchange"):
-        encode_fixed_point(df, None, "nonexistent-exchange")
+        encode_fixed_point(_with_exchange(df, "nonexistent-exchange"))
 
 
 # --- Fixed-Point Decoding Tests ---
@@ -231,7 +238,7 @@ def test_decode_quote_volume_roundtrip():
     )
 
     # Encode
-    encoded = encode_fixed_point(original, None, EXCHANGE)
+    encoded = encode_fixed_point(_with_exchange(original))
 
     # Decode (resolve profile from exchange column)
     decoded = decode_fixed_point(encoded, keep_ints=False)
@@ -305,7 +312,7 @@ def test_quote_vol_scalar_in_encode_decode():
     )
 
     # Encode
-    encoded = encode_fixed_point(df, None, EXCHANGE)
+    encoded = encode_fixed_point(_with_exchange(df))
 
     # Verify encoding used profile.quote_vol
     expected_quote_int = round(29000.0 / profile.quote_vol)
@@ -564,7 +571,7 @@ def test_full_pipeline_parse_encode_decode(raw_kline_data: pl.DataFrame):
     )
 
     # Encode
-    encoded = encode_fixed_point(with_meta, None, EXCHANGE)
+    encoded = encode_fixed_point(_with_exchange(with_meta))
     assert "quote_volume_int" in encoded.columns
     assert "quote_volume" not in encoded.columns  # Original dropped
 

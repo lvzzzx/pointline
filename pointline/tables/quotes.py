@@ -14,6 +14,7 @@ Example:
 from __future__ import annotations
 
 from collections.abc import Sequence
+from dataclasses import dataclass
 
 import polars as pl
 
@@ -21,6 +22,8 @@ import polars as pl
 from pointline.tables._base import (
     generic_validate,
 )
+from pointline.tables.domain_contract import TableDomain, TableSpec
+from pointline.tables.domain_registry import register_domain
 
 # Required metadata fields for ingestion
 REQUIRED_METADATA_FIELDS: set[str] = set()
@@ -169,10 +172,13 @@ def _quote_validation_rules(df: pl.DataFrame) -> tuple[pl.Expr, list[tuple[str, 
     return combined_filter, rules
 
 
+def canonicalize_quotes_frame(df: pl.DataFrame) -> pl.DataFrame:
+    """Quotes have no table-specific enum remapping at canonicalization stage."""
+    return df
+
+
 def encode_fixed_point(
     df: pl.DataFrame,
-    dim_symbol: pl.DataFrame,
-    exchange: str,
 ) -> pl.DataFrame:
     """Encode bid/ask prices and sizes as fixed-point integers using asset-class scalar profile.
 
@@ -190,32 +196,43 @@ def encode_fixed_point(
 
     Returns DataFrame with bid_px_int, bid_sz_int, ask_px_int, ask_sz_int columns added.
     """
-    from pointline.encoding import encode_nullable_price, get_profile
+    from pointline.encoding import (
+        PROFILE_AMOUNT_COL,
+        PROFILE_PRICE_COL,
+        PROFILE_SCALAR_COLS,
+        with_profile_scalars,
+    )
 
     required_cols = ["bid_px", "bid_sz", "ask_px", "ask_sz"]
     missing = [c for c in required_cols if c not in df.columns]
     if missing:
         raise ValueError(f"encode_fixed_point: df missing columns: {missing}")
 
-    profile = get_profile(exchange)
+    working = with_profile_scalars(df)
 
-    # Encode nullable price helper handles the when/then/otherwise(None) pattern.
-    # For amounts, build the nullable expression inline (same pattern).
-    def _encode_nullable_amount(col: str) -> pl.Expr:
+    def _encode_nullable_price(col: str) -> pl.Expr:
         return (
             pl.when(pl.col(col).is_not_null())
-            .then((pl.col(col) / profile.amount).round().cast(pl.Int64))
+            .then((pl.col(col) / pl.col(PROFILE_PRICE_COL)).round().cast(pl.Int64))
             .otherwise(None)
         )
 
-    return df.with_columns(
+    def _encode_nullable_amount(col: str) -> pl.Expr:
+        return (
+            pl.when(pl.col(col).is_not_null())
+            .then((pl.col(col) / pl.col(PROFILE_AMOUNT_COL)).round().cast(pl.Int64))
+            .otherwise(None)
+        )
+
+    result = working.with_columns(
         [
-            encode_nullable_price("bid_px", profile).alias("bid_px_int"),
+            _encode_nullable_price("bid_px").alias("bid_px_int"),
             _encode_nullable_amount("bid_sz").alias("bid_sz_int"),
-            encode_nullable_price("ask_px", profile).alias("ask_px_int"),
+            _encode_nullable_price("ask_px").alias("ask_px_int"),
             _encode_nullable_amount("ask_sz").alias("ask_sz_int"),
         ]
     )
+    return result.drop([col for col in PROFILE_SCALAR_COLS if col in result.columns])
 
 
 def decode_fixed_point(
@@ -260,9 +277,81 @@ def decode_fixed_point(
     return result.drop([col for col in PROFILE_SCALAR_COLS if col in result.columns])
 
 
+def decode_fixed_point_lazy(
+    lf: pl.LazyFrame,
+    *,
+    keep_ints: bool = False,
+) -> pl.LazyFrame:
+    """Decode fixed-point integers lazily into float bid/ask columns."""
+    from pointline.encoding import (
+        PROFILE_AMOUNT_COL,
+        PROFILE_PRICE_COL,
+        PROFILE_SCALAR_COLS,
+        with_profile_scalars_lazy,
+    )
+
+    schema = lf.collect_schema()
+    required_cols = ["bid_px_int", "bid_sz_int", "ask_px_int", "ask_sz_int"]
+    missing = [c for c in required_cols if c not in schema]
+    if missing:
+        raise ValueError(f"decode_fixed_point: df missing columns: {missing}")
+
+    working = with_profile_scalars_lazy(lf)
+    result = working.with_columns(
+        [
+            (pl.col("bid_px_int") * pl.col(PROFILE_PRICE_COL)).cast(pl.Float64).alias("bid_px"),
+            (pl.col("bid_sz_int") * pl.col(PROFILE_AMOUNT_COL)).cast(pl.Float64).alias("bid_sz"),
+            (pl.col("ask_px_int") * pl.col(PROFILE_PRICE_COL)).cast(pl.Float64).alias("ask_px"),
+            (pl.col("ask_sz_int") * pl.col(PROFILE_AMOUNT_COL)).cast(pl.Float64).alias("ask_sz"),
+        ]
+    )
+    if not keep_ints:
+        result = result.drop(required_cols)
+    return result.drop(list(PROFILE_SCALAR_COLS))
+
+
 def required_quotes_columns() -> Sequence[str]:
     """Columns required for a quotes DataFrame after normalization."""
     return tuple(QUOTES_SCHEMA.keys())
+
+
+def required_decode_columns() -> tuple[str, ...]:
+    """Columns needed to decode storage fields for quotes."""
+    return ("exchange", "bid_px_int", "bid_sz_int", "ask_px_int", "ask_sz_int")
+
+
+@dataclass(frozen=True)
+class QuotesDomain(TableDomain):
+    spec: TableSpec = TableSpec(
+        table_name="quotes",
+        schema=QUOTES_SCHEMA,
+        partition_by=("exchange", "date"),
+        has_date=True,
+        layer="silver",
+        allowed_exchanges=None,
+        ts_column="ts_local_us",
+    )
+
+    def canonicalize_vendor_frame(self, df: pl.DataFrame) -> pl.DataFrame:
+        return canonicalize_quotes_frame(df)
+
+    def encode_storage(self, df: pl.DataFrame) -> pl.DataFrame:
+        return encode_fixed_point(df)
+
+    def normalize_schema(self, df: pl.DataFrame) -> pl.DataFrame:
+        return normalize_quotes_schema(df)
+
+    def validate(self, df: pl.DataFrame) -> pl.DataFrame:
+        return validate_quotes(df)
+
+    def required_decode_columns(self) -> tuple[str, ...]:
+        return required_decode_columns()
+
+    def decode_storage(self, df: pl.DataFrame, *, keep_ints: bool = False) -> pl.DataFrame:
+        return decode_fixed_point(df, keep_ints=keep_ints)
+
+    def decode_storage_lazy(self, lf: pl.LazyFrame, *, keep_ints: bool = False) -> pl.LazyFrame:
+        return decode_fixed_point_lazy(lf, keep_ints=keep_ints)
 
 
 # ---------------------------------------------------------------------------
@@ -271,3 +360,4 @@ def required_quotes_columns() -> Sequence[str]:
 from pointline.schema_registry import register_schema as _register_schema  # noqa: E402
 
 _register_schema("quotes", QUOTES_SCHEMA, partition_by=["exchange", "date"], has_date=True)
+register_domain(QuotesDomain())

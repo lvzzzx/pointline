@@ -114,7 +114,7 @@ def test_normalize_encode_and_validate_liquidations() -> None:
             pl.lit(date(2024, 5, 1)).alias("date"),
         ]
     )
-    encoded = encode_fixed_point(with_meta, _sample_dim_symbol(), "binance-futures")
+    encoded = encode_fixed_point(with_meta)
     normalized = normalize_liquidations_schema(encoded)
     assert list(normalized.schema.keys()) == list(LIQUIDATIONS_SCHEMA.keys())
     # crypto profile: price=1e-9 → 60651.1/1e-9 = 60651100000000

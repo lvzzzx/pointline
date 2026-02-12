@@ -83,9 +83,11 @@ def test_scan_table_time_range_prunes_date(mock_get_path, mock_scan_delta):
 
 def test_list_tables():
     tables = list_tables()
-    assert "trades" in tables
-    assert "quotes" in tables
-    assert "book_snapshot_25" in tables
+    assert isinstance(tables, pl.DataFrame)
+    assert "table_name" in tables.columns
+    assert "trades" in tables["table_name"].to_list()
+    assert "quotes" in tables["table_name"].to_list()
+    assert "book_snapshot_25" in tables["table_name"].to_list()
 
 
 @patch("pointline.research.core.scan_table")
@@ -113,13 +115,15 @@ def test_load_trades_lazy(mock_scan_table):
     )
 
 
-@patch("pointline.research.core.decode_trades")
+@patch("pointline.research.core.get_domain")
 @patch("pointline.research.core.read_table")
-def test_load_trades_decoded_keeps_ints_for_requested_columns(mock_read_table, mock_decode_trades):
+def test_load_trades_decoded_keeps_ints_for_requested_columns(mock_read_table, mock_get_domain):
+    mock_domain = MagicMock()
+    mock_domain.required_decode_columns.return_value = ("exchange", "px_int", "qty_int")
     mock_read_table.return_value = pl.DataFrame(
-        {"symbol": ["BTCUSDT"], "px_int": [10], "qty_int": [5]}
+        {"symbol": ["BTCUSDT"], "exchange": ["binance-futures"], "px_int": [10], "qty_int": [5]}
     )
-    mock_decode_trades.return_value = pl.DataFrame(
+    mock_domain.decode_storage.return_value = pl.DataFrame(
         {
             "symbol": ["BTCUSDT"],
             "px_int": [10],
@@ -128,6 +132,7 @@ def test_load_trades_decoded_keeps_ints_for_requested_columns(mock_read_table, m
             "qty": [0.05],
         }
     )
+    mock_get_domain.return_value = mock_domain
 
     result = load_trades_decoded(
         exchange="binance-futures",
@@ -139,7 +144,7 @@ def test_load_trades_decoded_keeps_ints_for_requested_columns(mock_read_table, m
 
     assert result.shape[0] == 1
     assert "px_int" in result.columns
-    assert mock_decode_trades.call_args.kwargs["keep_ints"] is True
+    assert mock_domain.decode_storage.call_args.kwargs["keep_ints"] is True
 
 
 def test_load_trades_decoded_lazy_returns_lazyframe():

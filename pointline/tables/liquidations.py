@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from dataclasses import dataclass
 
 import polars as pl
 
@@ -11,6 +12,8 @@ from pointline.tables._base import (
     required_columns_validation_expr,
     timestamp_validation_expr,
 )
+from pointline.tables.domain_contract import TableDomain, TableSpec
+from pointline.tables.domain_registry import register_domain
 
 # Required metadata fields for ingestion
 REQUIRED_METADATA_FIELDS: set[str] = set()
@@ -66,23 +69,46 @@ def normalize_liquidations_schema(df: pl.DataFrame) -> pl.DataFrame:
     return df.with_columns(casts).select(list(LIQUIDATIONS_SCHEMA.keys()))
 
 
-def encode_fixed_point(df: pl.DataFrame, dim_symbol: pl.DataFrame, exchange: str) -> pl.DataFrame:
-    """Encode liquidation price and quantity fields to fixed-point integers."""
-    from pointline.encoding import get_profile
+def canonicalize_liquidations_frame(df: pl.DataFrame) -> pl.DataFrame:
+    """Apply canonical enum semantics for liquidation vendor-neutral frames."""
+    if "side" in df.columns or "side_raw" not in df.columns:
+        return df
 
-    profile = get_profile(exchange)
+    side_raw = pl.col("side_raw").cast(pl.Utf8).str.to_lowercase().str.strip_chars()
     return df.with_columns(
+        pl.when(side_raw.is_in(["buy", "b", "0"]))
+        .then(pl.lit(SIDE_BUY, dtype=pl.UInt8))
+        .when(side_raw.is_in(["sell", "s", "1"]))
+        .then(pl.lit(SIDE_SELL, dtype=pl.UInt8))
+        .otherwise(pl.lit(None, dtype=pl.UInt8))
+        .alias("side")
+    )
+
+
+def encode_fixed_point(df: pl.DataFrame) -> pl.DataFrame:
+    """Encode liquidation price and quantity fields to fixed-point integers."""
+    from pointline.encoding import (
+        PROFILE_AMOUNT_COL,
+        PROFILE_PRICE_COL,
+        PROFILE_SCALAR_COLS,
+        with_profile_scalars,
+    )
+
+    working = with_profile_scalars(df)
+
+    result = working.with_columns(
         [
             pl.when(pl.col("price_px").is_not_null())
-            .then((pl.col("price_px") / profile.price).round(0).cast(pl.Int64))
+            .then((pl.col("price_px") / pl.col(PROFILE_PRICE_COL)).round(0).cast(pl.Int64))
             .otherwise(None)
             .alias("px_int"),
             pl.when(pl.col("qty").is_not_null())
-            .then((pl.col("qty") / profile.amount).round(0).cast(pl.Int64))
+            .then((pl.col("qty") / pl.col(PROFILE_AMOUNT_COL)).round(0).cast(pl.Int64))
             .otherwise(None)
             .alias("qty_int"),
         ]
     )
+    return result.drop([col for col in PROFILE_SCALAR_COLS if col in result.columns])
 
 
 def validate_liquidations(df: pl.DataFrame) -> pl.DataFrame:
@@ -126,9 +152,121 @@ def validate_liquidations(df: pl.DataFrame) -> pl.DataFrame:
     return valid.select(df.columns)
 
 
+def decode_fixed_point(
+    df: pl.DataFrame,
+    *,
+    keep_ints: bool = False,
+) -> pl.DataFrame:
+    """Decode liquidations fixed-point integers to float fields."""
+    from pointline.encoding import (
+        PROFILE_AMOUNT_COL,
+        PROFILE_PRICE_COL,
+        PROFILE_SCALAR_COLS,
+        with_profile_scalars,
+    )
+
+    required_cols = ["px_int", "qty_int"]
+    missing = [c for c in required_cols if c not in df.columns]
+    if missing:
+        raise ValueError(f"decode_fixed_point: df missing columns: {missing}")
+
+    working = with_profile_scalars(df)
+    result = working.with_columns(
+        [
+            pl.when(pl.col("px_int").is_not_null())
+            .then((pl.col("px_int") * pl.col(PROFILE_PRICE_COL)).cast(pl.Float64))
+            .otherwise(None)
+            .alias("price_px"),
+            pl.when(pl.col("qty_int").is_not_null())
+            .then((pl.col("qty_int") * pl.col(PROFILE_AMOUNT_COL)).cast(pl.Float64))
+            .otherwise(None)
+            .alias("qty"),
+        ]
+    )
+    if not keep_ints:
+        result = result.drop(required_cols)
+    return result.drop([col for col in PROFILE_SCALAR_COLS if col in result.columns])
+
+
+def decode_fixed_point_lazy(
+    lf: pl.LazyFrame,
+    *,
+    keep_ints: bool = False,
+) -> pl.LazyFrame:
+    """Decode liquidations fixed-point integers lazily to float fields."""
+    from pointline.encoding import (
+        PROFILE_AMOUNT_COL,
+        PROFILE_PRICE_COL,
+        PROFILE_SCALAR_COLS,
+        with_profile_scalars_lazy,
+    )
+
+    schema = lf.collect_schema()
+    required_cols = ["px_int", "qty_int"]
+    missing = [c for c in required_cols if c not in schema]
+    if missing:
+        raise ValueError(f"decode_fixed_point: df missing columns: {missing}")
+
+    working = with_profile_scalars_lazy(lf)
+    result = working.with_columns(
+        [
+            pl.when(pl.col("px_int").is_not_null())
+            .then((pl.col("px_int") * pl.col(PROFILE_PRICE_COL)).cast(pl.Float64))
+            .otherwise(None)
+            .alias("price_px"),
+            pl.when(pl.col("qty_int").is_not_null())
+            .then((pl.col("qty_int") * pl.col(PROFILE_AMOUNT_COL)).cast(pl.Float64))
+            .otherwise(None)
+            .alias("qty"),
+        ]
+    )
+    if not keep_ints:
+        result = result.drop(required_cols)
+    return result.drop(list(PROFILE_SCALAR_COLS))
+
+
 def required_liquidations_columns() -> Sequence[str]:
     """Columns required for a liquidations DataFrame after normalization."""
     return tuple(LIQUIDATIONS_SCHEMA.keys())
+
+
+def required_decode_columns() -> tuple[str, ...]:
+    """Columns needed to decode storage fields for liquidations."""
+    return ("exchange", "px_int", "qty_int")
+
+
+@dataclass(frozen=True)
+class LiquidationsDomain(TableDomain):
+    spec: TableSpec = TableSpec(
+        table_name="liquidations",
+        schema=LIQUIDATIONS_SCHEMA,
+        partition_by=("exchange", "date"),
+        has_date=True,
+        layer="silver",
+        allowed_exchanges=None,
+        ts_column="ts_local_us",
+    )
+
+    def canonicalize_vendor_frame(self, df: pl.DataFrame) -> pl.DataFrame:
+        return canonicalize_liquidations_frame(df)
+
+    def encode_storage(self, df: pl.DataFrame) -> pl.DataFrame:
+        return encode_fixed_point(df)
+
+    def normalize_schema(self, df: pl.DataFrame) -> pl.DataFrame:
+        return normalize_liquidations_schema(df)
+
+    def validate(self, df: pl.DataFrame) -> pl.DataFrame:
+        return validate_liquidations(df)
+
+    def required_decode_columns(self) -> tuple[str, ...]:
+        return required_decode_columns()
+
+    def decode_storage(self, df: pl.DataFrame, *, keep_ints: bool = False) -> pl.DataFrame:
+        return decode_fixed_point(df, keep_ints=keep_ints)
+
+    def decode_storage_lazy(self, lf: pl.LazyFrame, *, keep_ints: bool = False) -> pl.LazyFrame:
+        return decode_fixed_point_lazy(lf, keep_ints=keep_ints)
 
 
 # ---------------------------------------------------------------------------
@@ -139,3 +277,4 @@ from pointline.schema_registry import register_schema as _register_schema  # noq
 _register_schema(
     "liquidations", LIQUIDATIONS_SCHEMA, partition_by=["exchange", "date"], has_date=True
 )
+register_domain(LiquidationsDomain())

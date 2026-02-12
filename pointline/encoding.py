@@ -230,3 +230,51 @@ def with_profile_scalars(df: pl.DataFrame, *, exchange_col: str = "exchange") ->
         }
     )
     return df.join(profile_df, on=exchange_col, how="left")
+
+
+def with_profile_scalars_lazy(lf: pl.LazyFrame, *, exchange_col: str = "exchange") -> pl.LazyFrame:
+    """Attach per-row scalar columns lazily from exchange values.
+
+    Unlike the eager variant, this resolves profile values via expressions so
+    decode can remain lazy end-to-end.
+    """
+    schema = lf.collect_schema()
+    if exchange_col not in schema:
+        raise ValueError(f"decode_fixed_point: no '{exchange_col}' column")
+
+    def _price(exchange: str | None) -> float:
+        if exchange is None:
+            raise ValueError(f"decode_fixed_point: '{exchange_col}' contains null values")
+        return get_profile(exchange).price
+
+    def _amount(exchange: str | None) -> float:
+        if exchange is None:
+            raise ValueError(f"decode_fixed_point: '{exchange_col}' contains null values")
+        return get_profile(exchange).amount
+
+    def _rate(exchange: str | None) -> float:
+        if exchange is None:
+            raise ValueError(f"decode_fixed_point: '{exchange_col}' contains null values")
+        return get_profile(exchange).rate
+
+    def _quote_vol(exchange: str | None) -> float:
+        if exchange is None:
+            raise ValueError(f"decode_fixed_point: '{exchange_col}' contains null values")
+        return get_profile(exchange).quote_vol
+
+    return lf.with_columns(
+        [
+            pl.col(exchange_col)
+            .map_elements(_price, return_dtype=pl.Float64)
+            .alias(PROFILE_PRICE_COL),
+            pl.col(exchange_col)
+            .map_elements(_amount, return_dtype=pl.Float64)
+            .alias(PROFILE_AMOUNT_COL),
+            pl.col(exchange_col)
+            .map_elements(_rate, return_dtype=pl.Float64)
+            .alias(PROFILE_RATE_COL),
+            pl.col(exchange_col)
+            .map_elements(_quote_vol, return_dtype=pl.Float64)
+            .alias(PROFILE_QUOTE_VOL_COL),
+        ]
+    )
