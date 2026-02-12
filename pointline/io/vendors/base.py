@@ -126,6 +126,13 @@ class VendorPlugin(Protocol):
         """Build table updates from captured snapshot records."""
         ...
 
+    def get_scd2_tracked_columns(self, dataset: str) -> list[str] | None:
+        """Return columns that trigger SCD2 versioning for this dataset.
+
+        Returns None if the dataset is not SCD2-managed (e.g. dim_asset_stats).
+        """
+        ...
+
     def read_and_parse(self, path: Path, meta: BronzeFileMetadata) -> pl.DataFrame:
         """Read bronze file and return parsed DataFrame with metadata columns."""
         ...

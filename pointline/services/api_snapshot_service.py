@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import gzip
 import json
+import logging
 import re
 import time
 from dataclasses import dataclass
@@ -16,10 +17,18 @@ from pointline.config import get_bronze_root, get_table_path
 from pointline.io.base_repository import BaseDeltaRepository
 from pointline.io.delta_manifest_repo import DeltaManifestRepository
 from pointline.io.local_source import LocalBronzeSource
-from pointline.io.protocols import ApiCaptureRequest, ApiReplayOptions, IngestionResult
+from pointline.io.protocols import (
+    ApiCaptureRequest,
+    ApiReplayOptions,
+    BronzeSnapshotManifest,
+    IngestionResult,
+)
+from pointline.io.snapshot_utils import compute_canonical_content_hash, compute_file_hash
 from pointline.io.vendors import get_vendor
 from pointline.services.dim_asset_stats_service import DimAssetStatsService
 from pointline.services.dim_symbol_service import DimSymbolService
+
+logger = logging.getLogger(__name__)
 
 
 def _sanitize_component(value: str) -> str:
@@ -60,6 +69,8 @@ class ApiCaptureResult:
     path: Path
     snapshot_ts_us: int
     row_count: int
+    manifest_path: Path | None = None
+    records_content_sha256: str | None = None
 
 
 @dataclass
@@ -86,9 +97,14 @@ class ApiReplaySummary:
 
 
 class ApiSnapshotService:
-    """Capture API snapshots to bronze and replay via manifest semantics."""
+    """Capture API snapshots to bronze and replay via manifest semantics.
 
-    SNAPSHOT_SCHEMA_VERSION = 1
+    Supports both v1 (per-record envelope) and v2 (manifest + records) formats.
+    New captures use v2 format by default.
+    """
+
+    SNAPSHOT_SCHEMA_VERSION_V1 = 1
+    SNAPSHOT_SCHEMA_VERSION_V2 = 2
 
     def capture(
         self,
@@ -97,6 +113,7 @@ class ApiSnapshotService:
         dataset: str,
         request: ApiCaptureRequest,
         capture_root: str | Path | None = None,
+        bronze_format_version: int = 2,
     ) -> ApiCaptureResult:
         plugin = get_vendor(vendor)
         if not plugin.supports_api_snapshots:
@@ -127,17 +144,57 @@ class ApiSnapshotService:
         out_dir = bronze_root / f"type={data_type}"
         for key in spec.partition_keys:
             out_dir = out_dir / f"{key}={_sanitize_component(partitions[key])}"
-        out_dir = out_dir / f"date={snapshot_date}" / f"snapshot_ts={snapshot_ts_us}"
+        out_dir = out_dir / f"date={snapshot_date}" / f"captured_ts={snapshot_ts_us}"
         out_dir.mkdir(parents=True, exist_ok=True)
 
-        out_path = out_dir / f"{vendor}_{dataset}_{snapshot_ts_us}.jsonl.gz"
         records = plugin.capture_api_snapshot(dataset, request)
 
+        if bronze_format_version >= 2:
+            return self._write_v2_snapshot(
+                vendor=vendor,
+                dataset=dataset,
+                spec=spec,
+                records=records,
+                request=request,
+                snapshot_ts_us=snapshot_ts_us,
+                snapshot_date=snapshot_date,
+                partitions=partitions,
+                bronze_root=bronze_root,
+                out_dir=out_dir,
+            )
+
+        # v1 format (backward compat)
+        return self._write_v1_snapshot(
+            vendor=vendor,
+            dataset=dataset,
+            records=records,
+            request=request,
+            snapshot_ts_us=snapshot_ts_us,
+            snapshot_date=snapshot_date,
+            partitions=partitions,
+            bronze_root=bronze_root,
+            out_dir=out_dir,
+        )
+
+    def _write_v1_snapshot(
+        self,
+        *,
+        vendor: str,
+        dataset: str,
+        records: list[dict[str, Any]],
+        request: ApiCaptureRequest,
+        snapshot_ts_us: int,
+        snapshot_date: str,
+        partitions: dict[str, str],
+        bronze_root: Path,
+        out_dir: Path,
+    ) -> ApiCaptureResult:
+        out_path = out_dir / f"{vendor}_{dataset}_{snapshot_ts_us}.jsonl.gz"
         envelope_request = _sanitize_request_payload(request.params)
         with gzip.open(out_path, "wt", encoding="utf-8") as handle:
             for record in records:
                 payload = {
-                    "schema_version": self.SNAPSHOT_SCHEMA_VERSION,
+                    "schema_version": self.SNAPSHOT_SCHEMA_VERSION_V1,
                     "vendor": vendor,
                     "dataset": dataset,
                     "captured_at_us": snapshot_ts_us,
@@ -156,6 +213,71 @@ class ApiSnapshotService:
             path=out_path,
             snapshot_ts_us=snapshot_ts_us,
             row_count=len(records),
+        )
+
+    def _write_v2_snapshot(
+        self,
+        *,
+        vendor: str,
+        dataset: str,
+        spec: Any,
+        records: list[dict[str, Any]],
+        request: ApiCaptureRequest,
+        snapshot_ts_us: int,
+        snapshot_date: str,
+        partitions: dict[str, str],
+        bronze_root: Path,
+        out_dir: Path,
+    ) -> ApiCaptureResult:
+        """Write v2 bronze format: _manifest.json + records.jsonl.gz."""
+        envelope_request = _sanitize_request_payload(request.params)
+
+        # Compute canonical content hash before compression
+        records_content_sha256 = compute_canonical_content_hash(records)
+
+        # Write records file
+        records_path = out_dir / "records.jsonl.gz"
+        with gzip.open(records_path, "wt", encoding="utf-8") as handle:
+            for record in records:
+                handle.write(json.dumps(record, sort_keys=True, separators=(",", ":")))
+                handle.write("\n")
+
+        # Compute file hash of compressed artifact
+        records_file_sha256 = compute_file_hash(records_path)
+
+        # Build and write manifest
+        manifest = BronzeSnapshotManifest(
+            schema_version=self.SNAPSHOT_SCHEMA_VERSION_V2,
+            vendor=vendor,
+            dataset=dataset,
+            data_type=spec.data_type,
+            capture_mode="full_snapshot",
+            record_format="jsonl.gz",
+            complete=True,
+            captured_at_us=snapshot_ts_us,
+            vendor_effective_ts_us=None,
+            api_endpoint=dataset,
+            request_params=envelope_request,
+            record_count=len(records),
+            expected_record_count=None,
+            records_content_sha256=records_content_sha256,
+            records_file_sha256=records_file_sha256,
+            partitions={"date": snapshot_date, **partitions},
+        )
+
+        manifest_path = out_dir / "_manifest.json"
+        with open(manifest_path, "w", encoding="utf-8") as f:
+            json.dump(manifest.to_dict(), f, indent=2, sort_keys=True)
+
+        return ApiCaptureResult(
+            vendor=vendor,
+            dataset=dataset,
+            bronze_root=bronze_root,
+            path=out_dir,
+            snapshot_ts_us=snapshot_ts_us,
+            row_count=len(records),
+            manifest_path=manifest_path,
+            records_content_sha256=records_content_sha256,
         )
 
     def replay(
@@ -222,7 +344,34 @@ class ApiSnapshotService:
             file_id = manifest_repo.resolve_file_id(meta)
             try:
                 full_path = resolved_root / meta.bronze_file_path
-                records, request_payload, partitions = self._load_snapshot_records(full_path)
+                records, request_payload, partitions, v2_manifest = self._load_snapshot_records(
+                    full_path
+                )
+
+                # v2 completeness gate
+                if v2_manifest is not None and not v2_manifest.complete:
+                    logger.warning("Skipping incomplete v2 snapshot: %s", meta.bronze_file_path)
+                    manifest_repo.update_status(
+                        file_id,
+                        "skipped_incomplete",
+                        meta,
+                        IngestionResult(
+                            row_count=0,
+                            ts_local_min_us=0,
+                            ts_local_max_us=0,
+                            error_message="Incomplete snapshot (complete=false)",
+                        ),
+                    )
+                    results.append(
+                        ApiReplayFileResult(
+                            bronze_file_path=meta.bronze_file_path,
+                            status="skipped_incomplete",
+                            row_count=0,
+                            error_message="Incomplete snapshot",
+                        )
+                    )
+                    continue
+
                 options = ApiReplayOptions(
                     rebuild=rebuild,
                     effective_ts_us=effective_ts_us,
@@ -279,7 +428,32 @@ class ApiSnapshotService:
 
     def _load_snapshot_records(
         self, path: Path
+    ) -> tuple[
+        list[dict[str, Any]], dict[str, Any] | None, dict[str, str], BronzeSnapshotManifest | None
+    ]:
+        """Load records from a snapshot path, detecting v1 vs v2 format.
+
+        Returns:
+            (records, request_payload, partitions, v2_manifest_or_none)
+        """
+        # v2 detection: path is a directory containing _manifest.json,
+        # or path's parent directory contains _manifest.json
+        manifest_file = None
+        if path.is_dir() and (path / "_manifest.json").exists():
+            manifest_file = path / "_manifest.json"
+        elif path.is_file() and (path.parent / "_manifest.json").exists():
+            manifest_file = path.parent / "_manifest.json"
+
+        if manifest_file is not None:
+            return self._load_v2_snapshot(manifest_file)
+
+        # v1 path: existing envelope parsing
+        return (*self._load_v1_snapshot_records(path), None)
+
+    def _load_v1_snapshot_records(
+        self, path: Path
     ) -> tuple[list[dict[str, Any]], dict[str, Any] | None, dict[str, str]]:
+        """Load v1 format (per-record envelopes)."""
         opener = gzip.open if path.suffix == ".gz" else open
         records: list[dict[str, Any]] = []
         request_payload: dict[str, Any] | None = None
@@ -318,6 +492,39 @@ class ApiSnapshotService:
             if exchange:
                 partitions["exchange"] = exchange
         return records, request_payload, partitions
+
+    def _load_v2_snapshot(
+        self, manifest_file: Path
+    ) -> tuple[list[dict[str, Any]], dict[str, Any] | None, dict[str, str], BronzeSnapshotManifest]:
+        """Load v2 format (_manifest.json + records file)."""
+        manifest = BronzeSnapshotManifest.from_file(manifest_file)
+        snapshot_dir = manifest_file.parent
+
+        # Determine records file
+        record_format = manifest.record_format
+        if record_format == "jsonl.gz":
+            records_path = snapshot_dir / "records.jsonl.gz"
+        elif record_format == "parquet":
+            records_path = snapshot_dir / "records.parquet"
+        else:
+            raise ValueError(f"Unsupported v2 record_format: {record_format}")
+
+        if not records_path.exists():
+            raise FileNotFoundError(f"v2 records file not found: {records_path}")
+
+        # Load records
+        records: list[dict[str, Any]] = []
+        if record_format == "jsonl.gz":
+            with gzip.open(records_path, "rt", encoding="utf-8") as handle:
+                for line in handle:
+                    raw = line.strip()
+                    if raw:
+                        records.append(json.loads(raw))
+        elif record_format == "parquet":
+            df = pl.read_parquet(records_path)
+            records = df.to_dicts()
+
+        return records, manifest.request_params, manifest.partitions, manifest
 
     def _apply_updates(
         self,

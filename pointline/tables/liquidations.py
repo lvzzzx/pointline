@@ -82,30 +82,19 @@ def resolve_symbol_ids(
     return generic_resolve_symbol_ids(data, dim_symbol, exchange_id, exchange_symbol, ts_col=ts_col)
 
 
-def encode_fixed_point(df: pl.DataFrame, dim_symbol: pl.DataFrame) -> pl.DataFrame:
+def encode_fixed_point(df: pl.DataFrame, dim_symbol: pl.DataFrame, exchange: str) -> pl.DataFrame:
     """Encode liquidation price and quantity fields to fixed-point integers."""
-    if "symbol_id" not in df.columns:
-        raise ValueError("encode_fixed_point: df must include symbol_id")
+    from pointline.encoding import get_profile
 
-    required_dims = ["symbol_id", "price_increment", "amount_increment"]
-    missing_dims = [c for c in required_dims if c not in dim_symbol.columns]
-    if missing_dims:
-        raise ValueError(f"encode_fixed_point: dim_symbol missing columns: {missing_dims}")
-
-    joined = df.join(
-        dim_symbol.select(["symbol_id", "price_increment", "amount_increment"]),
-        on="symbol_id",
-        how="left",
-    )
-
-    return joined.with_columns(
+    profile = get_profile(exchange)
+    return df.with_columns(
         [
-            pl.when(pl.col("price_px").is_not_null() & pl.col("price_increment").is_not_null())
-            .then((pl.col("price_px") / pl.col("price_increment")).round(0).cast(pl.Int64))
+            pl.when(pl.col("price_px").is_not_null())
+            .then((pl.col("price_px") / profile.price).round(0).cast(pl.Int64))
             .otherwise(None)
             .alias("px_int"),
-            pl.when(pl.col("qty").is_not_null() & pl.col("amount_increment").is_not_null())
-            .then((pl.col("qty") / pl.col("amount_increment")).round(0).cast(pl.Int64))
+            pl.when(pl.col("qty").is_not_null())
+            .then((pl.col("qty") / profile.amount).round(0).cast(pl.Int64))
             .otherwise(None)
             .alias("qty_int"),
         ]

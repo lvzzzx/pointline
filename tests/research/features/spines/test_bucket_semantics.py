@@ -355,34 +355,28 @@ class TestVolumeSpineBarEndSemantics:
     """Test volume spine generates bar ENDS (not starts)."""
 
     def _make_trades_lf(self) -> pl.LazyFrame:
-        """Create synthetic trades for volume bar testing."""
-        # 6 trades, each with volume=100 (qty_int=1, amount_increment=100)
-        # Sorted by timestamp. volume_threshold=200 → 3 bars.
+        """Create synthetic trades for volume bar testing.
+
+        Uses szse (cn-equity profile: amount=1.0), so volume = qty_int * 1.0.
+        6 trades with qty_int=100 → volume=100 per trade.
+        volume_threshold=200 → 4 bars.
+        """
         return pl.LazyFrame(
             {
                 "ts_local_us": [100, 200, 300, 400, 500, 600],
-                "exchange_id": pl.Series([1] * 6, dtype=pl.Int16),
+                "exchange": ["szse"] * 6,
+                "exchange_id": pl.Series([30] * 6, dtype=pl.Int16),
                 "symbol_id": pl.Series([42] * 6, dtype=pl.Int64),
-                "qty_int": pl.Series([1] * 6, dtype=pl.Int64),
+                "qty_int": pl.Series([100] * 6, dtype=pl.Int64),
                 "file_id": pl.Series([1] * 6, dtype=pl.Int32),
                 "file_line_number": pl.Series(list(range(1, 7)), dtype=pl.Int32),
             }
         )
 
-    def _mock_dim_symbol(self) -> pl.DataFrame:
-        return pl.DataFrame(
-            {
-                "symbol_id": pl.Series([42], dtype=pl.Int64),
-                "amount_increment": [100.0],
-            }
-        )
-
     @patch("pointline.research.spines.volume.research_core")
-    @patch("pointline.research.spines.volume.read_dim_symbol_table")
-    def test_volume_bar_end_timestamps(self, mock_dim, mock_core):
+    def test_volume_bar_end_timestamps(self, mock_core):
         """Volume spine timestamps must be bar ENDS, not starts."""
         mock_core.scan_table.return_value = self._make_trades_lf()
-        mock_dim.return_value = self._mock_dim_symbol()
 
         from pointline.research.spines.volume import VolumeSpineBuilder
 
@@ -396,6 +390,7 @@ class TestVolumeSpineBarEndSemantics:
             config=config,
         ).collect()
 
+        # cn-equity profile: amount=1.0, so volume = qty_int * 1.0 = 100 per trade
         # With volume_threshold=200 and volume=100 per trade:
         # cum_vol:  [100,  200,  300,  400,  500,  600]
         # bar_id:   [  0,    1,    1,    2,    2,    3]
@@ -408,11 +403,9 @@ class TestVolumeSpineBarEndSemantics:
         )
 
     @patch("pointline.research.spines.volume.research_core")
-    @patch("pointline.research.spines.volume.read_dim_symbol_table")
-    def test_volume_max_rows_enforcement(self, mock_dim, mock_core):
+    def test_volume_max_rows_enforcement(self, mock_core):
         """Volume spine must enforce max_rows with an eager check."""
         mock_core.scan_table.return_value = self._make_trades_lf()
-        mock_dim.return_value = self._mock_dim_symbol()
 
         from pointline.research.spines.volume import VolumeSpineBuilder
 
@@ -433,36 +426,31 @@ class TestDollarSpineBarEndSemantics:
     """Test dollar spine generates bar ENDS (not starts)."""
 
     def _make_trades_lf(self) -> pl.LazyFrame:
-        # 4 trades, notional = px_int * price_inc * qty_int * amount_inc
-        # = 10 * 1.0 * 1 * 100.0 = 1000 per trade
-        # dollar_threshold=2000 → 2 bars
+        """Create synthetic trades for dollar bar testing.
+
+        Uses szse (cn-equity profile: price=1e-4, amount=1.0).
+        px_int=10_000_000 → price = 10_000_000 * 1e-4 = 1000.0
+        qty_int=1 → qty = 1 * 1.0 = 1.0
+        notional = 1000.0 * 1.0 = 1000 per trade.
+        dollar_threshold=2000 → 3 bars from 4 trades.
+        """
         return pl.LazyFrame(
             {
                 "ts_local_us": [100, 200, 300, 400],
-                "exchange_id": pl.Series([1] * 4, dtype=pl.Int16),
+                "exchange": ["szse"] * 4,
+                "exchange_id": pl.Series([30] * 4, dtype=pl.Int16),
                 "symbol_id": pl.Series([42] * 4, dtype=pl.Int64),
-                "px_int": pl.Series([10] * 4, dtype=pl.Int64),
+                "px_int": pl.Series([10_000_000] * 4, dtype=pl.Int64),
                 "qty_int": pl.Series([1] * 4, dtype=pl.Int64),
                 "file_id": pl.Series([1] * 4, dtype=pl.Int32),
                 "file_line_number": pl.Series(list(range(1, 5)), dtype=pl.Int32),
             }
         )
 
-    def _mock_dim_symbol(self) -> pl.DataFrame:
-        return pl.DataFrame(
-            {
-                "symbol_id": pl.Series([42], dtype=pl.Int64),
-                "price_increment": [1.0],
-                "amount_increment": [100.0],
-            }
-        )
-
     @patch("pointline.research.spines.dollar.research_core")
-    @patch("pointline.research.spines.dollar.read_dim_symbol_table")
-    def test_dollar_bar_end_timestamps(self, mock_dim, mock_core):
+    def test_dollar_bar_end_timestamps(self, mock_core):
         """Dollar spine timestamps must be bar ENDS, not starts."""
         mock_core.scan_table.return_value = self._make_trades_lf()
-        mock_dim.return_value = self._mock_dim_symbol()
 
         from pointline.research.spines.dollar import DollarSpineBuilder
 
@@ -476,7 +464,8 @@ class TestDollarSpineBarEndSemantics:
             config=config,
         ).collect()
 
-        # notional per trade = |10*1.0 * 1*100.0| = 1000
+        # cn-equity profile: price=1e-4, amount=1.0
+        # notional per trade = |10_000_000 * 1e-4 * 1 * 1.0| = 1000
         # cum_notional: [1000, 2000, 3000, 4000]
         # bar_id:       [   0,    1,    1,    2]
         # bar_start (min ts per bar_id): [100, 200, 400]
@@ -486,11 +475,9 @@ class TestDollarSpineBarEndSemantics:
         assert ts_list == [200, 400, 1000], f"Expected bar ENDS [200, 400, 1000], got {ts_list}"
 
     @patch("pointline.research.spines.dollar.research_core")
-    @patch("pointline.research.spines.dollar.read_dim_symbol_table")
-    def test_dollar_max_rows_enforcement(self, mock_dim, mock_core):
+    def test_dollar_max_rows_enforcement(self, mock_core):
         """Dollar spine must enforce max_rows with an eager check."""
         mock_core.scan_table.return_value = self._make_trades_lf()
-        mock_dim.return_value = self._mock_dim_symbol()
 
         from pointline.research.spines.dollar import DollarSpineBuilder
 

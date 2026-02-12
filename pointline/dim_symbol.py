@@ -17,8 +17,6 @@ Example:
             "asset_type": [1],
             "tick_size": [0.5],
             "lot_size": [1.0],
-            "price_increment": [0.5],
-            "amount_increment": [0.1],
             "contract_size": [1.0],
             "valid_from_ts": [100],
         }
@@ -29,7 +27,6 @@ Example:
     update = initial.with_columns(
         pl.lit(200).alias("valid_from_ts"),
         pl.lit(1.0).alias("tick_size"),
-        pl.lit(1.0).alias("price_increment"),
     )
 
     dim = scd2_upsert(dim, update)
@@ -39,6 +36,7 @@ from __future__ import annotations
 
 import hashlib
 from collections.abc import Sequence
+from dataclasses import dataclass
 
 import polars as pl
 
@@ -51,8 +49,6 @@ TRACKED_COLS: tuple[str, ...] = (
     "asset_type",
     "tick_size",
     "lot_size",
-    "price_increment",
-    "amount_increment",
     "contract_size",
     # Options fields — nullable for asset classes that don't use them
     "expiry_ts_us",
@@ -71,6 +67,237 @@ OPTIONAL_TRACKED_COLS: frozenset[str] = frozenset(
     }
 )
 
+FLOAT_TRACKED_COLS: frozenset[str] = frozenset(
+    {
+        "tick_size",
+        "lot_size",
+        "contract_size",
+        "strike",
+    }
+)
+
+TRACKED_COLUMN_TOLERANCES: dict[str, float] = {
+    "tick_size": 1e-12,
+    "lot_size": 1e-12,
+    "contract_size": 1e-6,
+    "strike": 1e-6,
+}
+
+FIXED_POINT_PRECISION = 10
+
+
+def to_fixed_int(val: float, precision: int = FIXED_POINT_PRECISION) -> int:
+    """Convert float to fixed-point integer for exact comparison."""
+    return round(val * 10**precision)
+
+
+@dataclass
+class SCD2Diff:
+    """Result of diffing two consecutive full snapshots."""
+
+    new_listings: pl.DataFrame
+    modifications: pl.DataFrame
+    delistings: pl.DataFrame
+    unchanged_count: int
+    effective_ts_us: int
+
+
+def _cols_changed(
+    joined: pl.DataFrame,
+    tracked_cols: Sequence[str],
+    col_tolerances: dict[str, float] | None = None,
+) -> pl.Expr:
+    """Per-column comparison with fixed-point conversion for floats.
+
+    For float columns: convert to fixed-point integers before comparison.
+    Falls back to per-column tolerance if configured.
+    Non-float columns: exact equality (null-safe).
+    """
+    diffs: list[pl.Expr] = []
+    for col in tracked_cols:
+        if col not in joined.columns:
+            continue
+        col_prev = f"{col}_prev"
+        if col_prev not in joined.columns:
+            continue
+
+        c_curr = pl.col(col)
+        c_prev = pl.col(col_prev)
+
+        null_diff = (c_curr.is_null() & c_prev.is_not_null()) | (
+            c_curr.is_not_null() & c_prev.is_null()
+        )
+
+        if col in FLOAT_TRACKED_COLS:
+            # Fixed-point integer comparison for float columns
+            scale = 10**FIXED_POINT_PRECISION
+            value_diff = (
+                c_curr.is_not_null()
+                & c_prev.is_not_null()
+                & (
+                    (c_curr * scale).round(0).cast(pl.Int64)
+                    != (c_prev * scale).round(0).cast(pl.Int64)
+                )
+            )
+        else:
+            value_diff = c_curr.is_not_null() & c_prev.is_not_null() & (c_curr != c_prev)
+
+        diffs.append(null_diff | value_diff)
+
+    if not diffs:
+        return pl.lit(False)
+    return pl.any_horizontal(diffs)
+
+
+def diff_snapshots(
+    prev: pl.DataFrame | None,
+    curr: pl.DataFrame,
+    natural_key: list[str],
+    tracked_cols: list[str],
+    effective_ts_us: int,
+    col_tolerances: dict[str, float] | None = None,
+) -> SCD2Diff:
+    """Diff two consecutive full snapshots to produce SCD2 change sets.
+
+    Args:
+        prev: Previous full snapshot (None for bootstrap — all records are new).
+        curr: Current full snapshot.
+        natural_key: Columns that uniquely identify a record (e.g. exchange_id, exchange_symbol).
+        tracked_cols: Columns that trigger SCD2 versioning when changed.
+        effective_ts_us: Effective timestamp for SCD2 transitions.
+        col_tolerances: Per-column float tolerance overrides.
+
+    Returns:
+        SCD2Diff with new_listings, modifications, delistings, unchanged_count.
+    """
+    if prev is None:
+        return SCD2Diff(
+            new_listings=curr,
+            modifications=curr.clear(),
+            delistings=curr.clear(),
+            unchanged_count=0,
+            effective_ts_us=effective_ts_us,
+        )
+
+    # Handle empty DataFrames: ensure both have the required natural key columns
+    if curr.is_empty() and not all(c in curr.columns for c in natural_key):
+        # All prev records are delistings
+        return SCD2Diff(
+            new_listings=prev.clear(),
+            modifications=prev.clear(),
+            delistings=prev,
+            unchanged_count=0,
+            effective_ts_us=effective_ts_us,
+        )
+
+    if prev.is_empty() and not all(c in prev.columns for c in natural_key):
+        # All curr records are new listings
+        return SCD2Diff(
+            new_listings=curr,
+            modifications=curr.clear(),
+            delistings=curr.clear(),
+            unchanged_count=0,
+            effective_ts_us=effective_ts_us,
+        )
+
+    # New listings: in curr but not in prev
+    new_listings = curr.join(prev.select(natural_key).unique(), on=natural_key, how="anti")
+
+    # Delistings: in prev but not in curr
+    delistings = prev.join(curr.select(natural_key).unique(), on=natural_key, how="anti")
+
+    # Present in both: inner join on natural key, compare tracked columns
+    joined = curr.join(prev, on=natural_key, how="inner", suffix="_prev")
+
+    changed_mask = _cols_changed(joined, tracked_cols, col_tolerances)
+    modifications = joined.filter(changed_mask).select(curr.columns)
+    unchanged_count = joined.filter(~changed_mask).height
+
+    return SCD2Diff(
+        new_listings=new_listings,
+        modifications=modifications,
+        delistings=delistings,
+        unchanged_count=unchanged_count,
+        effective_ts_us=effective_ts_us,
+    )
+
+
+def apply_scd2_diff(
+    dim_symbol: pl.DataFrame,
+    diff: SCD2Diff,
+) -> pl.DataFrame:
+    """Apply an SCD2Diff to the current dim_symbol table.
+
+    Handles new listings, modifications (close + open), and delistings (close only).
+    Half-open interval contract: [valid_from_ts, valid_until_ts).
+    """
+    effective = diff.effective_ts_us
+
+    if dim_symbol.is_empty():
+        # Bootstrap: all new_listings become current rows
+        if diff.new_listings.is_empty():
+            return dim_symbol
+        new_rows = diff.new_listings.with_columns(
+            pl.lit(effective).cast(pl.Int64).alias("valid_from_ts"),
+            pl.lit(DEFAULT_VALID_UNTIL_TS_US).cast(pl.Int64).alias("valid_until_ts"),
+            pl.lit(True).alias("is_current"),
+        )
+        new_rows = assign_symbol_id_hash(new_rows)
+        return normalize_dim_symbol_schema(new_rows)
+
+    dim_symbol = normalize_dim_symbol_schema(dim_symbol)
+    result_parts: list[pl.DataFrame] = []
+    schema_cols = list(SCHEMA.keys())
+
+    # Determine which current rows need closing (modifications + delistings)
+    current = dim_symbol.filter(pl.col("is_current") == True)  # noqa: E712
+    history = dim_symbol.filter(pl.col("is_current") == False)  # noqa: E712
+
+    close_keys_parts: list[pl.DataFrame] = []
+    if not diff.modifications.is_empty():
+        close_keys_parts.append(diff.modifications.select(list(NATURAL_KEY_COLS)).unique())
+    if not diff.delistings.is_empty():
+        close_keys_parts.append(diff.delistings.select(list(NATURAL_KEY_COLS)).unique())
+
+    if close_keys_parts:
+        close_keys = pl.concat(close_keys_parts).unique()
+        # Close affected current rows
+        closed_rows = current.join(close_keys, on=list(NATURAL_KEY_COLS), how="inner")
+        closed_rows = closed_rows.with_columns(
+            pl.lit(effective).cast(pl.Int64).alias("valid_until_ts"),
+            pl.lit(False).alias("is_current"),
+        )
+        # Keep unaffected current rows
+        kept_current = current.join(close_keys, on=list(NATURAL_KEY_COLS), how="anti")
+        result_parts.extend([history.select(schema_cols), kept_current.select(schema_cols)])
+        result_parts.append(normalize_dim_symbol_schema(closed_rows).select(schema_cols))
+    else:
+        result_parts.append(dim_symbol.select(schema_cols))
+
+    # New listings: insert with valid_from_ts = effective
+    if not diff.new_listings.is_empty():
+        new_rows = diff.new_listings.with_columns(
+            pl.lit(effective).cast(pl.Int64).alias("valid_from_ts"),
+            pl.lit(DEFAULT_VALID_UNTIL_TS_US).cast(pl.Int64).alias("valid_until_ts"),
+            pl.lit(True).alias("is_current"),
+        )
+        new_rows = assign_symbol_id_hash(new_rows)
+        result_parts.append(normalize_dim_symbol_schema(new_rows).select(schema_cols))
+
+    # Modifications: insert new version with updated tracked columns
+    if not diff.modifications.is_empty():
+        mod_rows = diff.modifications.with_columns(
+            pl.lit(effective).cast(pl.Int64).alias("valid_from_ts"),
+            pl.lit(DEFAULT_VALID_UNTIL_TS_US).cast(pl.Int64).alias("valid_until_ts"),
+            pl.lit(True).alias("is_current"),
+        )
+        mod_rows = assign_symbol_id_hash(mod_rows)
+        result_parts.append(normalize_dim_symbol_schema(mod_rows).select(schema_cols))
+
+    result = pl.concat(result_parts, how="vertical")
+    return normalize_dim_symbol_schema(result)
+
+
 SCHEMA: dict[str, pl.DataType] = {
     "symbol_id": pl.Int64,
     "exchange_id": pl.Int16,  # Delta Lake doesn't support UInt16, stores as Int16
@@ -81,8 +308,6 @@ SCHEMA: dict[str, pl.DataType] = {
     "asset_type": pl.UInt8,
     "tick_size": pl.Float64,
     "lot_size": pl.Float64,
-    "price_increment": pl.Float64,
-    "amount_increment": pl.Float64,
     "contract_size": pl.Float64,
     # Options fields — nullable for asset classes that don't use them
     "expiry_ts_us": pl.Int64,  # Contract expiry (nullable)

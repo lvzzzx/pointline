@@ -147,41 +147,37 @@ def resolve_symbol_ids(
     return resolved
 
 
-def encode_fixed_point(df: pl.DataFrame, dim_symbol: pl.DataFrame) -> pl.DataFrame:
-    """Encode options_chain numeric fields into fixed-point integers."""
-    if "option_symbol_id" not in df.columns:
-        raise ValueError("encode_fixed_point: df must include option_symbol_id")
+def encode_fixed_point(df: pl.DataFrame, dim_symbol: pl.DataFrame, exchange: str) -> pl.DataFrame:
+    """Encode options_chain numeric fields into fixed-point integers using asset-class profile."""
+    from pointline.encoding import get_profile
 
-    required_dims = ["symbol_id", "price_increment", "amount_increment"]
-    missing_dims = [c for c in required_dims if c not in dim_symbol.columns]
-    if missing_dims:
-        raise ValueError(f"encode_fixed_point: dim_symbol missing columns: {missing_dims}")
+    profile = get_profile(exchange)
 
-    joined = df.join(
-        dim_symbol.select(["symbol_id", "price_increment", "amount_increment"]).rename(
-            {"symbol_id": "option_symbol_id"}
-        ),
-        on="option_symbol_id",
-        how="left",
-    )
-
-    def _encode_int(float_col: str, inc_col: str, out_col: str) -> pl.Expr:
+    def _enc_px(float_col: str, out_col: str) -> pl.Expr:
         return (
-            pl.when(pl.col(float_col).is_not_null() & pl.col(inc_col).is_not_null())
-            .then((pl.col(float_col) / pl.col(inc_col)).round(0).cast(pl.Int64))
+            pl.when(pl.col(float_col).is_not_null())
+            .then((pl.col(float_col) / profile.price).round(0).cast(pl.Int64))
             .otherwise(None)
             .alias(out_col)
         )
 
-    return joined.with_columns(
+    def _enc_amt(float_col: str, out_col: str) -> pl.Expr:
+        return (
+            pl.when(pl.col(float_col).is_not_null())
+            .then((pl.col(float_col) / profile.amount).round(0).cast(pl.Int64))
+            .otherwise(None)
+            .alias(out_col)
+        )
+
+    return df.with_columns(
         [
-            _encode_int("strike_px", "price_increment", "strike_int"),
-            _encode_int("bid_px", "price_increment", "bid_px_int"),
-            _encode_int("ask_px", "price_increment", "ask_px_int"),
-            _encode_int("mark_px", "price_increment", "mark_px_int"),
-            _encode_int("underlying_px", "price_increment", "underlying_px_int"),
-            _encode_int("bid_sz", "amount_increment", "bid_sz_int"),
-            _encode_int("ask_sz", "amount_increment", "ask_sz_int"),
+            _enc_px("strike_px", "strike_int"),
+            _enc_px("bid_px", "bid_px_int"),
+            _enc_px("ask_px", "ask_px_int"),
+            _enc_px("mark_px", "mark_px_int"),
+            _enc_px("underlying_px", "underlying_px_int"),
+            _enc_amt("bid_sz", "bid_sz_int"),
+            _enc_amt("ask_sz", "ask_sz_int"),
         ]
     )
 

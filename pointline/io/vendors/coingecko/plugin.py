@@ -168,6 +168,10 @@ class CoingeckoVendor:
             return pl.DataFrame()
         return normalize_dim_asset_stats_schema(pl.DataFrame(records))
 
+    def get_scd2_tracked_columns(self, dataset: str) -> list[str] | None:
+        # dim_asset_stats is not SCD2-managed
+        return None
+
     @staticmethod
     def _parse_date(raw: str, field: str) -> date:
         try:

@@ -13,7 +13,7 @@ from dataclasses import dataclass
 
 import polars as pl
 
-from pointline.dim_symbol import read_dim_symbol_table
+from pointline.encoding import get_profile
 from pointline.research import core as research_core
 
 from .base import SpineBuilderConfig
@@ -70,8 +70,8 @@ class DollarSpineBuilder:
 
         Algorithm:
         1. Load trades with px_int and qty_int
-        2. Join with dim_symbol to get price_increment and amount_increment
-        3. Decode: px = px_int × price_increment, qty = qty_int × amount_increment
+        2. Resolve encoding profile from exchange
+        3. Decode: px = px_int × profile.price, qty = qty_int × profile.amount
         4. Compute notional = abs(px × qty) (dollar volume)
         5. Compute cumulative notional per symbol
         6. Compute bar_id = floor(cum_notional / dollar_threshold)
@@ -111,6 +111,7 @@ class DollarSpineBuilder:
             end_ts_us=end_ts_us,
             columns=[
                 "ts_local_us",
+                "exchange",
                 "exchange_id",
                 "symbol_id",
                 "px_int",
@@ -120,18 +121,15 @@ class DollarSpineBuilder:
             ],
         )
 
-        # Join with dim_symbol to get price_increment and amount_increment
-        dim_symbol = read_dim_symbol_table(
-            columns=["symbol_id", "price_increment", "amount_increment"]
-        ).unique(subset=["symbol_id"])
+        # Resolve profile from exchange (partition column)
+        exchange_name = trades.select("exchange").first().collect()["exchange"][0]
+        profile = get_profile(exchange_name)
 
-        trades = trades.join(dim_symbol.lazy(), on="symbol_id", how="left")
-
-        # Decode fixed-point integers
+        # Decode fixed-point integers using profile scalars
         trades = trades.with_columns(
             [
-                (pl.col("px_int") * pl.col("price_increment")).alias("px"),
-                (pl.col("qty_int") * pl.col("amount_increment")).alias("qty"),
+                (pl.col("px_int") * profile.price).alias("px"),
+                (pl.col("qty_int") * profile.amount).alias("qty"),
             ]
         )
 

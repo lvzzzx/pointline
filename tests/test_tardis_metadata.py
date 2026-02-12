@@ -33,8 +33,6 @@ def test_build_updates_from_instruments_basic() -> None:
     assert row["asset_type"] == 1
     assert row["tick_size"] == 0.5
     assert row["lot_size"] == 1.0
-    assert row["price_increment"] == 0.5
-    assert row["amount_increment"] == 1.0
     assert row["contract_size"] == 10.0
     assert row["valid_from_ts"] == _to_us("2024-01-01T00:00:00.000Z")
 
@@ -73,7 +71,6 @@ def test_build_updates_from_instruments_rebuild_changes() -> None:
     assert rows[1]["tick_size"] == 0.2
     assert rows[2]["valid_from_ts"] == _to_us("2024-01-03T00:00:00.000Z")
     assert rows[2]["tick_size"] == 0.3
-    assert rows[2]["amount_increment"] == 2.0
 
 
 def test_build_updates_from_instruments_rebuild_cumulative_changes() -> None:

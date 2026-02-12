@@ -7,6 +7,7 @@ from datetime import date
 import polars as pl
 import pytest
 
+from pointline.encoding import get_profile
 from pointline.io.vendors.binance_vision.parsers.klines import parse_binance_klines_csv
 from pointline.tables.klines import (
     KLINE_SCHEMA,
@@ -18,21 +19,8 @@ from pointline.tables.klines import (
 )
 from pointline.validation_utils import DataQualityWarning
 
-# --- Fixtures ---
-
-
-@pytest.fixture
-def sample_dim_symbol() -> pl.DataFrame:
-    """Sample dim_symbol with known increments for testing."""
-    return pl.DataFrame(
-        {
-            "symbol_id": [101, 102, 103],
-            "exchange_id": [1, 1, 1],
-            "exchange_symbol": ["BTCUSDT", "ETHUSDT", "SOLUSDT"],
-            "price_increment": [0.01, 0.01, 0.001],  # BTCUSDT: $0.01, ETHUSDT: $0.01, SOL: $0.001
-            "amount_increment": [0.00001, 0.0001, 0.01],  # BTC: 0.00001, ETH: 0.0001, SOL: 0.01
-        }
-    )
+# Exchange used throughout encoding/decoding tests (crypto profile)
+EXCHANGE = "binance-futures"
 
 
 @pytest.fixture
@@ -129,18 +117,18 @@ def test_parse_binance_klines_empty():
 # --- Fixed-Point Encoding Tests ---
 
 
-def test_encode_quote_volume_with_computed_increment(sample_dim_symbol: pl.DataFrame):
-    """Verify quote_volume is encoded using quote_increment = price_increment × amount_increment."""
-    # Create test data with known values
+def test_encode_quote_volume_with_profile():
+    """Verify quote_volume is encoded using profile.quote_vol scalar."""
+    profile = get_profile(EXCHANGE)
     df = pl.DataFrame(
         {
-            "symbol_id": [101],  # BTCUSDT
+            "symbol_id": [101],
             "open_px": [29000.00],
             "high_px": [29100.00],
             "low_px": [28900.00],
             "close_px": [29050.00],
-            "volume": [100.0],  # 100 BTC
-            "quote_volume": [2905000.0],  # 100 BTC × $29050 = $2,905,000
+            "volume": [100.0],
+            "quote_volume": [2905000.0],
             "taker_buy_base_volume": [50.0],
             "taker_buy_quote_volume": [1452500.0],
             "trade_count": [1000],
@@ -149,23 +137,20 @@ def test_encode_quote_volume_with_computed_increment(sample_dim_symbol: pl.DataF
         }
     )
 
-    result = encode_fixed_point(df, sample_dim_symbol)
+    result = encode_fixed_point(df, None, EXCHANGE)
 
-    # Check computed quote_increment (price_increment × amount_increment)
-    # BTCUSDT: 0.01 × 0.00001 = 0.0000001
-    expected_quote_increment = 0.01 * 0.00001
-
-    # Verify quote_volume encoding
-    expected_quote_volume_int = round(2905000.0 / expected_quote_increment)
+    # Verify quote_volume encoding uses profile.quote_vol
+    expected_quote_volume_int = round(2905000.0 / profile.quote_vol)
     assert result["quote_volume_int"][0] == expected_quote_volume_int
 
-    # Verify taker_buy_quote_volume encoding
-    expected_taker_int = round(1452500.0 / expected_quote_increment)
+    # Verify taker_buy_quote_volume encoding uses profile.quote_vol
+    expected_taker_int = round(1452500.0 / profile.quote_vol)
     assert result["taker_buy_quote_qty_int"][0] == expected_taker_int
 
 
-def test_encode_fixed_point_multi_symbol(sample_dim_symbol: pl.DataFrame):
-    """Test encoding with multiple symbols using per-symbol increments."""
+def test_encode_fixed_point_multi_symbol():
+    """Test encoding with multiple symbols uses uniform asset-class profile."""
+    profile = get_profile(EXCHANGE)
     df = pl.DataFrame(
         {
             "symbol_id": [101, 102, 103],
@@ -183,63 +168,24 @@ def test_encode_fixed_point_multi_symbol(sample_dim_symbol: pl.DataFrame):
         }
     )
 
-    result = encode_fixed_point(df, sample_dim_symbol)
+    result = encode_fixed_point(df, None, EXCHANGE)
 
-    # Verify each symbol uses its own increments
+    # All symbols use the same profile scalars
     assert result.height == 3
 
-    # BTCUSDT (symbol_id=101): price_inc=0.01, amount_inc=0.00001
-    assert result["open_px_int"][0] == round(29000.0 / 0.01)
-    assert result["volume_qty_int"][0] == round(100.0 / 0.00001)
+    # All prices encoded with profile.price
+    assert result["open_px_int"][0] == round(29000.0 / profile.price)
+    assert result["open_px_int"][1] == round(1800.0 / profile.price)
+    assert result["open_px_int"][2] == round(100.5 / profile.price)
 
-    # ETHUSDT (symbol_id=102): price_inc=0.01, amount_inc=0.0001
-    assert result["open_px_int"][1] == round(1800.0 / 0.01)
-    assert result["volume_qty_int"][1] == round(500.0 / 0.0001)
-
-    # SOLUSDT (symbol_id=103): price_inc=0.001, amount_inc=0.01
-    assert result["open_px_int"][2] == round(100.5 / 0.001)
-    assert result["volume_qty_int"][2] == round(10000.0 / 0.01)
+    # All base volumes encoded with profile.amount
+    assert result["volume_qty_int"][0] == round(100.0 / profile.amount)
+    assert result["volume_qty_int"][1] == round(500.0 / profile.amount)
+    assert result["volume_qty_int"][2] == round(10000.0 / profile.amount)
 
 
-def test_encode_fixed_point_missing_symbol_id():
-    """Test encoding raises error when symbol_id column is missing."""
-    df = pl.DataFrame({"open_px": [100.0], "volume": [10.0]})
-    dim_symbol = pl.DataFrame(
-        {"symbol_id": [101], "price_increment": [0.01], "amount_increment": [0.001]}
-    )
-
-    with pytest.raises(ValueError, match="must have 'symbol_id' column"):
-        encode_fixed_point(df, dim_symbol)
-
-
-def test_encode_fixed_point_symbol_not_in_dim():
-    """Test encoding raises error when symbol_id not found in dim_symbol."""
-    df = pl.DataFrame(
-        {
-            "symbol_id": [999],  # Not in dim_symbol
-            "open_px": [100.0],
-            "high_px": [101.0],
-            "low_px": [99.0],
-            "close_px": [100.5],
-            "volume": [10.0],
-            "quote_volume": [1005.0],
-            "taker_buy_base_volume": [5.0],
-            "taker_buy_quote_volume": [502.5],
-            "trade_count": [100],
-            "ts_bucket_start_us": [1609459200000000],
-            "ts_bucket_end_us": [1609462799999000],
-        }
-    )
-    dim_symbol = pl.DataFrame(
-        {"symbol_id": [101], "price_increment": [0.01], "amount_increment": [0.001]}
-    )
-
-    with pytest.raises(ValueError, match="not found in dim_symbol"):
-        encode_fixed_point(df, dim_symbol)
-
-
-def test_encode_fixed_point_invalid_increments():
-    """Test encoding raises error for invalid increments (<=0)."""
+def test_encode_fixed_point_unknown_exchange():
+    """Test encoding raises error for unknown exchange."""
     df = pl.DataFrame(
         {
             "symbol_id": [101],
@@ -256,52 +202,16 @@ def test_encode_fixed_point_invalid_increments():
             "ts_bucket_end_us": [1609462799999000],
         }
     )
-    dim_symbol = pl.DataFrame(
-        {"symbol_id": [101], "price_increment": [0.0], "amount_increment": [0.001]}  # Invalid!
-    )
 
-    with pytest.raises(ValueError, match="Invalid increments"):
-        encode_fixed_point(df, dim_symbol)
-
-
-def test_quote_volume_overflow_detection():
-    """Verify Int64 overflow is caught when quote_volume exceeds Int64 range."""
-    # Create scenario that would cause Int64 overflow
-    # Max Int64 is ~9.2e18, so (1e20 / 1e-24) = 1e44 would definitely overflow
-    df = pl.DataFrame(
-        {
-            "symbol_id": [101],
-            "open_px": [100.0],
-            "high_px": [101.0],
-            "low_px": [99.0],
-            "close_px": [100.5],
-            "volume": [10.0],
-            "quote_volume": [1e20],  # Very large value
-            "taker_buy_base_volume": [5.0],
-            "taker_buy_quote_volume": [1e20],
-            "trade_count": [100],
-            "ts_bucket_start_us": [1609459200000000],
-            "ts_bucket_end_us": [1609462799999000],
-        }
-    )
-    dim_symbol = pl.DataFrame(
-        {
-            "symbol_id": [101],
-            "price_increment": [1e-15],  # Very small
-            "amount_increment": [1e-15],  # Combined: 1e-30 would overflow
-        }
-    )
-
-    # Polars raises InvalidOperationError for conversion failures
-    with pytest.raises((ValueError, pl.exceptions.InvalidOperationError)):
-        encode_fixed_point(df, dim_symbol)
+    with pytest.raises(ValueError, match="Unknown exchange"):
+        encode_fixed_point(df, None, "nonexistent-exchange")
 
 
 # --- Fixed-Point Decoding Tests ---
 
 
-def test_decode_quote_volume_roundtrip(sample_dim_symbol: pl.DataFrame):
-    """Verify encode → decode produces original values (within floating-point precision)."""
+def test_decode_quote_volume_roundtrip():
+    """Verify encode -> decode produces original values (within floating-point precision)."""
     original = pl.DataFrame(
         {
             "symbol_id": [101, 102],
@@ -316,17 +226,17 @@ def test_decode_quote_volume_roundtrip(sample_dim_symbol: pl.DataFrame):
             "trade_count": [12345, 23456],
             "ts_bucket_start_us": [1609459200000000, 1609462800000000],
             "ts_bucket_end_us": [1609462799999000, 1609466399999000],
+            "exchange": [EXCHANGE, EXCHANGE],
         }
     )
 
     # Encode
-    encoded = encode_fixed_point(original, sample_dim_symbol)
+    encoded = encode_fixed_point(original, None, EXCHANGE)
 
-    # Decode
-    decoded = decode_fixed_point(encoded, sample_dim_symbol, keep_ints=False)
+    # Decode (resolve profile from exchange column)
+    decoded = decode_fixed_point(encoded, keep_ints=False)
 
     # Verify round-trip (within reasonable tolerance for floating-point)
-    # Note: Fixed-point encoding rounds, so we use relative tolerance
     assert decoded["open_px"][0] == pytest.approx(original["open_px"][0], rel=1e-6)
     assert decoded["quote_volume"][0] == pytest.approx(original["quote_volume"][0], rel=1e-6)
     assert decoded["taker_buy_quote_volume"][0] == pytest.approx(
@@ -334,11 +244,12 @@ def test_decode_quote_volume_roundtrip(sample_dim_symbol: pl.DataFrame):
     )
 
 
-def test_decode_fixed_point_keep_ints(sample_dim_symbol: pl.DataFrame):
+def test_decode_fixed_point_keep_ints():
     """Test decoding with keep_ints=True preserves integer columns."""
     encoded = pl.DataFrame(
         {
             "symbol_id": [101],
+            "exchange": [EXCHANGE],
             "open_px_int": [2900000],
             "high_px_int": [2910000],
             "low_px_int": [2890000],
@@ -353,7 +264,7 @@ def test_decode_fixed_point_keep_ints(sample_dim_symbol: pl.DataFrame):
         }
     )
 
-    result = decode_fixed_point(encoded, sample_dim_symbol, keep_ints=True)
+    result = decode_fixed_point(encoded, keep_ints=True)
 
     # Should have both float and int columns
     assert "open_px" in result.columns
@@ -364,28 +275,29 @@ def test_decode_fixed_point_keep_ints(sample_dim_symbol: pl.DataFrame):
 
 def test_decode_fixed_point_missing_columns():
     """Test decoding raises error when required columns are missing."""
-    df = pl.DataFrame({"symbol_id": [101], "open_px_int": [2900000]})  # Missing other *_int columns
-    dim_symbol = pl.DataFrame(
-        {"symbol_id": [101], "price_increment": [0.01], "amount_increment": [0.001]}
-    )
+    df = pl.DataFrame(
+        {"symbol_id": [101], "exchange": [EXCHANGE], "open_px_int": [2900000]}
+    )  # Missing other *_int columns
 
     with pytest.raises(ValueError, match="missing columns"):
-        decode_fixed_point(df, dim_symbol)
+        decode_fixed_point(df)
 
 
-def test_quote_increment_calculation(sample_dim_symbol: pl.DataFrame):
-    """Verify quote_increment = price_increment × amount_increment in encode/decode."""
+def test_quote_vol_scalar_in_encode_decode():
+    """Verify quote_vol scalar from profile is used consistently in encode/decode."""
+    profile = get_profile(EXCHANGE)
     df = pl.DataFrame(
         {
             "symbol_id": [101],
+            "exchange": [EXCHANGE],
             "open_px": [29000.0],
             "high_px": [29000.0],
             "low_px": [29000.0],
             "close_px": [29000.0],
             "volume": [1.0],
-            "quote_volume": [29000.0],  # 1 BTC × $29000
+            "quote_volume": [29000.0],  # 1 BTC x $29000
             "taker_buy_base_volume": [0.5],
-            "taker_buy_quote_volume": [14500.0],  # 0.5 BTC × $29000
+            "taker_buy_quote_volume": [14500.0],  # 0.5 BTC x $29000
             "trade_count": [1],
             "ts_bucket_start_us": [1609459200000000],
             "ts_bucket_end_us": [1609462799999000],
@@ -393,26 +305,21 @@ def test_quote_increment_calculation(sample_dim_symbol: pl.DataFrame):
     )
 
     # Encode
-    encoded = encode_fixed_point(df, sample_dim_symbol)
+    encoded = encode_fixed_point(df, None, EXCHANGE)
 
-    # Expected quote_increment for BTCUSDT (symbol_id=101)
-    price_inc = 0.01
-    amount_inc = 0.00001
-    quote_inc = price_inc * amount_inc  # 0.0000001
-
-    # Verify encoding used correct increment
-    expected_quote_int = round(29000.0 / quote_inc)
+    # Verify encoding used profile.quote_vol
+    expected_quote_int = round(29000.0 / profile.quote_vol)
     assert encoded["quote_volume_int"][0] == expected_quote_int
 
-    # Verify decoding uses same increment
-    decoded = decode_fixed_point(encoded, sample_dim_symbol)
+    # Verify decoding uses same scalar
+    decoded = decode_fixed_point(encoded)
     assert decoded["quote_volume"][0] == pytest.approx(29000.0, rel=1e-6)
 
 
 # --- Validation Tests ---
 
 
-def test_validate_klines_basic(sample_dim_symbol: pl.DataFrame):
+def test_validate_klines_basic():
     """Test validation with valid kline data."""
     df = pl.DataFrame(
         {
@@ -637,24 +544,27 @@ def test_normalize_klines_schema():
 # --- Integration Test ---
 
 
-def test_full_pipeline_parse_encode_decode(
-    raw_kline_data: pl.DataFrame, sample_dim_symbol: pl.DataFrame
-):
-    """Test complete pipeline: parse → encode → decode."""
+def test_full_pipeline_parse_encode_decode(raw_kline_data: pl.DataFrame):
+    """Test complete pipeline: parse -> encode -> decode."""
     # Parse
     parsed = parse_binance_klines_csv(raw_kline_data)
     assert parsed.height == 2
 
-    # Add symbol_id for encoding
-    with_symbol = parsed.with_columns(pl.lit(101, dtype=pl.Int64).alias("symbol_id"))
+    # Add symbol_id and exchange for encoding
+    with_meta = parsed.with_columns(
+        [
+            pl.lit(101, dtype=pl.Int64).alias("symbol_id"),
+            pl.lit(EXCHANGE).alias("exchange"),
+        ]
+    )
 
     # Encode
-    encoded = encode_fixed_point(with_symbol, sample_dim_symbol)
+    encoded = encode_fixed_point(with_meta, None, EXCHANGE)
     assert "quote_volume_int" in encoded.columns
     assert "quote_volume" not in encoded.columns  # Original dropped
 
-    # Decode
-    decoded = decode_fixed_point(encoded, sample_dim_symbol)
+    # Decode (exchange column in df)
+    decoded = decode_fixed_point(encoded)
     assert "quote_volume" in decoded.columns
     assert "quote_volume_int" not in decoded.columns  # Integers dropped
 

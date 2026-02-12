@@ -91,8 +91,6 @@ def _sample_dim_symbol() -> pl.DataFrame:
             "asset_type": [0],
             "tick_size": [0.01],
             "lot_size": [0.00001],
-            "price_increment": [0.01],
-            "amount_increment": [0.00001],
             "contract_size": [1.0],
             "valid_from_ts": [1000000000000000],  # Early timestamp
         }
@@ -272,7 +270,7 @@ def test_validate_book_snapshots_invalid_ordering():
 
 
 def test_encode_fixed_point():
-    """Test fixed-point encoding from raw level columns."""
+    """Test fixed-point encoding from raw level columns using asset-class profile."""
     dim_symbol = _sample_dim_symbol()
     base_ts = 1714557600000000
 
@@ -292,10 +290,7 @@ def test_encode_fixed_point():
         }
     )
 
-    # Add symbol_id to dim_symbol for join
-    dim_symbol = dim_symbol.with_columns(pl.lit(100, dtype=pl.Int64).alias("symbol_id"))
-
-    encoded = encode_fixed_point(df, dim_symbol)
+    encoded = encode_fixed_point(df, dim_symbol, "binance-futures")
 
     # Check types are now Int64 lists
     assert encoded["bids_px_int"].dtype == pl.List(pl.Int64)
@@ -303,20 +298,23 @@ def test_encode_fixed_point():
     assert encoded["asks_px_int"].dtype == pl.List(pl.Int64)
     assert encoded["asks_sz_int"].dtype == pl.List(pl.Int64)
 
-    # Check encoding: 50000.0 / 0.01 = 5000000
+    # Check encoding with crypto profile (price scalar = 1e-9).
+    # Bids use floor; due to IEEE 754 precision, floor(50000.0 / 1e-9) may
+    # land 1 unit below the "exact" value. Verify within tolerance of 1.
     first_bid_px = encoded["bids_px_int"][0]
     assert len(first_bid_px) == 25
-    assert first_bid_px[0] == 5000000  # 50000.0 / 0.01
-    assert first_bid_px[1] == 4999990  # 49999.9 / 0.01
+    assert abs(first_bid_px[0] - 50_000_000_000_000) <= 1  # 50000.0 / 1e-9 (floor)
+    assert abs(first_bid_px[1] - 49_999_900_000_000) <= 1  # 49999.9 / 1e-9 (floor)
     assert first_bid_px[2] is None  # Null preserved
 
-    # Check sizes: 0.1 / 0.00001 = 10000
+    # Check sizes with crypto profile (amount scalar = 1e-9):
+    # 0.1 / 1e-9 = 100_000_000 (round mode, exact for powers of 10)
     first_bid_sz = encoded["bids_sz_int"][0]
-    assert first_bid_sz[0] == 10000  # 0.1 / 0.00001
+    assert abs(first_bid_sz[0] - 100_000_000) <= 1  # 0.1 / 1e-9
 
 
 def test_encode_fixed_point_multi_symbol():
-    """Encode with multiple symbol_id values using per-symbol increments."""
+    """Encode with multiple symbol_id values — same profile scalar for all."""
     updates = pl.DataFrame(
         {
             "exchange_id": [1, 1],
@@ -326,8 +324,6 @@ def test_encode_fixed_point_multi_symbol():
             "asset_type": [0, 0],
             "tick_size": [0.01, 0.1],
             "lot_size": [0.00001, 0.001],
-            "price_increment": [0.01, 0.1],
-            "amount_increment": [0.00001, 0.001],
             "contract_size": [1.0, 1.0],
             "valid_from_ts": [1000000000000000, 1000000000000000],
         }
@@ -348,32 +344,40 @@ def test_encode_fixed_point_multi_symbol():
         }
     )
 
-    encoded = encode_fixed_point(df, dim_symbol)
+    encoded = encode_fixed_point(df, dim_symbol, "binance-futures")
 
-    assert encoded["asks_px_int"][0][0] == 5000001
-    assert encoded["bids_px_int"][0][0] == 5000000
-    assert encoded["asks_px_int"][1][0] == 2501
-    assert encoded["bids_px_int"][1][0] == 2499
+    # crypto profile: price scalar = 1e-9
+    # Due to IEEE 754 precision, floor/ceil may land 1 unit off the "exact" value.
+    # asks ceil: 50000.01 / 1e-9 ~ 50_000_010_000_000
+    assert abs(encoded["asks_px_int"][0][0] - 50_000_010_000_000) <= 1
+    # bids floor: 50000.00 / 1e-9 ~ 50_000_000_000_000
+    assert abs(encoded["bids_px_int"][0][0] - 50_000_000_000_000) <= 1
+    # asks ceil: 250.01 / 1e-9 ~ 250_010_000_000
+    assert abs(encoded["asks_px_int"][1][0] - 250_010_000_000) <= 1
+    # bids floor: 249.99 / 1e-9 ~ 249_990_000_000
+    assert abs(encoded["bids_px_int"][1][0] - 249_990_000_000) <= 1
 
 
 def test_decode_fixed_point():
-    """Test decoding fixed-point list columns back to floats."""
-    dim_symbol = _sample_dim_symbol()
+    """Test decoding fixed-point list columns back to floats using asset-class profile."""
     base_ts = 1714557600000000
 
+    # Encoded with crypto profile (price=1e-9, amount=1e-9):
+    # 50000.0 → 50_000_000_000_000, 49999.9 → 49_999_900_000_000
+    # 0.1 → 100_000_000, 0.15 → 150_000_000
     df = pl.DataFrame(
         {
             "symbol_id": [100],
+            "exchange": ["binance-futures"],
             "ts_local_us": [base_ts],
-            "bids_px_int": [[5000000, 4999990, None] + [None] * 22],
-            "bids_sz_int": [[10000, 15000, None] + [None] * 22],
-            "asks_px_int": [[5000050, 5000060, None] + [None] * 22],
-            "asks_sz_int": [[15000, 20000, None] + [None] * 22],
+            "bids_px_int": [[50_000_000_000_000, 49_999_900_000_000, None] + [None] * 22],
+            "bids_sz_int": [[100_000_000, 150_000_000, None] + [None] * 22],
+            "asks_px_int": [[50_000_500_000_000, 50_000_600_000_000, None] + [None] * 22],
+            "asks_sz_int": [[150_000_000, 200_000_000, None] + [None] * 22],
         }
     )
 
-    dim_symbol = dim_symbol.with_columns(pl.lit(100, dtype=pl.Int64).alias("symbol_id"))
-    decoded = decode_fixed_point(df, dim_symbol)
+    decoded = decode_fixed_point(df, exchange="binance-futures")
 
     assert decoded["bids_px"].dtype == pl.List(pl.Float64)
     assert decoded["bids_sz"].dtype == pl.List(pl.Float64)
@@ -381,50 +385,34 @@ def test_decode_fixed_point():
     assert decoded["asks_sz"].dtype == pl.List(pl.Float64)
 
     first_bid_px = decoded["bids_px"][0]
-    assert first_bid_px[0] == 50000.0
-    assert first_bid_px[1] == 49999.9
+    assert first_bid_px[0] == pytest.approx(50000.0)
+    assert first_bid_px[1] == pytest.approx(49999.9)
     assert first_bid_px[2] is None
 
 
 def test_decode_fixed_point_multi_symbol():
-    """Decode with multiple symbol_id values using per-row increments."""
-    updates = pl.DataFrame(
-        {
-            "exchange_id": [1, 1],
-            "exchange_symbol": ["BTCUSDT", "ETHUSDT"],
-            "base_asset": ["BTC", "ETH"],
-            "quote_asset": ["USDT", "USDT"],
-            "asset_type": [0, 0],
-            "tick_size": [0.01, 0.1],
-            "lot_size": [0.00001, 0.001],
-            "price_increment": [0.01, 0.1],
-            "amount_increment": [0.00001, 0.001],
-            "contract_size": [1.0, 1.0],
-            "valid_from_ts": [1000000000000000, 1000000000000000],
-        }
-    )
-    dim_symbol = scd2_bootstrap(updates)
+    """Decode with multiple symbol_id values — same profile scalar for all."""
     base_ts = 1714557600000000
 
-    btc_id = dim_symbol.filter(pl.col("exchange_symbol") == "BTCUSDT")["symbol_id"][0]
-    eth_id = dim_symbol.filter(pl.col("exchange_symbol") == "ETHUSDT")["symbol_id"][0]
-
+    # Encoded with crypto profile (price=1e-9):
+    # BTC 50000.0 → 50_000_000_000_000; ETH 250.0 → 250_000_000_000
     df = pl.DataFrame(
         {
-            "symbol_id": [btc_id, eth_id],
+            "symbol_id": [1, 2],
+            "exchange": ["binance-futures", "binance-futures"],
             "ts_local_us": [base_ts, base_ts + 1],
-            "bids_px_int": [[5000000, None], [2500, None]],
-            "bids_sz_int": [[10000, None], [1500, None]],
-            "asks_px_int": [[5000050, None], [2501, None]],
-            "asks_sz_int": [[15000, None], [1600, None]],
+            "bids_px_int": [[50_000_000_000_000, None], [250_000_000_000, None]],
+            "bids_sz_int": [[100_000_000, None], [1_500_000_000, None]],
+            "asks_px_int": [[50_000_500_000_000, None], [250_100_000_000, None]],
+            "asks_sz_int": [[150_000_000, None], [1_600_000_000, None]],
         }
     )
 
-    decoded = decode_fixed_point(df, dim_symbol)
+    decoded = decode_fixed_point(df, exchange="binance-futures")
 
-    assert decoded["bids_px"][0][0] == 50000.0
-    assert decoded["asks_px"][0][0] == 50000.5
-    assert decoded["bids_px"][1][0] == 250.0
+    assert decoded["bids_px"][0][0] == pytest.approx(50000.0)
+    assert decoded["asks_px"][0][0] == pytest.approx(50000.5)
+    assert decoded["bids_px"][1][0] == pytest.approx(250.0)
     assert decoded["asks_px"][1][0] == pytest.approx(250.1)
 
 

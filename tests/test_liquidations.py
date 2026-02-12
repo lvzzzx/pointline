@@ -62,8 +62,6 @@ def _sample_dim_symbol() -> pl.DataFrame:
                 "asset_type": 0,
                 "tick_size": 0.1,
                 "lot_size": 0.001,
-                "price_increment": 0.1,
-                "amount_increment": 0.001,
                 "contract_size": 1.0,
                 "expiry_ts_us": None,
                 "underlying_symbol_id": None,
@@ -117,11 +115,13 @@ def test_normalize_encode_and_validate_liquidations() -> None:
             pl.lit(date(2024, 5, 1)).alias("date"),
         ]
     )
-    encoded = encode_fixed_point(with_meta, _sample_dim_symbol())
+    encoded = encode_fixed_point(with_meta, _sample_dim_symbol(), "binance-futures")
     normalized = normalize_liquidations_schema(encoded)
     assert list(normalized.schema.keys()) == list(LIQUIDATIONS_SCHEMA.keys())
-    assert normalized["px_int"][0] == 606511
-    assert normalized["qty_int"][0] == 5
+    # crypto profile: price=1e-9 → 60651.1/1e-9 = 60651100000000
+    assert normalized["px_int"][0] == 60651100000000
+    # crypto profile: amount=1e-9 → 0.005/1e-9 = 5000000
+    assert normalized["qty_int"][0] == 5000000
     validated = validate_liquidations(normalized)
     assert validated.height == 1
 
@@ -184,5 +184,6 @@ def test_liquidations_ingestion_service_ingest_file(sample_manifest_repo, tmp_pa
     written = repo.read_all()
     assert written.height == 1
     assert written["symbol_id"][0] == 1001
-    assert written["px_int"][0] == 606511
-    assert written["qty_int"][0] == 5
+    # crypto profile: price=1e-9, amount=1e-9
+    assert written["px_int"][0] == 60651100000000
+    assert written["qty_int"][0] == 5000000

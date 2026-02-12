@@ -20,7 +20,6 @@ def mock_dim_symbol_single():
             "exchange_symbol": ["SOLUSDT"],
             "valid_from_ts": [0],
             "valid_until_ts": [2**63 - 1],
-            "price_increment": [0.001],
             "tick_size": [0.001],
         }
     )
@@ -37,7 +36,6 @@ def mock_dim_symbol_multiple():
             "exchange_symbol": ["SOLUSDT", "SOLUSDT"],
             "valid_from_ts": [0, 1700000000000000],
             "valid_until_ts": [1700000000000000, 2**63 - 1],
-            "price_increment": [0.001, 0.0001],
             "tick_size": [0.001, 0.0001],
         }
     )
@@ -58,7 +56,6 @@ def test_query_trades_basic():
                 "symbol_id": [101],
                 "valid_from_ts": [0],
                 "valid_until_ts": [2**63 - 1],
-                "price_increment": [0.001],
                 "tick_size": [0.001],
             }
         )
@@ -99,7 +96,6 @@ def test_query_trades_decoded_calls_decoded_loader():
                 "symbol_id": [101],
                 "valid_from_ts": [0],
                 "valid_until_ts": [2**63 - 1],
-                "price_increment": [0.001],
                 "tick_size": [0.001],
             }
         )
@@ -134,7 +130,6 @@ def test_query_trades_with_string_dates():
                 "symbol_id": [101],
                 "valid_from_ts": [0],
                 "valid_until_ts": [2**63 - 1],
-                "price_increment": [0.001],
                 "tick_size": [0.001],
             }
         )
@@ -185,7 +180,6 @@ def test_query_trades_warns_on_metadata_change():
                 "exchange_symbol": ["SOLUSDT", "SOLUSDT"],
                 "valid_from_ts": [0, start_ts_us + 1000],  # Both valid during query
                 "valid_until_ts": [end_ts_us - 1000, 2**63 - 1],
-                "price_increment": [0.001, 0.0001],
                 "tick_size": [0.001, 0.0001],
             }
         )
@@ -210,7 +204,6 @@ def test_query_no_symbols_found():
                 "symbol_id": pl.Series([], dtype=pl.Int64),
                 "valid_from_ts": pl.Series([], dtype=pl.Int64),
                 "valid_until_ts": pl.Series([], dtype=pl.Int64),
-                "price_increment": pl.Series([], dtype=pl.Float64),
                 "tick_size": pl.Series([], dtype=pl.Float64),
             }
         )
@@ -233,7 +226,6 @@ def test_query_no_active_symbols_in_range():
                 "symbol_id": [101],
                 "valid_from_ts": [0],
                 "valid_until_ts": [1000000],  # Very early timestamp
-                "price_increment": [0.001],
                 "tick_size": [0.001],
             }
         )
@@ -260,7 +252,6 @@ def test_query_quotes():
                 "symbol_id": [101],
                 "valid_from_ts": [0],
                 "valid_until_ts": [2**63 - 1],
-                "price_increment": [0.001],
                 "tick_size": [0.001],
             }
         )
@@ -293,7 +284,6 @@ def test_query_quotes_decoded_calls_decoded_loader():
                 "symbol_id": [101],
                 "valid_from_ts": [0],
                 "valid_until_ts": [2**63 - 1],
-                "price_increment": [0.001],
                 "tick_size": [0.001],
             }
         )
@@ -326,7 +316,6 @@ def test_query_book_snapshot_25():
                 "symbol_id": [101],
                 "valid_from_ts": [0],
                 "valid_until_ts": [2**63 - 1],
-                "price_increment": [0.001],
                 "tick_size": [0.001],
             }
         )
@@ -357,7 +346,6 @@ def test_query_book_snapshot_25_decoded_calls_decoded_loader():
                 "symbol_id": [101],
                 "valid_from_ts": [0],
                 "valid_until_ts": [2**63 - 1],
-                "price_increment": [0.001],
                 "tick_size": [0.001],
             }
         )
@@ -390,7 +378,6 @@ def test_query_with_custom_columns():
                 "symbol_id": [101],
                 "valid_from_ts": [0],
                 "valid_until_ts": [2**63 - 1],
-                "price_increment": [0.001],
                 "tick_size": [0.001],
             }
         )
@@ -420,7 +407,6 @@ def test_query_with_custom_ts_col():
                 "symbol_id": [101],
                 "valid_from_ts": [0],
                 "valid_until_ts": [2**63 - 1],
-                "price_increment": [0.001],
                 "tick_size": [0.001],
             }
         )

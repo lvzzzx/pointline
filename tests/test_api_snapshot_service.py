@@ -48,7 +48,7 @@ class _FakeManifestRepo:
     def resolve_file_id(self, _meta):
         return 1
 
-    def update_status(self, file_id, status, _meta, result):
+    def update_status(self, file_id, status, _meta, result, **kwargs):
         self.updated.append((file_id, status, result.row_count, result.error_message))
 
 
@@ -73,7 +73,7 @@ class _FakeBronzeSource:
         ]
 
 
-def test_capture_writes_canonical_envelope_with_redacted_request(monkeypatch, tmp_path):
+def test_capture_v1_writes_canonical_envelope_with_redacted_request(monkeypatch, tmp_path):
     monkeypatch.setattr(snapshot_module, "get_vendor", lambda _vendor: _FakePlugin())
 
     service = ApiSnapshotService()
@@ -86,6 +86,7 @@ def test_capture_writes_canonical_envelope_with_redacted_request(monkeypatch, tm
             captured_at_us=1,
         ),
         capture_root=tmp_path,
+        bronze_format_version=1,
     )
 
     assert result.path.exists()
@@ -97,6 +98,68 @@ def test_capture_writes_canonical_envelope_with_redacted_request(monkeypatch, tm
     assert payload["dataset"] == "dim_symbol"
     assert payload["request"]["api_key"] == "***"
     assert payload["partitions"]["exchange"] == "binance"
+
+
+def test_capture_v2_writes_manifest_and_records(monkeypatch, tmp_path):
+    monkeypatch.setattr(snapshot_module, "get_vendor", lambda _vendor: _FakePlugin())
+
+    service = ApiSnapshotService()
+    result = service.capture(
+        vendor="tardis",
+        dataset="dim_symbol",
+        request=ApiCaptureRequest(
+            params={"exchange": "binance", "api_key": "secret"},
+            partitions={"exchange": "binance", "date": "2026-01-01"},
+            captured_at_us=1,
+        ),
+        capture_root=tmp_path,
+        bronze_format_version=2,
+    )
+
+    # v2: path is the directory
+    assert result.path.is_dir()
+    assert result.manifest_path is not None
+    assert result.manifest_path.exists()
+    assert result.records_content_sha256 is not None
+
+    # Check manifest
+    with open(result.manifest_path) as f:
+        manifest_data = json.load(f)
+    assert manifest_data["schema_version"] == 2
+    assert manifest_data["vendor"] == "tardis"
+    assert manifest_data["dataset"] == "dim_symbol"
+    assert manifest_data["complete"] is True
+    assert manifest_data["request_params"]["api_key"] == "***"
+    assert manifest_data["record_count"] == 1
+    assert len(manifest_data["records_content_sha256"]) == 64
+    assert len(manifest_data["records_file_sha256"]) == 64
+
+    # Check records file
+    records_path = result.path / "records.jsonl.gz"
+    assert records_path.exists()
+    with gzip.open(records_path, "rt") as f:
+        record = json.loads(f.readline())
+    assert record == {"datasetId": "BTCUSDT"}
+
+
+def test_capture_v2_default_format(monkeypatch, tmp_path):
+    """Default bronze_format_version is 2."""
+    monkeypatch.setattr(snapshot_module, "get_vendor", lambda _vendor: _FakePlugin())
+
+    service = ApiSnapshotService()
+    result = service.capture(
+        vendor="tardis",
+        dataset="dim_symbol",
+        request=ApiCaptureRequest(
+            params={"exchange": "binance"},
+            partitions={"exchange": "binance", "date": "2026-01-01"},
+            captured_at_us=1,
+        ),
+        capture_root=tmp_path,
+    )
+
+    # Default should produce v2 format
+    assert result.manifest_path is not None
 
 
 def test_replay_success_updates_manifest(monkeypatch, tmp_path):
@@ -217,12 +280,89 @@ def test_load_snapshot_records_accepts_envelope_and_raw(tmp_path):
         handle.write(json.dumps({"id": 2}) + "\n")
 
     service = ApiSnapshotService()
-    records1, request1, partitions1 = service._load_snapshot_records(envelope_path)
-    records2, request2, partitions2 = service._load_snapshot_records(raw_path)
+    records1, request1, partitions1, manifest1 = service._load_snapshot_records(envelope_path)
+    records2, request2, partitions2, manifest2 = service._load_snapshot_records(raw_path)
 
     assert records1 == [{"id": 1}]
     assert request1 == {"foo": "bar"}
     assert partitions1 == {"exchange": "binance"}
+    assert manifest1 is None  # v1 format
+
     assert records2 == [{"id": 2}]
     assert request2 is None
     assert partitions2 == {}
+    assert manifest2 is None  # v1 format
+
+
+def test_v2_replay_loads_correctly(tmp_path):
+    """v2 format with _manifest.json + records.jsonl.gz loads correctly."""
+    snapshot_dir = tmp_path / "snapshot"
+    snapshot_dir.mkdir()
+
+    manifest_data = {
+        "schema_version": 2,
+        "vendor": "tushare",
+        "dataset": "dim_symbol",
+        "data_type": "dim_symbol_metadata",
+        "capture_mode": "full_snapshot",
+        "record_format": "jsonl.gz",
+        "complete": True,
+        "captured_at_us": 1000,
+        "vendor_effective_ts_us": None,
+        "api_endpoint": "stock_basic",
+        "request_params": {"exchange": "SZSE"},
+        "record_count": 2,
+        "expected_record_count": None,
+        "records_content_sha256": "abc123",
+        "records_file_sha256": "def456",
+        "partitions": {"exchange": "szse", "date": "2024-05-01"},
+    }
+    with open(snapshot_dir / "_manifest.json", "w") as f:
+        json.dump(manifest_data, f)
+
+    with gzip.open(snapshot_dir / "records.jsonl.gz", "wt") as f:
+        f.write(json.dumps({"ts_code": "000001.SZ", "name": "Test1"}) + "\n")
+        f.write(json.dumps({"ts_code": "000002.SZ", "name": "Test2"}) + "\n")
+
+    service = ApiSnapshotService()
+    records, request_params, partitions, v2_manifest = service._load_snapshot_records(snapshot_dir)
+
+    assert len(records) == 2
+    assert records[0]["ts_code"] == "000001.SZ"
+    assert request_params == {"exchange": "SZSE"}
+    assert partitions == {"exchange": "szse", "date": "2024-05-01"}
+    assert v2_manifest is not None
+    assert v2_manifest.complete is True
+    assert v2_manifest.schema_version == 2
+
+
+def test_v2_dedup_same_content_hash(monkeypatch, tmp_path):
+    """Two captures with identical content produce the same content hash."""
+    monkeypatch.setattr(snapshot_module, "get_vendor", lambda _vendor: _FakePlugin())
+
+    service = ApiSnapshotService()
+    result1 = service.capture(
+        vendor="tardis",
+        dataset="dim_symbol",
+        request=ApiCaptureRequest(
+            params={"exchange": "binance"},
+            partitions={"exchange": "binance", "date": "2026-01-01"},
+            captured_at_us=1,
+        ),
+        capture_root=tmp_path / "run1",
+        bronze_format_version=2,
+    )
+
+    result2 = service.capture(
+        vendor="tardis",
+        dataset="dim_symbol",
+        request=ApiCaptureRequest(
+            params={"exchange": "binance"},
+            partitions={"exchange": "binance", "date": "2026-01-01"},
+            captured_at_us=2,
+        ),
+        capture_root=tmp_path / "run2",
+        bronze_format_version=2,
+    )
+
+    assert result1.records_content_sha256 == result2.records_content_sha256

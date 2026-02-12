@@ -66,8 +66,6 @@ def _sample_dim_symbol() -> pl.DataFrame:
             "asset_type": [0],
             "tick_size": [0.01],
             "lot_size": [0.00001],
-            "price_increment": [0.01],
-            "amount_increment": [0.00001],
             "contract_size": [1.0],
             "valid_from_ts": [1000000000000000],  # Early timestamp
         }
@@ -255,7 +253,7 @@ def test_validate_trades_invalid_side():
 
 
 def test_encode_fixed_point():
-    """Test fixed-point encoding using dim_symbol metadata."""
+    """Test fixed-point encoding using asset-class scalar profile."""
     dim_symbol = _sample_dim_symbol()
     # dim_symbol already has symbol_id from scd2_bootstrap
 
@@ -267,56 +265,49 @@ def test_encode_fixed_point():
         }
     )
 
-    encoded = encode_fixed_point(df, dim_symbol)
+    encoded = encode_fixed_point(df, dim_symbol, "binance")
 
     assert "px_int" in encoded.columns
     assert "qty_int" in encoded.columns
 
-    # With price_increment=0.01, price=50000.0 should become 5000000
-    assert encoded["px_int"][0] == 5000000
-    # With amount_increment=0.00001, qty=0.1 should become 10000
-    assert encoded["qty_int"][0] == 10000
+    # With crypto profile price=1e-9, price=50000.0 should become 50_000_000_000_000
+    assert encoded["px_int"][0] == 50_000_000_000_000
+    # With crypto profile amount=1e-9, qty=0.1 should become 100_000_000
+    assert encoded["qty_int"][0] == 100_000_000
 
 
-def test_encode_fixed_point_missing_symbol():
-    """Test that missing symbol_ids raise error."""
-    dim_symbol = _sample_dim_symbol()
-    # dim_symbol already has symbol_id from scd2_bootstrap
-
-    # Use a symbol_id that doesn't exist
+def test_encode_fixed_point_missing_columns():
+    """Test that missing float columns raise error."""
     df = pl.DataFrame(
         {
-            "symbol_id": [999999],  # Not in dim_symbol
+            "symbol_id": [1],
             "price_px": [50000.0],
-            "qty": [0.1],
+            # Missing "qty" column
         }
     )
 
-    with pytest.raises(ValueError, match="symbol_ids not found"):
-        encode_fixed_point(df, dim_symbol)
+    with pytest.raises(pl.exceptions.ColumnNotFoundError):
+        encode_fixed_point(df, pl.DataFrame(), "binance")
 
 
 def test_decode_fixed_point():
     """Decode fixed-point integers back to float price/qty columns."""
-    dim_symbol = _sample_dim_symbol()
-    symbol_id = dim_symbol["symbol_id"][0]
-
     df = pl.DataFrame(
         {
-            "symbol_id": [symbol_id],
-            "px_int": [5000000],
-            "qty_int": [10000],
+            "exchange": ["binance"],
+            "px_int": [50_000_000_000_000],
+            "qty_int": [100_000_000],
         }
     )
 
-    decoded = decode_fixed_point(df, dim_symbol)
+    decoded = decode_fixed_point(df)
 
     assert "px_int" not in decoded.columns
     assert "qty_int" not in decoded.columns
     assert decoded["price_px"].dtype == pl.Float64
     assert decoded["qty"].dtype == pl.Float64
-    assert decoded["price_px"][0] == 50000.0
-    assert decoded["qty"][0] == 0.1
+    assert decoded["price_px"][0] == pytest.approx(50000.0)
+    assert decoded["qty"][0] == pytest.approx(0.1)
 
 
 def test_resolve_symbol_ids():
@@ -508,8 +499,6 @@ def test_check_quarantine_uses_exchange_local_trading_day():
             "asset_type": [0],
             "tick_size": [0.01],
             "lot_size": [100.0],
-            "price_increment": [0.01],
-            "amount_increment": [100.0],
             "contract_size": [1.0],
             "expiry_ts_us": [None],
             "underlying_symbol_id": [None],

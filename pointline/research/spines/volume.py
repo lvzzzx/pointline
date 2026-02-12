@@ -13,7 +13,7 @@ from dataclasses import dataclass
 
 import polars as pl
 
-from pointline.dim_symbol import read_dim_symbol_table
+from pointline.encoding import get_profile
 from pointline.research import core as research_core
 
 from .base import SpineBuilderConfig
@@ -72,8 +72,8 @@ class VolumeSpineBuilder:
 
         Algorithm:
         1. Load trades with qty_int
-        2. Join with dim_symbol to get amount_increment
-        3. Decode volume = qty_int × amount_increment
+        2. Resolve encoding profile from exchange
+        3. Decode volume = qty_int × profile.amount
         4. Optionally take absolute value (ignore side)
         5. Compute cumulative volume per symbol
         6. Compute bar_id = floor(cum_volume / volume_threshold)
@@ -113,6 +113,7 @@ class VolumeSpineBuilder:
             end_ts_us=end_ts_us,
             columns=[
                 "ts_local_us",
+                "exchange",
                 "exchange_id",
                 "symbol_id",
                 "qty_int",
@@ -121,24 +122,17 @@ class VolumeSpineBuilder:
             ],
         )
 
-        # Join with dim_symbol to get amount_increment
-        dim_symbol = read_dim_symbol_table(columns=["symbol_id", "amount_increment"]).unique(
-            subset=["symbol_id"]
-        )
+        # Resolve profile from exchange (partition column)
+        exchange_name = trades.select("exchange").first().collect()["exchange"][0]
+        profile = get_profile(exchange_name)
 
-        trades = trades.join(dim_symbol.lazy(), on="symbol_id", how="left")
-
-        # Decode volume = qty_int × amount_increment
+        # Decode volume = qty_int × profile.amount
         if config.use_absolute_volume:
             # Absolute volume: ignore side (buy + sell)
-            trades = trades.with_columns(
-                (pl.col("qty_int") * pl.col("amount_increment")).abs().alias("volume")
-            )
+            trades = trades.with_columns((pl.col("qty_int") * profile.amount).abs().alias("volume"))
         else:
             # Signed volume: preserve side (buy - sell)
-            trades = trades.with_columns(
-                (pl.col("qty_int") * pl.col("amount_increment")).alias("volume")
-            )
+            trades = trades.with_columns((pl.col("qty_int") * profile.amount).alias("volume"))
 
         # Compute cumulative volume per symbol
         # Must sort first to ensure correct cumulative sum

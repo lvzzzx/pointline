@@ -34,8 +34,6 @@ def cmd_symbol_search(args: argparse.Namespace) -> int:
             "asset_type",
             "tick_size",
             "lot_size",
-            "price_increment",
-            "amount_increment",
             "contract_size",
             "valid_from_ts",
             "valid_until_ts",

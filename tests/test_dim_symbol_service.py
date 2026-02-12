@@ -21,8 +21,6 @@ def test_dim_symbol_service_orchestration():
             "tick_size": [0.5],
             "valid_from_ts": [100],
             "lot_size": [1.0],
-            "price_increment": [0.5],
-            "amount_increment": [0.1],
             "contract_size": [1.0],
             "base_asset": ["BTC"],
             "quote_asset": ["USD"],
@@ -42,8 +40,6 @@ def test_dim_symbol_service_orchestration():
             "tick_size": [1.0, 1.0],
             "valid_from_ts": [200, 200],  # Duplicate
             "lot_size": [1.0, 1.0],
-            "price_increment": [1.0, 1.0],
-            "amount_increment": [0.1, 0.1],
             "contract_size": [1.0, 1.0],
             "base_asset": ["BTC", "BTC"],
             "quote_asset": ["USD", "USD"],

@@ -92,22 +92,22 @@ class TestSpreadBPS:
         """Test spread in basis points computation."""
         from pointline.research.resample.aggregations.crypto_mft import spread_bps
 
-        # Last quote: bid=50000, ask=50005, price_increment=0.01
-        # Mid = 50002.5, spread = 5 * 0.01 = 0.05
-        # BPS = (0.05 / 50002.5) * 10000 = 9.999 bps
+        # Last quote: bid=50000, ask=50005
+        # Mid = 50002.5, spread = 5
+        # BPS = 5 / 50002.5 * 10000 ≈ 0.9999 bps
+        # (Works directly on integer columns — encoding scalar cancels in ratio)
         data = pl.DataFrame(
             {
                 "bid_px_int": [49990, 49995, 50000],
                 "ask_px_int": [49995, 50000, 50005],
-                "price_increment": [0.01, 0.01, 0.01],
             }
         )
 
         result = data.select(spread_bps("bid_px_int").alias("spread_bps"))
 
-        # Expected: (50005 - 50000) * 0.01 / ((50000 + 50005) * 0.01 / 2) * 10000
-        # = 0.05 / 50002.5 * 10000 ≈ 9.999 bps
-        expected_bps = (5 * 0.01) / (50002.5 * 0.01) * 10000
+        # Expected: (50005 - 50000) / ((50000 + 50005) / 2) * 10000
+        # = 5 / 50002.5 * 10000 ≈ 0.9999 bps
+        expected_bps = 5 / 50002.5 * 10000
         assert abs(result["spread_bps"][0] - expected_bps) < 0.01
 
 
@@ -180,12 +180,12 @@ class TestRealizedVolatility:
             realized_volatility,
         )
 
-        # Prices: 100.0, 100.1, 100.05, 100.2
-        # Log returns: log(100.1/100.0), log(100.05/100.1), log(100.2/100.05)
+        # Prices (integer encoded): 10000, 10010, 10005, 10020
+        # Log returns: log(10010/10000), log(10005/10010), log(10020/10005)
+        # (scale-invariant — encoding scalar cancels in log ratio)
         data = pl.DataFrame(
             {
-                "px_int": [10000, 10010, 10005, 10020],  # price_increment = 0.01
-                "price_increment": [0.01, 0.01, 0.01, 0.01],
+                "px_int": [10000, 10010, 10005, 10020],
             }
         )
 
@@ -204,7 +204,6 @@ class TestRealizedVolatility:
         data = pl.DataFrame(
             {
                 "px_int": [10000, 10000, 10000, 10000],  # No movement
-                "price_increment": [0.01, 0.01, 0.01, 0.01],
             }
         )
 
@@ -232,12 +231,11 @@ class TestTradeSize:
             median_trade_size,
         )
 
-        # Trade sizes: 100, 200, 150, 50 (amount_increment = 0.001)
-        # Actual: 0.1, 0.2, 0.15, 0.05 BTC
+        # Trade sizes in encoded integer domain: 100, 200, 150, 50
+        # Results are in integer domain (multiply by profile.amount to get floats)
         data = pl.DataFrame(
             {
                 "qty_int": [100, 200, 150, 50],
-                "amount_increment": [0.001, 0.001, 0.001, 0.001],
             }
         )
 
@@ -249,14 +247,14 @@ class TestTradeSize:
             ]
         )
 
-        # Average: (0.1 + 0.2 + 0.15 + 0.05) / 4 = 0.125
-        assert abs(result["avg_trade_size"][0] - 0.125) < 0.001
+        # Average: (100 + 200 + 150 + 50) / 4 = 125.0
+        assert abs(result["avg_trade_size"][0] - 125.0) < 0.001
 
-        # Median: (0.1 + 0.15) / 2 = 0.125
-        assert abs(result["median_trade_size"][0] - 0.125) < 0.001
+        # Median: sorted [50, 100, 150, 200] -> (100 + 150) / 2 = 125.0
+        assert abs(result["median_trade_size"][0] - 125.0) < 0.001
 
-        # Max: 0.2
-        assert abs(result["max_trade_size"][0] - 0.2) < 0.001
+        # Max: 200.0
+        assert abs(result["max_trade_size"][0] - 200.0) < 0.001
 
 
 class TestAggressiveRatio:
@@ -300,13 +298,12 @@ class TestVolumeWeightedReturn:
         """Test volume-weighted return computation."""
         from pointline.research.resample.aggregations.crypto_mft import vw_return
 
-        # First price: 100.0 (px_int=10000, price_increment=0.01)
-        # Trades: (100.0, qty=100), (100.1, qty=200), (100.2, qty=100)
+        # Prices (integer encoded): 10000, 10010, 10020
+        # Works directly on integer columns — log returns are scale-invariant
         data = pl.DataFrame(
             {
                 "px_int": [10000, 10010, 10020],
                 "qty_int": [100, 200, 100],
-                "price_increment": [0.01, 0.01, 0.01],
             }
         )
 
@@ -325,7 +322,6 @@ class TestVolumeWeightedReturn:
             {
                 "px_int": [10000, 10000, 10000],
                 "qty_int": [100, 200, 100],
-                "price_increment": [0.01, 0.01, 0.01],
             }
         )
 

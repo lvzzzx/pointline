@@ -15,11 +15,10 @@ from pointline._error_messages import (
     timestamp_required_error,
 )
 from pointline.config import TABLE_HAS_DATE, TABLE_PATHS, get_table_path
-from pointline.dim_symbol import read_dim_symbol_table
+from pointline.encoding import get_profile
 from pointline.registry import resolve_symbols
 from pointline.tables.book_snapshots import decode_fixed_point as decode_book_snapshots
 from pointline.tables.klines import decode_fixed_point as decode_klines
-from pointline.tables.quotes import _max_decimal_places as _max_quote_decimals
 from pointline.tables.quotes import decode_fixed_point as decode_quotes
 from pointline.tables.trades import decode_fixed_point as decode_trades
 from pointline.types import TableName, TimestampInput
@@ -405,7 +404,6 @@ def load_trades_decoded(
     ts_col: str = "ts_local_us",
     columns: Sequence[str] | None = None,
     keep_ints: bool = False,
-    dim_symbol: pl.DataFrame | pl.LazyFrame | None = None,
     lazy: bool = False,
 ) -> pl.DataFrame | pl.LazyFrame:
     """Load trades and decode fixed-point integers into float price/qty columns.
@@ -425,10 +423,9 @@ def load_trades_decoded(
             start_ts_us=start_ts_us,
             end_ts_us=end_ts_us,
             ts_col=ts_col,
-            columns=_merge_decode_columns(columns, ["symbol_id", *required_ints]),
+            columns=_merge_decode_columns(columns, ["exchange", *required_ints]),
         )
-        dim_symbol_df = _ensure_dim_symbol_increments(dim_symbol)
-        decoded = _decode_trades_lazy(lf, dim_symbol_df.lazy(), keep_ints=effective_keep_ints)
+        decoded = _decode_trades_lazy(lf, keep_ints=effective_keep_ints)
         return decoded.select(requested_columns) if requested_columns is not None else decoded
 
     df = read_table(
@@ -437,10 +434,9 @@ def load_trades_decoded(
         start_ts_us=start_ts_us,
         end_ts_us=end_ts_us,
         ts_col=ts_col,
-        columns=_merge_decode_columns(columns, ["symbol_id", *required_ints]),
+        columns=_merge_decode_columns(columns, ["exchange", *required_ints]),
     )
-    dim_symbol_df = _ensure_dim_symbol_increments(dim_symbol)
-    decoded = decode_trades(df, dim_symbol_df, keep_ints=effective_keep_ints)
+    decoded = decode_trades(df, keep_ints=effective_keep_ints)
     return decoded.select(requested_columns) if requested_columns is not None else decoded
 
 
@@ -452,7 +448,6 @@ def load_quotes_decoded(
     ts_col: str = "ts_local_us",
     columns: Sequence[str] | None = None,
     keep_ints: bool = False,
-    dim_symbol: pl.DataFrame | pl.LazyFrame | None = None,
     lazy: bool = False,
 ) -> pl.DataFrame | pl.LazyFrame:
     """Load quotes and decode fixed-point integers into float bid/ask columns.
@@ -472,12 +467,9 @@ def load_quotes_decoded(
             start_ts_us=start_ts_us,
             end_ts_us=end_ts_us,
             ts_col=ts_col,
-            columns=_merge_decode_columns(columns, ["symbol_id", *required_ints]),
+            columns=_merge_decode_columns(columns, ["exchange", *required_ints]),
         )
-        dim_symbol_df = _ensure_dim_symbol_increments(dim_symbol)
-        decoded = _decode_quotes_lazy(
-            lf, dim_symbol_df.lazy(), dim_symbol_df, keep_ints=effective_keep_ints
-        )
+        decoded = _decode_quotes_lazy(lf, keep_ints=effective_keep_ints)
         return decoded.select(requested_columns) if requested_columns is not None else decoded
 
     df = read_table(
@@ -486,10 +478,9 @@ def load_quotes_decoded(
         start_ts_us=start_ts_us,
         end_ts_us=end_ts_us,
         ts_col=ts_col,
-        columns=_merge_decode_columns(columns, ["symbol_id", *required_ints]),
+        columns=_merge_decode_columns(columns, ["exchange", *required_ints]),
     )
-    dim_symbol_df = _ensure_dim_symbol_increments(dim_symbol)
-    decoded = decode_quotes(df, dim_symbol_df, keep_ints=effective_keep_ints)
+    decoded = decode_quotes(df, keep_ints=effective_keep_ints)
     return decoded.select(requested_columns) if requested_columns is not None else decoded
 
 
@@ -500,7 +491,6 @@ def load_book_snapshot_25_decoded(
     end_ts_us: TimestampInput | None = None,
     ts_col: str = "ts_local_us",
     columns: Sequence[str] | None = None,
-    dim_symbol: pl.DataFrame | pl.LazyFrame | None = None,
     lazy: bool = False,
 ) -> pl.DataFrame | pl.LazyFrame:
     """Load top-25 book snapshots and decode fixed-point list columns into floats.
@@ -517,10 +507,9 @@ def load_book_snapshot_25_decoded(
             start_ts_us=start_ts_us,
             end_ts_us=end_ts_us,
             ts_col=ts_col,
-            columns=_merge_decode_columns(columns, ["symbol_id", *required_lists]),
+            columns=_merge_decode_columns(columns, ["exchange", *required_lists]),
         )
-        dim_symbol_df = _ensure_dim_symbol_increments(dim_symbol)
-        decoded = _decode_book_snapshot_25_lazy(lf, dim_symbol_df.lazy())
+        decoded = _decode_book_snapshot_25_lazy(lf)
         return decoded.select(requested_columns) if requested_columns is not None else decoded
 
     df = read_table(
@@ -529,10 +518,9 @@ def load_book_snapshot_25_decoded(
         start_ts_us=start_ts_us,
         end_ts_us=end_ts_us,
         ts_col=ts_col,
-        columns=_merge_decode_columns(columns, ["symbol_id", *required_lists]),
+        columns=_merge_decode_columns(columns, ["exchange", *required_lists]),
     )
-    dim_symbol_df = _ensure_dim_symbol_increments(dim_symbol)
-    decoded = decode_book_snapshots(df, dim_symbol_df)
+    decoded = decode_book_snapshots(df)
     return decoded.select(requested_columns) if requested_columns is not None else decoded
 
 
@@ -544,7 +532,6 @@ def load_kline_1h_decoded(
     ts_col: str = "ts_bucket_start_us",
     columns: Sequence[str] | None = None,
     keep_ints: bool = False,
-    dim_symbol: pl.DataFrame | pl.LazyFrame | None = None,
     lazy: bool = False,
 ) -> pl.DataFrame | pl.LazyFrame:
     """Load 1h klines and decode fixed-point integers into float OHLC/volume columns.
@@ -573,10 +560,9 @@ def load_kline_1h_decoded(
             start_ts_us=start_ts_us,
             end_ts_us=end_ts_us,
             ts_col=ts_col,
-            columns=_merge_decode_columns(columns, ["symbol_id", *required_ints]),
+            columns=_merge_decode_columns(columns, ["exchange", *required_ints]),
         )
-        dim_symbol_df = _ensure_dim_symbol_increments(dim_symbol)
-        decoded = _decode_klines_lazy(lf, dim_symbol_df.lazy(), keep_ints=effective_keep_ints)
+        decoded = _decode_klines_lazy(lf, keep_ints=effective_keep_ints)
         return decoded.select(requested_columns) if requested_columns is not None else decoded
 
     df = read_table(
@@ -585,10 +571,9 @@ def load_kline_1h_decoded(
         start_ts_us=start_ts_us,
         end_ts_us=end_ts_us,
         ts_col=ts_col,
-        columns=_merge_decode_columns(columns, ["symbol_id", *required_ints]),
+        columns=_merge_decode_columns(columns, ["exchange", *required_ints]),
     )
-    dim_symbol_df = _ensure_dim_symbol_increments(dim_symbol)
-    decoded = decode_klines(df, dim_symbol_df, keep_ints=effective_keep_ints)
+    decoded = decode_klines(df, keep_ints=effective_keep_ints)
     return decoded.select(requested_columns) if requested_columns is not None else decoded
 
 
@@ -600,7 +585,6 @@ def load_kline_1d_decoded(
     ts_col: str = "ts_bucket_start_us",
     columns: Sequence[str] | None = None,
     keep_ints: bool = False,
-    dim_symbol: pl.DataFrame | pl.LazyFrame | None = None,
     lazy: bool = False,
 ) -> pl.DataFrame | pl.LazyFrame:
     """Load 1d klines and decode fixed-point integers into float OHLC/volume columns.
@@ -629,10 +613,9 @@ def load_kline_1d_decoded(
             start_ts_us=start_ts_us,
             end_ts_us=end_ts_us,
             ts_col=ts_col,
-            columns=_merge_decode_columns(columns, ["symbol_id", *required_ints]),
+            columns=_merge_decode_columns(columns, ["exchange", *required_ints]),
         )
-        dim_symbol_df = _ensure_dim_symbol_increments(dim_symbol)
-        decoded = _decode_klines_lazy(lf, dim_symbol_df.lazy(), keep_ints=effective_keep_ints)
+        decoded = _decode_klines_lazy(lf, keep_ints=effective_keep_ints)
         return decoded.select(requested_columns) if requested_columns is not None else decoded
 
     df = read_table(
@@ -641,10 +624,9 @@ def load_kline_1d_decoded(
         start_ts_us=start_ts_us,
         end_ts_us=end_ts_us,
         ts_col=ts_col,
-        columns=_merge_decode_columns(columns, ["symbol_id", *required_ints]),
+        columns=_merge_decode_columns(columns, ["exchange", *required_ints]),
     )
-    dim_symbol_df = _ensure_dim_symbol_increments(dim_symbol)
-    decoded = decode_klines(df, dim_symbol_df, keep_ints=effective_keep_ints)
+    decoded = decode_klines(df, keep_ints=effective_keep_ints)
     return decoded.select(requested_columns) if requested_columns is not None else decoded
 
 
@@ -712,23 +694,6 @@ def _apply_filters(
     return lf
 
 
-def _ensure_dim_symbol_increments(
-    dim_symbol: pl.DataFrame | pl.LazyFrame | None,
-) -> pl.DataFrame:
-    if dim_symbol is None:
-        return _read_dim_symbol_increments()
-    if isinstance(dim_symbol, pl.LazyFrame):
-        return dim_symbol.collect()
-    return dim_symbol
-
-
-def _read_dim_symbol_increments() -> pl.DataFrame:
-    return read_dim_symbol_table(
-        columns=["symbol_id", "price_increment", "amount_increment"],
-        unique_by=["symbol_id"],
-    )
-
-
 def _merge_decode_columns(
     columns: Sequence[str] | None, required: Sequence[str]
 ) -> Sequence[str] | None:
@@ -741,136 +706,127 @@ def _merge_decode_columns(
     return merged
 
 
+def _resolve_exchange(lf: pl.LazyFrame) -> str:
+    """Extract the single exchange name from a LazyFrame (partition column)."""
+    sample = lf.select("exchange").first().collect()
+    if sample.height == 0:
+        raise ValueError("Cannot decode empty LazyFrame")
+    return sample["exchange"][0]
+
+
 def _decode_trades_lazy(
     lf: pl.LazyFrame,
-    dim_symbol_lf: pl.LazyFrame,
     *,
     keep_ints: bool,
 ) -> pl.LazyFrame:
-    joined = lf.join(
-        dim_symbol_lf.select(["symbol_id", "price_increment", "amount_increment"]),
-        on="symbol_id",
-        how="left",
-    )
-    result = joined.with_columns(
+    profile = get_profile(_resolve_exchange(lf))
+    result = lf.with_columns(
         [
-            (pl.col("px_int") * pl.col("price_increment")).cast(pl.Float64).alias("price_px"),
-            (pl.col("qty_int") * pl.col("amount_increment")).cast(pl.Float64).alias("qty"),
+            (pl.col("px_int") * profile.price).cast(pl.Float64).alias("price_px"),
+            (pl.col("qty_int") * profile.amount).cast(pl.Float64).alias("qty"),
         ]
     )
-    drop_cols = ["price_increment", "amount_increment"]
     if not keep_ints:
-        drop_cols += ["px_int", "qty_int"]
-    return result.drop(drop_cols)
+        result = result.drop(["px_int", "qty_int"])
+    return result
 
 
 def _decode_quotes_lazy(
     lf: pl.LazyFrame,
-    dim_symbol_lf: pl.LazyFrame,
-    dim_symbol_df: pl.DataFrame,
     *,
     keep_ints: bool,
 ) -> pl.LazyFrame:
-    price_decimals = _max_quote_decimals(dim_symbol_df["price_increment"].to_list())
-    amount_decimals = _max_quote_decimals(dim_symbol_df["amount_increment"].to_list())
-    joined = lf.join(
-        dim_symbol_lf.select(["symbol_id", "price_increment", "amount_increment"]),
-        on="symbol_id",
-        how="left",
-    )
-    result = joined.with_columns(
+    from pointline.encoding import decode_nullable_amount, decode_nullable_price
+
+    profile = get_profile(_resolve_exchange(lf))
+    result = lf.with_columns(
         [
-            (pl.col("bid_px_int") * pl.col("price_increment"))
-            .round(price_decimals)
-            .cast(pl.Float64)
-            .alias("bid_px"),
-            (pl.col("bid_sz_int") * pl.col("amount_increment"))
-            .round(amount_decimals)
-            .cast(pl.Float64)
-            .alias("bid_sz"),
-            (pl.col("ask_px_int") * pl.col("price_increment"))
-            .round(price_decimals)
-            .cast(pl.Float64)
-            .alias("ask_px"),
-            (pl.col("ask_sz_int") * pl.col("amount_increment"))
-            .round(amount_decimals)
-            .cast(pl.Float64)
-            .alias("ask_sz"),
+            decode_nullable_price("bid_px_int", profile).alias("bid_px"),
+            decode_nullable_amount("bid_sz_int", profile).alias("bid_sz"),
+            decode_nullable_price("ask_px_int", profile).alias("ask_px"),
+            decode_nullable_amount("ask_sz_int", profile).alias("ask_sz"),
         ]
     )
-    drop_cols = ["price_increment", "amount_increment"]
     if not keep_ints:
-        drop_cols += ["bid_px_int", "bid_sz_int", "ask_px_int", "ask_sz_int"]
-    return result.drop(drop_cols)
+        result = result.drop(["bid_px_int", "bid_sz_int", "ask_px_int", "ask_sz_int"])
+    return result
 
 
 def _decode_book_snapshot_25_lazy(
     lf: pl.LazyFrame,
-    dim_symbol_lf: pl.LazyFrame,
 ) -> pl.LazyFrame:
-    joined = lf.join(
-        dim_symbol_lf.select(["symbol_id", "price_increment", "amount_increment"]),
-        on="symbol_id",
-        how="left",
-    )
-    result = joined.with_columns(
+    profile = get_profile(_resolve_exchange(lf))
+    result = lf.with_columns(
         [
-            (pl.col("bids_px_int") * pl.col("price_increment")).alias("bids_px"),
-            (pl.col("bids_sz_int") * pl.col("amount_increment")).alias("bids_sz"),
-            (pl.col("asks_px_int") * pl.col("price_increment")).alias("asks_px"),
-            (pl.col("asks_sz_int") * pl.col("amount_increment")).alias("asks_sz"),
+            pl.col("bids_px_int")
+            .list.eval(
+                pl.when(pl.element().is_not_null())
+                .then((pl.element() * pl.lit(profile.price)).cast(pl.Float64))
+                .otherwise(None)
+            )
+            .alias("bids_px"),
+            pl.col("bids_sz_int")
+            .list.eval(
+                pl.when(pl.element().is_not_null())
+                .then((pl.element() * pl.lit(profile.amount)).cast(pl.Float64))
+                .otherwise(None)
+            )
+            .alias("bids_sz"),
+            pl.col("asks_px_int")
+            .list.eval(
+                pl.when(pl.element().is_not_null())
+                .then((pl.element() * pl.lit(profile.price)).cast(pl.Float64))
+                .otherwise(None)
+            )
+            .alias("asks_px"),
+            pl.col("asks_sz_int")
+            .list.eval(
+                pl.when(pl.element().is_not_null())
+                .then((pl.element() * pl.lit(profile.amount)).cast(pl.Float64))
+                .otherwise(None)
+            )
+            .alias("asks_sz"),
         ]
     )
-    return result.drop(["price_increment", "amount_increment"])
+    return result.drop(["bids_px_int", "bids_sz_int", "asks_px_int", "asks_sz_int"])
 
 
 def _decode_klines_lazy(
     lf: pl.LazyFrame,
-    dim_symbol_lf: pl.LazyFrame,
     *,
     keep_ints: bool,
 ) -> pl.LazyFrame:
-    joined = lf.join(
-        dim_symbol_lf.select(["symbol_id", "price_increment", "amount_increment"]),
-        on="symbol_id",
-        how="left",
-    )
-    result = joined.with_columns(
-        (pl.col("price_increment") * pl.col("amount_increment")).alias("quote_increment")
-    )
-    result = result.with_columns(
+    profile = get_profile(_resolve_exchange(lf))
+    result = lf.with_columns(
         [
-            (pl.col("open_px_int") * pl.col("price_increment")).cast(pl.Float64).alias("open_px"),
-            (pl.col("high_px_int") * pl.col("price_increment")).cast(pl.Float64).alias("high_px"),
-            (pl.col("low_px_int") * pl.col("price_increment")).cast(pl.Float64).alias("low_px"),
-            (pl.col("close_px_int") * pl.col("price_increment")).cast(pl.Float64).alias("close_px"),
-            (pl.col("volume_qty_int") * pl.col("amount_increment"))
-            .cast(pl.Float64)
-            .alias("volume"),
-            (pl.col("quote_volume_int") * pl.col("quote_increment"))
-            .cast(pl.Float64)
-            .alias("quote_volume"),
-            (pl.col("taker_buy_base_qty_int") * pl.col("amount_increment"))
+            (pl.col("open_px_int") * profile.price).cast(pl.Float64).alias("open_px"),
+            (pl.col("high_px_int") * profile.price).cast(pl.Float64).alias("high_px"),
+            (pl.col("low_px_int") * profile.price).cast(pl.Float64).alias("low_px"),
+            (pl.col("close_px_int") * profile.price).cast(pl.Float64).alias("close_px"),
+            (pl.col("volume_qty_int") * profile.amount).cast(pl.Float64).alias("volume"),
+            (pl.col("quote_volume_int") * profile.quote_vol).cast(pl.Float64).alias("quote_volume"),
+            (pl.col("taker_buy_base_qty_int") * profile.amount)
             .cast(pl.Float64)
             .alias("taker_buy_base_volume"),
-            (pl.col("taker_buy_quote_qty_int") * pl.col("quote_increment"))
+            (pl.col("taker_buy_quote_qty_int") * profile.quote_vol)
             .cast(pl.Float64)
             .alias("taker_buy_quote_volume"),
         ]
     )
-    drop_cols = ["price_increment", "amount_increment", "quote_increment"]
     if not keep_ints:
-        drop_cols += [
-            "open_px_int",
-            "high_px_int",
-            "low_px_int",
-            "close_px_int",
-            "volume_qty_int",
-            "quote_volume_int",
-            "taker_buy_base_qty_int",
-            "taker_buy_quote_qty_int",
-        ]
-    return result.drop(drop_cols)
+        result = result.drop(
+            [
+                "open_px_int",
+                "high_px_int",
+                "low_px_int",
+                "close_px_int",
+                "volume_qty_int",
+                "quote_volume_int",
+                "taker_buy_base_qty_int",
+                "taker_buy_quote_qty_int",
+            ]
+        )
+    return result
 
 
 def _derive_date_bounds_from_ts(

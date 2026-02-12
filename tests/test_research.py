@@ -130,16 +130,11 @@ def test_load_trades_decoded_keeps_ints_for_requested_columns(mock_read_table, m
         }
     )
 
-    dim_symbol = pl.DataFrame(
-        {"symbol_id": [1], "price_increment": [0.1], "amount_increment": [0.01]}
-    )
-
     result = load_trades_decoded(
         symbol_id=1,
         start_ts_us=1,
         end_ts_us=2,
         columns=["symbol_id", "px_int"],
-        dim_symbol=dim_symbol,
     )
 
     assert result.shape[0] == 1
@@ -148,10 +143,7 @@ def test_load_trades_decoded_keeps_ints_for_requested_columns(mock_read_table, m
 
 
 def test_load_trades_decoded_lazy_returns_lazyframe():
-    df = pl.DataFrame({"symbol_id": [1], "px_int": [10], "qty_int": [5]})
-    dim_symbol = pl.DataFrame(
-        {"symbol_id": [1], "price_increment": [0.1], "amount_increment": [0.01]}
-    )
+    df = pl.DataFrame({"symbol_id": [1], "px_int": [10], "qty_int": [5], "exchange": ["binance"]})
 
     with patch("pointline.research.core.scan_table") as mock_scan:
         mock_scan.return_value = df.lazy()
@@ -160,14 +152,14 @@ def test_load_trades_decoded_lazy_returns_lazyframe():
             symbol_id=1,
             start_ts_us=1,
             end_ts_us=2,
-            dim_symbol=dim_symbol,
             lazy=True,
         )
 
         assert isinstance(result, pl.LazyFrame)
         collected = result.collect()
-        assert collected["price_px"][0] == 1.0
-        assert collected["qty"][0] == 0.05
+        # crypto profile: price=1e-9, amount=1e-9
+        assert collected["price_px"][0] == 10 * 1e-9
+        assert collected["qty"][0] == 5 * 1e-9
 
 
 def test_scan_table_requires_symbol_id():

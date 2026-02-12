@@ -37,13 +37,13 @@ DERIVATIVE_TICKER_SCHEMA: dict[str, pl.DataType] = {
     "symbol_id": pl.Int64,
     "ts_local_us": pl.Int64,
     "ts_exch_us": pl.Int64,
-    "mark_px": pl.Float64,
-    "index_px": pl.Float64,
-    "last_px": pl.Float64,
-    "funding_rate": pl.Float64,
-    "predicted_funding_rate": pl.Float64,
+    "mark_px_int": pl.Int64,
+    "index_px_int": pl.Int64,
+    "last_px_int": pl.Int64,
+    "funding_rate_int": pl.Int64,
+    "predicted_funding_rate_int": pl.Int64,
     "funding_ts_us": pl.Int64,
-    "open_interest": pl.Float64,
+    "oi_int": pl.Int64,
     "file_id": pl.Int32,
     "file_line_number": pl.Int32,
 }
@@ -52,13 +52,13 @@ DERIVATIVE_TICKER_SCHEMA: dict[str, pl.DataType] = {
 def normalize_derivative_ticker_schema(df: pl.DataFrame) -> pl.DataFrame:
     """Cast to the canonical derivative_ticker schema and select only schema columns."""
     optional_columns = {
-        "funding_rate",
-        "predicted_funding_rate",
+        "funding_rate_int",
+        "predicted_funding_rate_int",
         "funding_ts_us",
-        "open_interest",
-        "last_px",
-        "index_px",
-        "mark_px",
+        "oi_int",
+        "last_px_int",
+        "index_px_int",
+        "mark_px_int",
     }
 
     missing_required = [
@@ -104,12 +104,16 @@ def validate_derivative_ticker(df: pl.DataFrame) -> pl.DataFrame:
         & timestamp_validation_expr("ts_exch_us")
         & required_columns_validation_expr(["exchange", "exchange_id", "symbol_id"])
         & exchange_id_validation_expr()
-        & pl.when(pl.col("mark_px").is_not_null()).then(pl.col("mark_px") > 0).otherwise(True)
-        & pl.when(pl.col("index_px").is_not_null()).then(pl.col("index_px") > 0).otherwise(True)
-        & pl.when(pl.col("last_px").is_not_null()).then(pl.col("last_px") > 0).otherwise(True)
-        & pl.when(pl.col("open_interest").is_not_null())
-        .then(pl.col("open_interest") >= 0)
+        & pl.when(pl.col("mark_px_int").is_not_null())
+        .then(pl.col("mark_px_int") > 0)
         .otherwise(True)
+        & pl.when(pl.col("index_px_int").is_not_null())
+        .then(pl.col("index_px_int") > 0)
+        .otherwise(True)
+        & pl.when(pl.col("last_px_int").is_not_null())
+        .then(pl.col("last_px_int") > 0)
+        .otherwise(True)
+        & pl.when(pl.col("oi_int").is_not_null()).then(pl.col("oi_int") >= 0).otherwise(True)
         & pl.when(pl.col("funding_ts_us").is_not_null())
         .then(pl.col("funding_ts_us") > 0)
         .otherwise(True)
@@ -126,12 +130,12 @@ def validate_derivative_ticker(df: pl.DataFrame) -> pl.DataFrame:
             pl.col("expected_exchange_id").is_null()
             | (pl.col("exchange_id") != pl.col("expected_exchange_id")),
         ),
-        ("mark_px", pl.col("mark_px").is_not_null() & (pl.col("mark_px") <= 0)),
-        ("index_px", pl.col("index_px").is_not_null() & (pl.col("index_px") <= 0)),
-        ("last_px", pl.col("last_px").is_not_null() & (pl.col("last_px") <= 0)),
+        ("mark_px_int", pl.col("mark_px_int").is_not_null() & (pl.col("mark_px_int") <= 0)),
+        ("index_px_int", pl.col("index_px_int").is_not_null() & (pl.col("index_px_int") <= 0)),
+        ("last_px_int", pl.col("last_px_int").is_not_null() & (pl.col("last_px_int") <= 0)),
         (
-            "open_interest",
-            pl.col("open_interest").is_not_null() & (pl.col("open_interest") < 0),
+            "oi_int",
+            pl.col("oi_int").is_not_null() & (pl.col("oi_int") < 0),
         ),
         (
             "funding_ts_us",
@@ -146,13 +150,114 @@ def validate_derivative_ticker(df: pl.DataFrame) -> pl.DataFrame:
 def encode_fixed_point(
     df: pl.DataFrame,
     dim_symbol: pl.DataFrame,
+    exchange: str,
 ) -> pl.DataFrame:
-    """No-op for derivative_ticker (prices already in Float64 format).
+    """Encode derivative ticker float fields to fixed-point integers.
 
-    Unlike trades/quotes which use fixed-point integers, derivative_ticker stores
-    prices directly as Float64 (mark_px, index_px, last_px).
+    Prices → profile.price scalar
+    Open interest → profile.amount scalar
+    Funding rates → profile.rate scalar
     """
-    return df
+    from pointline.encoding import get_profile
+
+    profile = get_profile(exchange)
+
+    return df.with_columns(
+        [
+            pl.when(pl.col("mark_px").is_not_null())
+            .then((pl.col("mark_px") / profile.price).round().cast(pl.Int64))
+            .otherwise(None)
+            .alias("mark_px_int"),
+            pl.when(pl.col("index_px").is_not_null())
+            .then((pl.col("index_px") / profile.price).round().cast(pl.Int64))
+            .otherwise(None)
+            .alias("index_px_int"),
+            pl.when(pl.col("last_px").is_not_null())
+            .then((pl.col("last_px") / profile.price).round().cast(pl.Int64))
+            .otherwise(None)
+            .alias("last_px_int"),
+            pl.when(pl.col("funding_rate").is_not_null())
+            .then((pl.col("funding_rate") / profile.rate).round().cast(pl.Int64))
+            .otherwise(None)
+            .alias("funding_rate_int"),
+            pl.when(pl.col("predicted_funding_rate").is_not_null())
+            .then((pl.col("predicted_funding_rate") / profile.rate).round().cast(pl.Int64))
+            .otherwise(None)
+            .alias("predicted_funding_rate_int"),
+            pl.when(pl.col("open_interest").is_not_null())
+            .then((pl.col("open_interest") / profile.amount).round().cast(pl.Int64))
+            .otherwise(None)
+            .alias("oi_int"),
+        ]
+    )
+
+
+def decode_fixed_point(
+    df: pl.DataFrame,
+    dim_symbol: pl.DataFrame | None = None,
+    *,
+    keep_ints: bool = False,
+    exchange: str | None = None,
+) -> pl.DataFrame:
+    """Decode derivative ticker fixed-point integers to floats."""
+    profile = _resolve_profile(df, exchange)
+
+    result = df.with_columns(
+        [
+            pl.when(pl.col("mark_px_int").is_not_null())
+            .then((pl.col("mark_px_int") * profile.price).cast(pl.Float64))
+            .otherwise(None)
+            .alias("mark_px"),
+            pl.when(pl.col("index_px_int").is_not_null())
+            .then((pl.col("index_px_int") * profile.price).cast(pl.Float64))
+            .otherwise(None)
+            .alias("index_px"),
+            pl.when(pl.col("last_px_int").is_not_null())
+            .then((pl.col("last_px_int") * profile.price).cast(pl.Float64))
+            .otherwise(None)
+            .alias("last_px"),
+            pl.when(pl.col("funding_rate_int").is_not_null())
+            .then((pl.col("funding_rate_int") * profile.rate).cast(pl.Float64))
+            .otherwise(None)
+            .alias("funding_rate"),
+            pl.when(pl.col("predicted_funding_rate_int").is_not_null())
+            .then((pl.col("predicted_funding_rate_int") * profile.rate).cast(pl.Float64))
+            .otherwise(None)
+            .alias("predicted_funding_rate"),
+            pl.when(pl.col("oi_int").is_not_null())
+            .then((pl.col("oi_int") * profile.amount).cast(pl.Float64))
+            .otherwise(None)
+            .alias("open_interest"),
+        ]
+    )
+
+    if not keep_ints:
+        int_cols = [
+            "mark_px_int",
+            "index_px_int",
+            "last_px_int",
+            "funding_rate_int",
+            "predicted_funding_rate_int",
+            "oi_int",
+        ]
+        result = result.drop([c for c in int_cols if c in result.columns])
+    return result
+
+
+def _resolve_profile(df: pl.DataFrame, exchange: str | None = None):
+    """Resolve ScalarProfile from exchange parameter or DataFrame 'exchange' column."""
+    from pointline.encoding import get_profile
+
+    if exchange is not None:
+        return get_profile(exchange)
+    if "exchange" in df.columns:
+        exchanges = df["exchange"].unique().to_list()
+        if len(exchanges) != 1:
+            raise ValueError(
+                f"decode: DataFrame has {len(exchanges)} exchanges; pass exchange= explicitly"
+            )
+        return get_profile(exchanges[0])
+    raise ValueError("No 'exchange' column and no exchange= argument")
 
 
 def resolve_symbol_ids(

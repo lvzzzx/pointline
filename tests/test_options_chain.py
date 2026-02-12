@@ -60,8 +60,6 @@ def _sample_dim_symbol(underlying_symbol_id: int | None = 1001) -> pl.DataFrame:
             "asset_type": 0,
             "tick_size": 0.5,
             "lot_size": 1.0,
-            "price_increment": 0.5,
-            "amount_increment": 1.0,
             "contract_size": 1.0,
             "expiry_ts_us": None,
             "underlying_symbol_id": None,
@@ -83,8 +81,6 @@ def _sample_dim_symbol(underlying_symbol_id: int | None = 1001) -> pl.DataFrame:
             "asset_type": 3,
             "tick_size": 0.5,
             "lot_size": 1.0,
-            "price_increment": 0.5,
-            "amount_increment": 1.0,
             "contract_size": 1.0,
             "expiry_ts_us": 1719705600000000,
             "underlying_symbol_id": underlying_symbol_id,
@@ -170,7 +166,8 @@ def test_options_chain_ingestion_service_ingest_file(sample_manifest_repo, tmp_p
     assert written.height == 1
     assert written["option_symbol_id"][0] == 2001
     assert written["underlying_symbol_id"][0] is None
-    assert written["strike_int"][0] == 120000
+    # crypto profile: price=1e-9 → 60000/1e-9 = 60000000000000
+    assert written["strike_int"][0] == 60000000000000
 
 
 def test_options_chain_ingestion_service_quarantine(sample_manifest_repo, tmp_path):

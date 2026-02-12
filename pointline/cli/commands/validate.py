@@ -113,7 +113,7 @@ def cmd_validate_quotes(args: argparse.Namespace) -> int:
     )
     dim_symbol = pl.read_delta(str(get_table_path("dim_symbol")))
     resolved_df = resolve_quotes_symbol_ids(parsed_df, dim_symbol, None, None)
-    encoded_df = encode_quotes_fixed_point(resolved_df, dim_symbol)
+    encoded_df = encode_quotes_fixed_point(resolved_df, dim_symbol, unique_exchanges[0])
     expected_df = add_lineage(encoded_df, file_id)
     expected_df = normalize_quotes_schema(expected_df)
 
@@ -272,7 +272,7 @@ def cmd_validate_trades(args: argparse.Namespace) -> int:
     )
     dim_symbol = pl.read_delta(str(get_table_path("dim_symbol")))
     resolved_df = resolve_trades_symbol_ids(parsed_df, dim_symbol, None, None)
-    encoded_df = encode_trades_fixed_point(resolved_df, dim_symbol)
+    encoded_df = encode_trades_fixed_point(resolved_df, dim_symbol, unique_exchanges[0])
     expected_df = add_lineage(encoded_df, file_id)
     expected_df = normalize_trades_schema(expected_df)
 

@@ -21,8 +21,6 @@ class TardisInstrument:
     asset_type: int
     tick_size: float
     lot_size: float
-    price_increment: float
-    amount_increment: float
     contract_size: float
     valid_from_ts: int
 
@@ -80,8 +78,6 @@ def _instrument_state(
         asset_type=TYPE_MAP[type_raw],
         tick_size=float(price_increment),
         lot_size=float(amount_increment),
-        price_increment=float(price_increment),
-        amount_increment=float(amount_increment),
         contract_size=float(contract_size),
         valid_from_ts=valid_from_ts,
     )
@@ -91,10 +87,8 @@ def _apply_change_fields(state: dict[str, Any], change: dict[str, Any]) -> dict[
     updated = dict(state)
     if change.get("priceIncrement") is not None:
         updated["tick_size"] = float(change["priceIncrement"])
-        updated["price_increment"] = float(change["priceIncrement"])
     if change.get("amountIncrement") is not None:
         updated["lot_size"] = float(change["amountIncrement"])
-        updated["amount_increment"] = float(change["amountIncrement"])
     if change.get("contractMultiplier") is not None:
         updated["contract_size"] = float(change["contractMultiplier"])
     return updated
@@ -126,8 +120,6 @@ def _history_rows(
         "asset_type": state.asset_type,
         "tick_size": state.tick_size,
         "lot_size": state.lot_size,
-        "price_increment": state.price_increment,
-        "amount_increment": state.amount_increment,
         "contract_size": state.contract_size,
     }
 
@@ -195,8 +187,6 @@ def build_updates_from_instruments(
                     "asset_type": state.asset_type,
                     "tick_size": state.tick_size,
                     "lot_size": state.lot_size,
-                    "price_increment": state.price_increment,
-                    "amount_increment": state.amount_increment,
                     "contract_size": state.contract_size,
                     "valid_from_ts": state.valid_from_ts,
                 }
@@ -213,8 +203,6 @@ def build_updates_from_instruments(
                 "asset_type": pl.Int64,
                 "tick_size": pl.Float64,
                 "lot_size": pl.Float64,
-                "price_increment": pl.Float64,
-                "amount_increment": pl.Float64,
                 "contract_size": pl.Float64,
                 "valid_from_ts": pl.Int64,
             }

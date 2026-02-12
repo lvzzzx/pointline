@@ -63,7 +63,7 @@ def flow_imbalance(source_col: str) -> pl.Expr:
     name="spread_bps",
     semantic_type="quote_top",
     mode_allowlist=["MFT", "LFT"],
-    required_columns=["bid_px_int", "ask_px_int", "price_increment"],
+    required_columns=["bid_px_int", "ask_px_int"],
 )
 def spread_bps(source_col: str) -> pl.Expr:
     """Bid-ask spread in basis points (bps).
@@ -76,6 +76,7 @@ def spread_bps(source_col: str) -> pl.Expr:
         100 = 1% spread (illiquid)
 
     Note: Uses last known quote in bar (as-of join backward).
+    Works directly on integer columns — the encoding scalar cancels in the ratio.
 
     Args:
         source_col: Bid price column (typically "bid_px_int")
@@ -84,16 +85,12 @@ def spread_bps(source_col: str) -> pl.Expr:
         Polars expression computing spread in bps
     """
     # Take last quote in bar (most recent before bar close)
-    bid_px = pl.col("bid_px_int").last()
-    ask_px = pl.col("ask_px_int").last()
-    price_inc = pl.col("price_increment").last()
+    # Scalar cancels: (ask - bid) / mid is the same in int domain as float domain
+    bid_px = pl.col("bid_px_int").last().cast(pl.Float64)
+    ask_px = pl.col("ask_px_int").last().cast(pl.Float64)
+    mid_px = (bid_px + ask_px) / 2
 
-    # Decode to float
-    bid_float = bid_px.cast(pl.Float64) * price_inc
-    ask_float = ask_px.cast(pl.Float64) * price_inc
-    mid_px = (bid_float + ask_float) / 2
-
-    return pl.when(mid_px > 0).then(((ask_float - bid_float) / mid_px) * 10000).otherwise(0.0)
+    return pl.when(mid_px > 0).then(((ask_px - bid_px) / mid_px) * 10000).otherwise(0.0)
 
 
 @AggregationRegistry.register_aggregate_raw(
@@ -139,7 +136,7 @@ def book_imbalance_top5(source_col: str) -> pl.Expr:
     name="realized_volatility",
     semantic_type="volatility",
     mode_allowlist=["MFT", "LFT"],
-    required_columns=["px_int", "price_increment"],
+    required_columns=["px_int"],
 )
 def realized_volatility(source_col: str) -> pl.Expr:
     """Realized volatility: standard deviation of log returns within bar.
@@ -151,7 +148,8 @@ def realized_volatility(source_col: str) -> pl.Expr:
         0.001 = 10 bps volatility (normal)
         0.01 = 100 bps volatility (high volatility event)
 
-    Note: Returns annualized by multiplying by sqrt(bars_per_year).
+    Works directly on integer columns — log returns are scale-invariant
+    (the encoding scalar cancels: log(a*x) - log(a*y) = log(x) - log(y)).
 
     Args:
         source_col: Price column (typically "px_int")
@@ -159,11 +157,9 @@ def realized_volatility(source_col: str) -> pl.Expr:
     Returns:
         Polars expression computing realized volatility
     """
-    # Decode price
-    price_inc = pl.col("price_increment").first()  # Constant within symbol
-    price = pl.col(source_col).cast(pl.Float64) * price_inc
+    price = pl.col(source_col).cast(pl.Float64)
 
-    # Log returns
+    # Log returns (scalar cancels in differences)
     log_price = price.log()
     log_ret = log_price.diff()
 
@@ -175,13 +171,16 @@ def realized_volatility(source_col: str) -> pl.Expr:
     name="avg_trade_size",
     semantic_type="size",
     mode_allowlist=["MFT", "LFT"],
-    required_columns=["qty_int", "amount_increment"],
+    required_columns=["qty_int"],
 )
 def avg_trade_size(source_col: str) -> pl.Expr:
-    """Average trade size.
+    """Average trade size (in encoded integer units).
 
     Large trades = institutional flow (whales)
     Small trades = retail flow
+
+    Values are in the encoded integer domain. Multiply by profile.amount
+    to get float quantities.
 
     Args:
         source_col: Quantity column (typically "qty_int")
@@ -189,19 +188,17 @@ def avg_trade_size(source_col: str) -> pl.Expr:
     Returns:
         Polars expression computing average trade size
     """
-    amt_inc = pl.col("amount_increment").first()
-    qty = pl.col(source_col).cast(pl.Float64) * amt_inc
-    return qty.mean()
+    return pl.col(source_col).cast(pl.Float64).mean()
 
 
 @AggregationRegistry.register_aggregate_raw(
     name="median_trade_size",
     semantic_type="size",
     mode_allowlist=["MFT", "LFT"],
-    required_columns=["qty_int", "amount_increment"],
+    required_columns=["qty_int"],
 )
 def median_trade_size(source_col: str) -> pl.Expr:
-    """Median trade size.
+    """Median trade size (in encoded integer units).
 
     Args:
         source_col: Quantity column (typically "qty_int")
@@ -209,19 +206,17 @@ def median_trade_size(source_col: str) -> pl.Expr:
     Returns:
         Polars expression computing median trade size
     """
-    amt_inc = pl.col("amount_increment").first()
-    qty = pl.col(source_col).cast(pl.Float64) * amt_inc
-    return qty.median()
+    return pl.col(source_col).cast(pl.Float64).median()
 
 
 @AggregationRegistry.register_aggregate_raw(
     name="max_trade_size",
     semantic_type="size",
     mode_allowlist=["MFT", "LFT"],
-    required_columns=["qty_int", "amount_increment"],
+    required_columns=["qty_int"],
 )
 def max_trade_size(source_col: str) -> pl.Expr:
-    """Maximum trade size in bar.
+    """Maximum trade size in bar (in encoded integer units).
 
     Args:
         source_col: Quantity column (typically "qty_int")
@@ -229,9 +224,7 @@ def max_trade_size(source_col: str) -> pl.Expr:
     Returns:
         Polars expression computing max trade size
     """
-    amt_inc = pl.col("amount_increment").first()
-    qty = pl.col(source_col).cast(pl.Float64) * amt_inc
-    return qty.max()
+    return pl.col(source_col).cast(pl.Float64).max()
 
 
 @AggregationRegistry.register_aggregate_raw(
@@ -271,7 +264,7 @@ def aggressive_ratio(source_col: str) -> pl.Expr:
     name="vw_return",
     semantic_type="return",
     mode_allowlist=["MFT", "LFT"],
-    required_columns=["px_int", "qty_int", "price_increment"],
+    required_columns=["px_int", "qty_int"],
 )
 def vw_return(source_col: str) -> pl.Expr:
     """Volume-weighted return within bar.
@@ -279,17 +272,19 @@ def vw_return(source_col: str) -> pl.Expr:
     Each trade contributes proportionally to its volume.
     More robust than simple close/open return.
 
+    Works directly on integer columns — log returns are scale-invariant
+    (the encoding scalar cancels in the ratio).
+
     Args:
         source_col: Price column (typically "px_int")
 
     Returns:
         Polars expression computing volume-weighted return
     """
-    price_inc = pl.col("price_increment").first()
-    price = pl.col(source_col).cast(pl.Float64) * price_inc
+    price = pl.col(source_col).cast(pl.Float64)
     qty = pl.col("qty_int").cast(pl.Float64)
 
-    # First price (bar open)
+    # First price (bar open) — scalar cancels in ratio
     first_price = price.first()
 
     # Volume-weighted average price change

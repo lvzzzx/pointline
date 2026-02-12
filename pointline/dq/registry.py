@@ -87,7 +87,7 @@ TABLE_DQ_CONFIGS: dict[str, TableDQConfig] = {
         table_name="dim_symbol",
         key_columns=("exchange_id", "exchange_symbol", "valid_from_ts"),
         ts_column="valid_from_ts",
-        numeric_columns=("tick_size", "lot_size", "price_increment", "amount_increment"),
+        numeric_columns=("tick_size", "lot_size"),
     ),
     "dim_asset_stats": TableDQConfig(
         table_name="dim_asset_stats",

@@ -30,6 +30,11 @@ MANIFEST_SCHEMA: dict[str, pl.DataType] = {
     "ts_local_min_us": pl.Int64,
     "ts_local_max_us": pl.Int64,
     "error_message": pl.Utf8,
+    # SCD2 audit columns (nullable — only populated for SCD2 target tables)
+    "scd2_new": pl.Int32,
+    "scd2_modified": pl.Int32,
+    "scd2_delisted": pl.Int32,
+    "scd2_unchanged": pl.Int32,
 }
 
 
@@ -167,6 +172,10 @@ class DeltaManifestRepository(BaseDeltaRepository):
                     "ts_local_min_us": [None],
                     "ts_local_max_us": [None],
                     "error_message": [None],
+                    "scd2_new": [None],
+                    "scd2_modified": [None],
+                    "scd2_delisted": [None],
+                    "scd2_unchanged": [None],
                 },
                 schema=MANIFEST_SCHEMA,
             )
@@ -271,6 +280,11 @@ class DeltaManifestRepository(BaseDeltaRepository):
         status: str,
         meta: BronzeFileMetadata,
         result: IngestionResult | None = None,
+        *,
+        scd2_new: int | None = None,
+        scd2_modified: int | None = None,
+        scd2_delisted: int | None = None,
+        scd2_unchanged: int | None = None,
     ) -> None:
         """Records success/failure with new schema."""
         row_count = result.row_count if result else None
@@ -309,6 +323,10 @@ class DeltaManifestRepository(BaseDeltaRepository):
                 "ts_local_min_us": [min_ts],
                 "ts_local_max_us": [max_ts],
                 "error_message": [err_msg],
+                "scd2_new": [scd2_new],
+                "scd2_modified": [scd2_modified],
+                "scd2_delisted": [scd2_delisted],
+                "scd2_unchanged": [scd2_unchanged],
             },
             schema=MANIFEST_SCHEMA,
         )

@@ -66,8 +66,6 @@ def _sample_dim_symbol() -> pl.DataFrame:
             "asset_type": [0],
             "tick_size": [0.01],
             "lot_size": [0.00001],
-            "price_increment": [0.01],
-            "amount_increment": [0.00001],
             "contract_size": [1.0],
             "valid_from_ts": [1000000000000000],  # Early timestamp
         }
@@ -321,9 +319,8 @@ def test_validate_quotes_both_missing():
 
 
 def test_encode_fixed_point():
-    """Test fixed-point encoding using dim_symbol metadata."""
+    """Test fixed-point encoding using asset-class scalar profile."""
     dim_symbol = _sample_dim_symbol()
-    # dim_symbol already has symbol_id from scd2_bootstrap
 
     df = pl.DataFrame(
         {
@@ -335,19 +332,19 @@ def test_encode_fixed_point():
         }
     )
 
-    encoded = encode_fixed_point(df, dim_symbol)
+    encoded = encode_fixed_point(df, dim_symbol, "binance-futures")
 
     assert "bid_px_int" in encoded.columns
     assert "bid_sz_int" in encoded.columns
     assert "ask_px_int" in encoded.columns
     assert "ask_sz_int" in encoded.columns
 
-    # With price_increment=0.01, price=50000.0 should become 5000000
-    assert encoded["bid_px_int"][0] == 5000000
-    # With amount_increment=0.00001, amount=0.1 should become 10000
-    assert encoded["bid_sz_int"][0] == 10000
-    assert encoded["ask_px_int"][0] == 5000050
-    assert encoded["ask_sz_int"][0] == 15000
+    # With crypto profile price scalar=1e-9, price=50000.0 -> round(50000 / 1e-9) = 50_000_000_000_000
+    assert encoded["bid_px_int"][0] == 50_000_000_000_000
+    # With crypto profile amount scalar=1e-9, amount=0.1 -> round(0.1 / 1e-9) = 100_000_000
+    assert encoded["bid_sz_int"][0] == 100_000_000
+    assert encoded["ask_px_int"][0] == 50_000_500_000_000
+    assert encoded["ask_sz_int"][0] == 150_000_000
 
 
 def test_encode_fixed_point_with_nulls():
@@ -364,38 +361,21 @@ def test_encode_fixed_point_with_nulls():
         }
     )
 
-    encoded = encode_fixed_point(df, dim_symbol)
+    encoded = encode_fixed_point(df, dim_symbol, "binance-futures")
 
-    # First row should have all values
-    assert encoded["bid_px_int"][0] == 5000000
-    assert encoded["ask_px_int"][0] == 5000050
+    # First row should have all values (crypto profile: price scalar=1e-9)
+    assert encoded["bid_px_int"][0] == 50_000_000_000_000
+    assert encoded["ask_px_int"][0] == 50_000_500_000_000
     # Second row should have null bid
     assert encoded["bid_px_int"][1] is None
     assert encoded["bid_sz_int"][1] is None
 
 
-def test_encode_fixed_point_rounding_direction():
-    """Bid floors and ask ceils to avoid crossed rounding."""
-    updates = pl.DataFrame(
-        {
-            "exchange_id": [1],
-            "exchange_symbol": ["BTCUSDT"],
-            "base_asset": ["BTC"],
-            "quote_asset": ["USDT"],
-            "asset_type": [0],
-            "tick_size": [0.01],
-            "lot_size": [0.00001],
-            "price_increment": [0.01],
-            "amount_increment": [0.00001],
-            "contract_size": [1.0],
-            "valid_from_ts": [1000000000000000],
-        }
-    )
-    dim_symbol = scd2_bootstrap(updates)
-
+def test_encode_fixed_point_symmetric_rounding():
+    """With universal scalar, bid and ask both use symmetric round()."""
     df = pl.DataFrame(
         {
-            "symbol_id": dim_symbol["symbol_id"].to_list(),
+            "symbol_id": [1],
             "bid_px": [50000.123],
             "bid_sz": [0.1],
             "ask_px": [50000.123],
@@ -403,56 +383,50 @@ def test_encode_fixed_point_rounding_direction():
         }
     )
 
-    encoded = encode_fixed_point(df, dim_symbol)
+    encoded = encode_fixed_point(df, pl.DataFrame(), "binance-futures")
 
-    assert encoded["bid_px_int"][0] == 5000012  # floor(50000.123 / 0.01)
-    assert encoded["ask_px_int"][0] == 5000013  # ceil(50000.123 / 0.01)
+    # Crypto profile: price scalar=1e-9
+    # round(50000.123 / 1e-9) = 50_000_123_000_000
+    assert encoded["bid_px_int"][0] == 50_000_123_000_000
+    assert encoded["ask_px_int"][0] == 50_000_123_000_000  # same — symmetric rounding
 
 
-def test_encode_fixed_point_missing_symbol():
-    """Test that missing symbol_ids raise error."""
-    dim_symbol = _sample_dim_symbol()
-
-    # Use a symbol_id that doesn't exist
+def test_encode_fixed_point_missing_columns():
+    """Test that missing float columns raise error."""
     df = pl.DataFrame(
         {
-            "symbol_id": [999999],  # Not in dim_symbol
+            "symbol_id": [1],
             "bid_px": [50000.0],
-            "bid_sz": [0.1],
-            "ask_px": [50000.5],
-            "ask_sz": [0.15],
+            # Missing bid_sz, ask_px, ask_sz
         }
     )
 
-    with pytest.raises(ValueError, match="symbol_ids not found"):
-        encode_fixed_point(df, dim_symbol)
+    with pytest.raises(ValueError, match="df missing columns"):
+        encode_fixed_point(df, pl.DataFrame(), "binance-futures")
 
 
 def test_decode_fixed_point():
     """Decode fixed-point integers back to float bid/ask columns."""
-    dim_symbol = _sample_dim_symbol()
-    symbol_id = dim_symbol["symbol_id"][0]
-
     df = pl.DataFrame(
         {
-            "symbol_id": [symbol_id],
-            "bid_px_int": [5000000],
-            "bid_sz_int": [10000],
-            "ask_px_int": [5000050],
-            "ask_sz_int": [15000],
+            "exchange": ["binance-futures"],
+            "bid_px_int": [50_000_000_000_000],
+            "bid_sz_int": [100_000_000],
+            "ask_px_int": [50_000_500_000_000],
+            "ask_sz_int": [150_000_000],
         }
     )
 
-    decoded = decode_fixed_point(df, dim_symbol)
+    decoded = decode_fixed_point(df)
 
     assert "bid_px_int" not in decoded.columns
     assert "ask_px_int" not in decoded.columns
     assert decoded["bid_px"].dtype == pl.Float64
     assert decoded["ask_px"].dtype == pl.Float64
-    assert decoded["bid_px"][0] == 50000.0
-    assert decoded["ask_px"][0] == 50000.5
-    assert decoded["bid_sz"][0] == 0.1
-    assert decoded["ask_sz"][0] == 0.15
+    assert decoded["bid_px"][0] == pytest.approx(50000.0)
+    assert decoded["ask_px"][0] == pytest.approx(50000.5)
+    assert decoded["bid_sz"][0] == pytest.approx(0.1)
+    assert decoded["ask_sz"][0] == pytest.approx(0.15)
 
 
 def test_resolve_symbol_ids():

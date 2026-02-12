@@ -46,7 +46,7 @@ class TableStrategy:
     ingestion pipeline vendor-agnostic.
 
     Attributes:
-        encode_fixed_point: Convert float prices/quantities to fixed-point integers
+        encode_fixed_point: Convert float prices/quantities to fixed-point integers (df, dim_symbol, exchange)
         validate: Apply quality checks and filter invalid rows
         normalize_schema: Cast to canonical schema and select only schema columns
         resolve_symbol_ids: Map exchange symbols to symbol_ids with SCD Type 2 handling
@@ -54,7 +54,7 @@ class TableStrategy:
         ts_col: Timestamp column name for symbol resolution (default: ts_local_us)
     """
 
-    encode_fixed_point: Callable[[pl.DataFrame, pl.DataFrame], pl.DataFrame]
+    encode_fixed_point: Callable[[pl.DataFrame, pl.DataFrame, str], pl.DataFrame]
     validate: Callable[[pl.DataFrame], pl.DataFrame]
     normalize_schema: Callable[[pl.DataFrame], pl.DataFrame]
     resolve_symbol_ids: Callable[
@@ -382,7 +382,9 @@ class GenericIngestionService(BaseService):
             )
 
             # 8. Encode fixed-point (price/qty → integers)
-            encoded_df = self.strategy.encode_fixed_point(resolved_df, dim_symbol)
+            # Use first exchange from data — files are single-exchange by convention
+            exchange = unique_exchanges[0]
+            encoded_df = self.strategy.encode_fixed_point(resolved_df, dim_symbol, exchange)
 
             # 9. Add lineage columns (file_id, file_line_number)
             lineage_df = self._add_lineage(encoded_df, file_id)

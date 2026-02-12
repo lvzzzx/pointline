@@ -169,8 +169,6 @@ def build_dim_symbol_updates_from_stock_basic_cn(df: pl.DataFrame) -> pl.DataFra
             pl.lit(0).cast(pl.UInt8).alias("asset_type"),
             pl.lit(0.01).alias("tick_size"),
             pl.lit(100.0).alias("lot_size"),
-            pl.lit(0.01).alias("price_increment"),
-            pl.lit(100.0).alias("amount_increment"),
             pl.lit(1.0).alias("contract_size"),
             valid_from_expr.alias("valid_from_ts"),
         ]
@@ -184,8 +182,6 @@ def build_dim_symbol_updates_from_stock_basic_cn(df: pl.DataFrame) -> pl.DataFra
             "asset_type",
             "tick_size",
             "lot_size",
-            "price_increment",
-            "amount_increment",
             "contract_size",
             "valid_from_ts",
         ]

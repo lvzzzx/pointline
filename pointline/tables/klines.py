@@ -74,96 +74,40 @@ RAW_KLINE_COLUMNS = [
 ]
 
 
-def encode_fixed_point(df: pl.DataFrame, dim_symbol: pl.DataFrame) -> pl.DataFrame:
-    """Encode OHLC and volume fields using dim_symbol increments.
+def encode_fixed_point(df: pl.DataFrame, dim_symbol: pl.DataFrame, exchange: str) -> pl.DataFrame:
+    """Encode OHLC and volume fields using per-asset-class scalar profile.
 
-    Uses computed quote_increment = price_increment × amount_increment for quote volumes.
+    Uses profile.price for OHLC, profile.amount for base volumes,
+    and profile.quote_vol for quote volumes.
     """
-    if "symbol_id" not in df.columns:
-        raise ValueError("encode_fixed_point: df must have 'symbol_id' column")
+    from pointline.encoding import get_profile
 
-    required_dims = ["symbol_id", "price_increment", "amount_increment"]
-    missing = [c for c in required_dims if c not in dim_symbol.columns]
-    if missing:
-        raise ValueError(f"encode_fixed_point: dim_symbol missing columns: {missing}")
-
-    joined = df.join(
-        dim_symbol.select(["symbol_id", "price_increment", "amount_increment"]),
-        on="symbol_id",
-        how="left",
-    )
-
-    missing_ids = joined.filter(pl.col("price_increment").is_null())
-    if not missing_ids.is_empty():
-        missing_symbols = missing_ids.select("symbol_id").unique()
-        raise ValueError(
-            f"encode_fixed_point: {missing_symbols.height} symbol_ids not found in dim_symbol"
-        )
-
-    # Validate increments are positive
-    invalid_increments = joined.filter(
-        (pl.col("price_increment") <= 0) | (pl.col("amount_increment") <= 0)
-    )
-    if not invalid_increments.is_empty():
-        raise ValueError("encode_fixed_point: Invalid increments (<=0) detected in dim_symbol")
-
-    # Compute quote_increment = price_increment × amount_increment
-    result = joined.with_columns(
-        (pl.col("price_increment") * pl.col("amount_increment")).alias("quote_increment")
-    )
+    profile = get_profile(exchange)
 
     # Encode all fields
-    result = result.with_columns(
+    result = df.with_columns(
         [
-            (pl.col("open_px") / pl.col("price_increment"))
-            .round()
-            .cast(pl.Int64)
-            .alias("open_px_int"),
-            (pl.col("high_px") / pl.col("price_increment"))
-            .round()
-            .cast(pl.Int64)
-            .alias("high_px_int"),
-            (pl.col("low_px") / pl.col("price_increment"))
-            .round()
-            .cast(pl.Int64)
-            .alias("low_px_int"),
-            (pl.col("close_px") / pl.col("price_increment"))
-            .round()
-            .cast(pl.Int64)
-            .alias("close_px_int"),
-            (pl.col("volume") / pl.col("amount_increment"))
-            .round()
-            .cast(pl.Int64)
-            .alias("volume_qty_int"),
-            (pl.col("quote_volume") / pl.col("quote_increment"))
+            (pl.col("open_px") / profile.price).round().cast(pl.Int64).alias("open_px_int"),
+            (pl.col("high_px") / profile.price).round().cast(pl.Int64).alias("high_px_int"),
+            (pl.col("low_px") / profile.price).round().cast(pl.Int64).alias("low_px_int"),
+            (pl.col("close_px") / profile.price).round().cast(pl.Int64).alias("close_px_int"),
+            (pl.col("volume") / profile.amount).round().cast(pl.Int64).alias("volume_qty_int"),
+            (pl.col("quote_volume") / profile.quote_vol)
             .round()
             .cast(pl.Int64)
             .alias("quote_volume_int"),
-            (pl.col("taker_buy_base_volume") / pl.col("amount_increment"))
+            (pl.col("taker_buy_base_volume") / profile.amount)
             .round()
             .cast(pl.Int64)
             .alias("taker_buy_base_qty_int"),
-            (pl.col("taker_buy_quote_volume") / pl.col("quote_increment"))
+            (pl.col("taker_buy_quote_volume") / profile.quote_vol)
             .round()
             .cast(pl.Int64)
             .alias("taker_buy_quote_qty_int"),
         ]
     )
 
-    # Validate no Int64 overflow (check for nulls after cast, which indicate overflow)
-    overflow_check = result.filter(
-        pl.col("quote_volume_int").is_null() & pl.col("quote_volume").is_not_null()
-    )
-    if not overflow_check.is_empty():
-        raise ValueError(
-            "encode_fixed_point: Int64 overflow detected when encoding quote_volume "
-            "(quote_increment too small or values too large)"
-        )
-
     drop_cols = [
-        "price_increment",
-        "amount_increment",
-        "quote_increment",
         "open_px",
         "high_px",
         "low_px",
@@ -178,26 +122,24 @@ def encode_fixed_point(df: pl.DataFrame, dim_symbol: pl.DataFrame) -> pl.DataFra
 
 def decode_fixed_point(
     df: pl.DataFrame,
-    dim_symbol: pl.DataFrame,
+    dim_symbol: pl.DataFrame | None = None,
     *,
     keep_ints: bool = False,
+    exchange: str | None = None,
 ) -> pl.DataFrame:
-    """Decode fixed-point integers into float OHLC and volume columns using dim_symbol metadata.
+    """Decode fixed-point integers into float OHLC and volume columns using asset-class profile.
 
-    Uses computed quote_increment = price_increment × amount_increment for quote volumes.
+    Uses profile.price for OHLC, profile.amount for base volumes,
+    and profile.quote_vol for quote volumes.
 
     Requires:
-    - df must have 'symbol_id' column
     - df must have '*_px_int' and '*_qty_int' columns
-    - dim_symbol must have 'symbol_id', 'price_increment', 'amount_increment' columns
+    - df must have 'exchange' column OR exchange must be provided
 
     Returns DataFrame with open, high, low, close, volume, quote_volume,
     taker_buy_base_volume, taker_buy_quote_volume added (Float64).
     By default, drops the *_int columns.
     """
-    if "symbol_id" not in df.columns:
-        raise ValueError("decode_fixed_point: df must have 'symbol_id' column")
-
     required_cols = [
         "open_px_int",
         "high_px_int",
@@ -212,71 +154,66 @@ def decode_fixed_point(
     if missing:
         raise ValueError(f"decode_fixed_point: df missing columns: {missing}")
 
-    required_dims = ["symbol_id", "price_increment", "amount_increment"]
-    missing_dims = [c for c in required_dims if c not in dim_symbol.columns]
-    if missing_dims:
-        raise ValueError(f"decode_fixed_point: dim_symbol missing columns: {missing_dims}")
-
-    joined = df.join(
-        dim_symbol.select(["symbol_id", "price_increment", "amount_increment"]),
-        on="symbol_id",
-        how="left",
-    )
-
-    missing_ids = joined.filter(pl.col("price_increment").is_null())
-    if not missing_ids.is_empty():
-        missing_symbols = missing_ids.select("symbol_id").unique()
-        raise ValueError(
-            f"decode_fixed_point: {missing_symbols.height} symbol_ids not found in dim_symbol"
-        )
-
-    # Compute quote_increment
-    result = joined.with_columns(
-        (pl.col("price_increment") * pl.col("amount_increment")).alias("quote_increment")
-    )
+    profile = _resolve_profile(df, exchange)
 
     # Decode all fields
-    result = result.with_columns(
+    result = df.with_columns(
         [
             pl.when(pl.col("open_px_int").is_not_null())
-            .then((pl.col("open_px_int") * pl.col("price_increment")).cast(pl.Float64))
+            .then((pl.col("open_px_int") * profile.price).cast(pl.Float64))
             .otherwise(None)
             .alias("open_px"),
             pl.when(pl.col("high_px_int").is_not_null())
-            .then((pl.col("high_px_int") * pl.col("price_increment")).cast(pl.Float64))
+            .then((pl.col("high_px_int") * profile.price).cast(pl.Float64))
             .otherwise(None)
             .alias("high_px"),
             pl.when(pl.col("low_px_int").is_not_null())
-            .then((pl.col("low_px_int") * pl.col("price_increment")).cast(pl.Float64))
+            .then((pl.col("low_px_int") * profile.price).cast(pl.Float64))
             .otherwise(None)
             .alias("low_px"),
             pl.when(pl.col("close_px_int").is_not_null())
-            .then((pl.col("close_px_int") * pl.col("price_increment")).cast(pl.Float64))
+            .then((pl.col("close_px_int") * profile.price).cast(pl.Float64))
             .otherwise(None)
             .alias("close_px"),
             pl.when(pl.col("volume_qty_int").is_not_null())
-            .then((pl.col("volume_qty_int") * pl.col("amount_increment")).cast(pl.Float64))
+            .then((pl.col("volume_qty_int") * profile.amount).cast(pl.Float64))
             .otherwise(None)
             .alias("volume"),
             pl.when(pl.col("quote_volume_int").is_not_null())
-            .then((pl.col("quote_volume_int") * pl.col("quote_increment")).cast(pl.Float64))
+            .then((pl.col("quote_volume_int") * profile.quote_vol).cast(pl.Float64))
             .otherwise(None)
             .alias("quote_volume"),
             pl.when(pl.col("taker_buy_base_qty_int").is_not_null())
-            .then((pl.col("taker_buy_base_qty_int") * pl.col("amount_increment")).cast(pl.Float64))
+            .then((pl.col("taker_buy_base_qty_int") * profile.amount).cast(pl.Float64))
             .otherwise(None)
             .alias("taker_buy_base_volume"),
             pl.when(pl.col("taker_buy_quote_qty_int").is_not_null())
-            .then((pl.col("taker_buy_quote_qty_int") * pl.col("quote_increment")).cast(pl.Float64))
+            .then((pl.col("taker_buy_quote_qty_int") * profile.quote_vol).cast(pl.Float64))
             .otherwise(None)
             .alias("taker_buy_quote_volume"),
         ]
     )
 
-    drop_cols = ["price_increment", "amount_increment", "quote_increment"]
     if not keep_ints:
-        drop_cols += required_cols
-    return result.drop(drop_cols)
+        result = result.drop(required_cols)
+    return result
+
+
+def _resolve_profile(df: pl.DataFrame, exchange: str | None = None):
+    """Resolve ScalarProfile from exchange parameter or DataFrame 'exchange' column."""
+    from pointline.encoding import get_profile
+
+    if exchange is not None:
+        return get_profile(exchange)
+    if "exchange" in df.columns:
+        exchanges = df["exchange"].unique().to_list()
+        if len(exchanges) != 1:
+            raise ValueError(
+                f"decode_fixed_point: DataFrame has {len(exchanges)} exchanges; "
+                "pass exchange= explicitly for multi-exchange DataFrames"
+            )
+        return get_profile(exchanges[0])
+    raise ValueError("decode_fixed_point: no 'exchange' column and no exchange= argument")
 
 
 def normalize_klines_schema(df: pl.DataFrame) -> pl.DataFrame:

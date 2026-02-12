@@ -204,8 +204,6 @@ def list_symbols(
             - asset_type: str (decoded: "spot", "perpetual", etc.)
             - tick_size: float
             - lot_size: float
-            - price_increment: float
-            - amount_increment: float
             - contract_size: float
             - valid_from_ts: int
             - valid_until_ts: int

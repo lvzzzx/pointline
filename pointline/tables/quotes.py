@@ -13,8 +13,7 @@ Example:
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Sequence
-from decimal import Decimal
+from collections.abc import Sequence
 
 import polars as pl
 
@@ -188,187 +187,106 @@ def _quote_validation_rules(df: pl.DataFrame) -> tuple[pl.Expr, list[tuple[str, 
 def encode_fixed_point(
     df: pl.DataFrame,
     dim_symbol: pl.DataFrame,
+    exchange: str,
 ) -> pl.DataFrame:
-    """Encode bid/ask prices and sizes as fixed-point integers using dim_symbol metadata.
+    """Encode bid/ask prices and sizes as fixed-point integers using asset-class scalar profile.
 
     Requires:
-    - df must have 'symbol_id' column (from resolve_symbol_ids)
-    - df must have 'bid_px', 'bid_sz', 'ask_px', 'ask_sz' columns
-    - dim_symbol must have 'symbol_id', 'price_increment', 'amount_increment' columns
+    - df must have 'bid_px', 'bid_sz', 'ask_px', 'ask_sz' float columns
 
     Computes:
-    - bid_px_int = floor(bid_px / price_increment)
-    - bid_sz_int = round(bid_sz / amount_increment)
-    - ask_px_int = ceil(ask_px / price_increment)
-    - ask_sz_int = round(ask_sz / amount_increment)
+    - bid_px_int = round(bid_px / profile.price)
+    - bid_sz_int = round(bid_sz / profile.amount)
+    - ask_px_int = round(ask_px / profile.price)
+    - ask_sz_int = round(ask_sz / profile.amount)
 
-    Rounding Semantics (Conservative to Avoid False Crossed Books):
-    - Bids use floor (rounds DOWN): Ensures we never overstate bid prices
-    - Asks use ceil (rounds UP): Ensures we never understate ask prices
-    - This prevents false crossed books (bid >= ask) due to rounding errors
-    - Example: bid=100.123, ask=100.124 with increment=0.1 becomes:
-      * floor(100.123 / 0.1) = floor(1001.23) = 1001 → 100.1
-      * ceil(100.124 / 0.1) = ceil(1001.24) = 1002 → 100.2
-      * Result: bid=100.1 < ask=100.2 (correctly maintains spread)
-    - Without asymmetric rounding, both could round to 1001, creating a false cross
+    The universal scalar (1e-9 for crypto, 1e-4 for cn-equity) ensures all exchange
+    prices are exactly representable, so symmetric round() is used everywhere.
 
     Returns DataFrame with bid_px_int, bid_sz_int, ask_px_int, ask_sz_int columns added.
     """
-    if "symbol_id" not in df.columns:
-        raise ValueError("encode_fixed_point: df must have 'symbol_id' column")
+    from pointline.encoding import encode_nullable_price, get_profile
 
     required_cols = ["bid_px", "bid_sz", "ask_px", "ask_sz"]
     missing = [c for c in required_cols if c not in df.columns]
     if missing:
         raise ValueError(f"encode_fixed_point: df missing columns: {missing}")
 
-    required_dims = ["symbol_id", "price_increment", "amount_increment"]
-    missing = [c for c in required_dims if c not in dim_symbol.columns]
-    if missing:
-        raise ValueError(f"encode_fixed_point: dim_symbol missing columns: {missing}")
+    profile = get_profile(exchange)
 
-    # Join to get increments
-    joined = df.join(
-        dim_symbol.select(["symbol_id", "price_increment", "amount_increment"]),
-        on="symbol_id",
-        how="left",
-    )
-
-    # Check for missing symbol_ids
-    missing_ids = joined.filter(pl.col("price_increment").is_null())
-    if not missing_ids.is_empty():
-        missing_symbols = missing_ids.select("symbol_id").unique()
-        raise ValueError(
-            f"encode_fixed_point: {missing_symbols.height} symbol_ids not found in dim_symbol"
+    # Encode nullable price helper handles the when/then/otherwise(None) pattern.
+    # For amounts, build the nullable expression inline (same pattern).
+    def _encode_nullable_amount(col: str) -> pl.Expr:
+        return (
+            pl.when(pl.col(col).is_not_null())
+            .then((pl.col(col) / profile.amount).round().cast(pl.Int64))
+            .otherwise(None)
         )
 
-    # Encode to fixed-point (handle nulls - preserve null for empty bid/ask)
-    result = joined.with_columns(
+    return df.with_columns(
         [
-            pl.when(pl.col("bid_px").is_not_null())
-            .then((pl.col("bid_px") / pl.col("price_increment")).floor().cast(pl.Int64))
-            .otherwise(None)
-            .alias("bid_px_int"),
-            pl.when(pl.col("bid_sz").is_not_null())
-            .then((pl.col("bid_sz") / pl.col("amount_increment")).round().cast(pl.Int64))
-            .otherwise(None)
-            .alias("bid_sz_int"),
-            pl.when(pl.col("ask_px").is_not_null())
-            .then((pl.col("ask_px") / pl.col("price_increment")).ceil().cast(pl.Int64))
-            .otherwise(None)
-            .alias("ask_px_int"),
-            pl.when(pl.col("ask_sz").is_not_null())
-            .then((pl.col("ask_sz") / pl.col("amount_increment")).round().cast(pl.Int64))
-            .otherwise(None)
-            .alias("ask_sz_int"),
+            encode_nullable_price("bid_px", profile).alias("bid_px_int"),
+            _encode_nullable_amount("bid_sz").alias("bid_sz_int"),
+            encode_nullable_price("ask_px", profile).alias("ask_px_int"),
+            _encode_nullable_amount("ask_sz").alias("ask_sz_int"),
         ]
     )
-
-    # Drop intermediate columns
-    return result.drop(["price_increment", "amount_increment"])
 
 
 def decode_fixed_point(
     df: pl.DataFrame,
-    dim_symbol: pl.DataFrame,
+    dim_symbol: pl.DataFrame | None = None,
     *,
     keep_ints: bool = False,
+    exchange: str | None = None,
 ) -> pl.DataFrame:
-    """Decode fixed-point integers into float bid/ask columns using dim_symbol metadata.
+    """Decode fixed-point integers into float bid/ask columns using asset-class profile.
 
     Requires:
-    - df must have 'symbol_id' column
     - df must have 'bid_px_int', 'bid_sz_int', 'ask_px_int', 'ask_sz_int' columns
-    - dim_symbol must have 'symbol_id', 'price_increment', 'amount_increment' columns
+    - df must have 'exchange' column OR exchange must be provided
 
     Returns DataFrame with bid_px, bid_sz, ask_px, ask_sz added (Float64).
     By default, drops the *_int columns.
     """
-    if "symbol_id" not in df.columns:
-        raise ValueError("decode_fixed_point: df must have 'symbol_id' column")
+    from pointline.encoding import decode_nullable_amount, decode_nullable_price
 
     required_cols = ["bid_px_int", "bid_sz_int", "ask_px_int", "ask_sz_int"]
     missing = [c for c in required_cols if c not in df.columns]
     if missing:
         raise ValueError(f"decode_fixed_point: df missing columns: {missing}")
 
-    required_dims = ["symbol_id", "price_increment", "amount_increment"]
-    missing_dims = [c for c in required_dims if c not in dim_symbol.columns]
-    if missing_dims:
-        raise ValueError(f"decode_fixed_point: dim_symbol missing columns: {missing_dims}")
+    profile = _resolve_profile(df, exchange)
 
-    joined = df.join(
-        dim_symbol.select(["symbol_id", "price_increment", "amount_increment"]),
-        on="symbol_id",
-        how="left",
-    )
-
-    missing_ids = joined.filter(pl.col("price_increment").is_null())
-    if not missing_ids.is_empty():
-        missing_symbols = missing_ids.select("symbol_id").unique()
-        raise ValueError(
-            f"decode_fixed_point: {missing_symbols.height} symbol_ids not found in dim_symbol"
-        )
-
-    price_decimals = _max_decimal_places(dim_symbol["price_increment"].to_list())
-    amount_decimals = _max_decimal_places(dim_symbol["amount_increment"].to_list())
-
-    result = joined.with_columns(
+    result = df.with_columns(
         [
-            pl.when(pl.col("bid_px_int").is_not_null())
-            .then(
-                (pl.col("bid_px_int") * pl.col("price_increment"))
-                .round(price_decimals)
-                .cast(pl.Float64)
-            )
-            .otherwise(None)
-            .alias("bid_px"),
-            pl.when(pl.col("bid_sz_int").is_not_null())
-            .then(
-                (pl.col("bid_sz_int") * pl.col("amount_increment"))
-                .round(amount_decimals)
-                .cast(pl.Float64)
-            )
-            .otherwise(None)
-            .alias("bid_sz"),
-            pl.when(pl.col("ask_px_int").is_not_null())
-            .then(
-                (pl.col("ask_px_int") * pl.col("price_increment"))
-                .round(price_decimals)
-                .cast(pl.Float64)
-            )
-            .otherwise(None)
-            .alias("ask_px"),
-            pl.when(pl.col("ask_sz_int").is_not_null())
-            .then(
-                (pl.col("ask_sz_int") * pl.col("amount_increment"))
-                .round(amount_decimals)
-                .cast(pl.Float64)
-            )
-            .otherwise(None)
-            .alias("ask_sz"),
+            decode_nullable_price("bid_px_int", profile).alias("bid_px"),
+            decode_nullable_amount("bid_sz_int", profile).alias("bid_sz"),
+            decode_nullable_price("ask_px_int", profile).alias("ask_px"),
+            decode_nullable_amount("ask_sz_int", profile).alias("ask_sz"),
         ]
     )
 
-    drop_cols = ["price_increment", "amount_increment"]
     if not keep_ints:
-        drop_cols += required_cols
-    return result.drop(drop_cols)
+        result = result.drop(required_cols)
+    return result
 
 
-def _max_decimal_places(values: Iterable[float | None]) -> int:
-    max_places = 0
-    for value in values:
-        if value is None:
-            continue
-        try:
-            exponent = Decimal(str(value)).normalize().as_tuple().exponent
-        except (ArithmeticError, ValueError):
-            continue
-        places = -exponent if exponent < 0 else 0
-        if places > max_places:
-            max_places = places
-    return max_places
+def _resolve_profile(df: pl.DataFrame, exchange: str | None = None):
+    """Resolve ScalarProfile from exchange parameter or DataFrame 'exchange' column."""
+    from pointline.encoding import get_profile
+
+    if exchange is not None:
+        return get_profile(exchange)
+    if "exchange" in df.columns:
+        exchanges = df["exchange"].unique().to_list()
+        if len(exchanges) != 1:
+            raise ValueError(
+                f"decode_fixed_point: DataFrame has {len(exchanges)} exchanges; "
+                "pass exchange= explicitly for multi-exchange DataFrames"
+            )
+        return get_profile(exchanges[0])
+    raise ValueError("decode_fixed_point: no 'exchange' column and no exchange= argument")
 
 
 def resolve_symbol_ids(

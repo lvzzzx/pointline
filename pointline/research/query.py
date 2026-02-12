@@ -96,7 +96,7 @@ def _resolve_symbols_with_warning(
     if len(symbol_ids) > 1:
         # Get details for warning message
         details = active_symbols.select(
-            ["symbol_id", "valid_from_ts", "valid_until_ts", "price_increment", "tick_size"]
+            ["symbol_id", "valid_from_ts", "valid_until_ts", "tick_size"]
         ).sort("valid_from_ts")
 
         warning_msg = (
@@ -380,7 +380,7 @@ def derivative_ticker(
         end: End time (datetime, ISO string, or int microseconds)
         ts_col: Timestamp column to filter on (default: "ts_local_us")
         columns: List of columns to select (default: all)
-        decoded: Ignored for derivative_ticker (data is already float, default: False)
+        decoded: Decode fixed-point integer columns into floats (default: False)
         lazy: Return LazyFrame (True) or DataFrame (False)
 
     Returns:
@@ -396,6 +396,7 @@ def derivative_ticker(
         ...     symbol="SOLUSDT",
         ...     start=datetime(2024, 5, 1, tzinfo=timezone.utc),
         ...     end=datetime(2024, 5, 2, tzinfo=timezone.utc),
+        ...     decoded=True,
         ... )
         >>>
         >>> # Or with ISO strings
@@ -407,23 +408,29 @@ def derivative_ticker(
         ...     lazy=False,
         ... )
     """
-    # Note: `decoded` is accepted for API consistency with trades/quotes/book_snapshot_25,
-    # but derivative_ticker data is stored as Float64 (not fixed-point), so no decoding is needed.
-    del decoded  # Unused - derivative_ticker is already float
-
     start_ts_us = core._normalize_timestamp(start, "start")
     end_ts_us = core._normalize_timestamp(end, "end")
 
     symbol_ids = _resolve_symbols_with_warning(exchange, symbol, start_ts_us, end_ts_us)
 
-    return core.load_derivative_ticker(
+    lf = core.scan_table(
+        "derivative_ticker",
         symbol_id=symbol_ids,
         start_ts_us=start_ts_us,
         end_ts_us=end_ts_us,
         ts_col=ts_col,
         columns=columns,
-        lazy=lazy,
     )
+
+    if decoded:
+        from pointline.tables.derivative_ticker import decode_fixed_point as decode_deriv_ticker
+
+        if lazy:
+            df = lf.collect()
+            return decode_deriv_ticker(df).lazy()
+        return decode_deriv_ticker(lf.collect())
+
+    return lf if lazy else lf.collect()
 
 
 def kline_1d(

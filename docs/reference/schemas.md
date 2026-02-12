@@ -32,19 +32,16 @@ Slowly Changing Dimension (SCD) Type 2 table tracking instrument metadata over t
 | **base_asset** | string | e.g., `BTC` |
 | **quote_asset** | string | e.g., `USD` or `USDT` |
 | **asset_type** | u8 | 0=spot, 1=perp, 2=future, 3=option |
-| **tick_size** | f64 | Minimum price step allowed by the exchange |
-| **lot_size** | f64 | Minimum tradable quantity allowed by the exchange |
-| **price_increment** | f64 | The value of "1" in `px_int` / `*_px_int` (storage encoding) |
-| **amount_increment** | f64 | The value of "1" in `qty_int` (Storage Encoding) |
+| **tick_size** | f64 | Minimum price step allowed by the exchange (order validation, not encoding) |
+| **lot_size** | f64 | Minimum tradable quantity allowed by the exchange (order validation, not encoding) |
 | **contract_size** | f64 | Value of 1 contract in base/quote units |
 | **valid_from_ts** | i64 | Inclusive µs timestamp |
 | **valid_until_ts** | i64 | Exclusive µs timestamp (default: `2^63 - 1`) |
 | **is_current** | bool | Helper for latest version queries |
 
 **Notes:**
-- In **Tick-based encoding** (recommended for compression), `price_increment == tick_size`.
-- In **Fixed Multiplier encoding** (recommended for cross-symbol math consistency), `price_increment` is a constant like `1e-8`, regardless of the current `tick_size`.
-- We store both to allow the backtester to know the *exchange rules* (`tick_size`) while the database driver uses `price_increment` for decoding.
+- `tick_size` and `lot_size` are exchange rules for order validation, NOT used for fixed-point encoding.
+- Fixed-point encoding uses per-asset-class scalar profiles defined in `pointline/encoding.py`. See [Section 4.1](#41-fixed-point-encoding).
 
 **Update Logic:**
 1. If a symbol's metadata (e.g., `tick_size`) changes:
@@ -258,7 +255,7 @@ Full top-25 order book snapshots from Tardis `book_snapshot_25`.
 **List Encoding:**
 - Convert `asks[0..24].price/amount` and `bids[0..24].price/amount` into lists of length 25.
 - Use nulls for missing levels (retain list length for positional consistency).
-- Convert prices/sizes into fixed-point `i64` using the symbol's `price_increment` / `amount_increment`.
+- Convert prices/sizes into fixed-point `i64` using the asset-class scalar profile (see [Section 4.1](#41-fixed-point-encoding)).
 
 **Storage:** Uses `list<i64>` columns. DuckDB/Polars handle lists natively and efficiently.
 
@@ -341,18 +338,18 @@ Derivative market data including mark/index, funding, open interest, etc.
 | symbol_id | i64 | |
 | ts_local_us | i64 | |
 | ts_exch_us | i64 | |
-| mark_px | f64 | keep float to preserve precision |
-| index_px | f64 | keep float to preserve precision |
-| last_px | f64 | keep float to preserve precision |
-| funding_rate | f64 | funding often fine as float |
-| predicted_funding_rate | f64 | optional; venue-provided estimate |
+| mark_px_int | i64 | fixed-point price (encoded with profile.price) |
+| index_px_int | i64 | fixed-point price (encoded with profile.price) |
+| last_px_int | i64 | fixed-point price (encoded with profile.price) |
+| funding_rate_int | i64 | fixed-point rate (encoded with profile.rate) |
+| predicted_funding_rate_int | i64 | fixed-point rate (encoded with profile.rate) |
 | funding_ts_us | i64 | next funding event timestamp |
-| open_interest | f64 | Open interest in **base asset units** (e.g., BTC, ETH, SOL). Keep float; source often fractional |
+| oi_int | i64 | Open interest in fixed-point (encoded with profile.amount) |
 | file_id | i32 | lineage tracking |
 | file_line_number | i32 | lineage tracking |
 
-**Note:** Use float columns for mark/index/last because some venues publish these with finer
-precision than trade tick size; fixed-point at `price_increment` would truncate.
+**Note:** All numeric fields use fixed-point integer encoding via per-asset-class scalar profiles.
+Use `decoded=True` in the query API or `decode_fixed_point()` to get float values.
 
 ---
 
@@ -434,25 +431,25 @@ Vendor-provided 1h OHLCV bars from Binance public data (Spot + USD-M futures).
 | symbol_id | i64 | |
 | ts_bucket_start_us | i64 | bar open time (µs since epoch) |
 | ts_bucket_end_us | i64 | bar close time (µs since epoch) |
-| open_px_int | i64 | fixed-point (encoded with `price_increment`) |
-| high_px_int | i64 | fixed-point (encoded with `price_increment`) |
-| low_px_int | i64 | fixed-point (encoded with `price_increment`) |
-| close_px_int | i64 | fixed-point (encoded with `price_increment`) |
-| volume_qty_int | i64 | base asset volume (fixed-point, encoded with `amount_increment`) |
-| quote_volume_int | i64 | quote asset volume (fixed-point, encoded with `quote_increment`) |
+| open_px_int | i64 | fixed-point (encoded with `profile.price`) |
+| high_px_int | i64 | fixed-point (encoded with `profile.price`) |
+| low_px_int | i64 | fixed-point (encoded with `profile.price`) |
+| close_px_int | i64 | fixed-point (encoded with `profile.price`) |
+| volume_qty_int | i64 | base asset volume (fixed-point, encoded with `profile.amount`) |
+| quote_volume_int | i64 | quote asset volume (fixed-point, encoded with `profile.quote_vol`) |
 | trade_count | i64 | number of trades in bar |
-| taker_buy_base_qty_int | i64 | taker buy base volume (fixed-point, encoded with `amount_increment`) |
-| taker_buy_quote_qty_int | i64 | taker buy quote volume (fixed-point, encoded with `quote_increment`) |
+| taker_buy_base_qty_int | i64 | taker buy base volume (fixed-point, encoded with `profile.amount`) |
+| taker_buy_quote_qty_int | i64 | taker buy quote volume (fixed-point, encoded with `profile.quote_vol`) |
 | file_id | i32 | lineage tracking |
 | file_line_number | i32 | lineage tracking |
 
 **Fixed-Point Encoding:**
-- **Price fields** (`open_px_int`, `high_px_int`, `low_px_int`, `close_px_int`): Encoded as `round(price / price_increment)`
-- **Base quantity fields** (`volume_qty_int`, `taker_buy_base_qty_int`): Encoded as `round(quantity / amount_increment)`
-- **Quote volume fields** (`quote_volume_int`, `taker_buy_quote_qty_int`): Encoded with `quote_increment = price_increment × amount_increment`
-  - Rationale: Each trade contributes `price × quantity` to quote volume. Since price is in multiples of `price_increment` and quantity is in multiples of `amount_increment`, the minimum quote volume increment is their product.
-  - Example (BTCUSDT): `price_increment=0.01`, `amount_increment=0.00001` → `quote_increment=0.0000001`
-- **Decoding:** Join with `dim_symbol` to retrieve increments, then multiply: `price_px = <price>_px_int × price_increment`
+- **Price fields** (`open_px_int`, `high_px_int`, `low_px_int`, `close_px_int`): Encoded as `round(price / profile.price)`
+- **Base quantity fields** (`volume_qty_int`, `taker_buy_base_qty_int`): Encoded as `round(quantity / profile.amount)`
+- **Quote volume fields** (`quote_volume_int`, `taker_buy_quote_qty_int`): Encoded with `profile.quote_vol` — a dedicated scalar for quote volumes
+  - Example (crypto profile): `price=1e-9`, `amount=1e-9`, `quote_vol=1e-6`
+- **Decoding:** Resolve the exchange's scalar profile, then multiply: `price_px = px_int × profile.price`
+- No `dim_symbol` join needed for encoding/decoding — profiles are resolved by exchange name
 
 **Notes:**
 - Interval-specific tables are used (e.g., `silver.kline_1h`); additional intervals
@@ -546,25 +543,43 @@ Examples:
 ### 4.1 Fixed-Point Encoding
 
 Prices and quantities are stored as integers (`i64`) for compression and exact precision.
+Encoding uses **per-asset-class scalar profiles** defined in `pointline/encoding.py`.
+
+**Scalar Profiles:**
+
+| Profile | price | amount | rate | quote_vol |
+|---------|-------|--------|------|-----------|
+| `crypto` | 1e-9 | 1e-9 | 1e-12 | 1e-6 |
+| `cn-equity` | 1e-4 | 1.0 | 1e-8 | 1e-4 |
+
+**Resolution:** `exchange` → `config.get_exchange_metadata()` → `asset_class` → profile
 
 **Encoding Formula:**
-- `px_int = round(price_px / price_increment)`
-- `qty_int = round(qty / amount_increment)`
+- `px_int = round(price / profile.price)`
+- `qty_int = round(qty / profile.amount)`
 
 **Decoding Formula:**
-- `price_px = px_int * price_increment`
-- `qty = qty_int * amount_increment`
+- `price = px_int * profile.price`
+- `qty = qty_int * profile.amount`
 
-**Increment Values:**
-- `price_increment` and `amount_increment` are stored in `silver.dim_symbol`
-- In **Tick-based encoding** (recommended for compression), `price_increment == tick_size`
-- In **Fixed Multiplier encoding** (recommended for cross-symbol math consistency), `price_increment` is a constant like `1e-8`, regardless of the current `tick_size`
+**Key Properties:**
+- Scalars are a property of the **asset class**, not the instrument — immutable once data is written
+- No `dim_symbol` join needed for encoding or decoding — only the exchange name is required
+- `tick_size` and `lot_size` in `dim_symbol` are exchange order-validation rules, NOT encoding scalars
+- Log returns and ratio-based features (spread_bps, realized_volatility) are scale-invariant and can operate directly on integer columns
 
 **Storage:**
 - `px_int`, `qty_int` (required, stored as `i64`)
 - Decoded floats use `price_px`, `qty` (derived, not stored)
 
-**Alternative (Robustness):** Standardize on a fixed multiplier (e.g., `1e8` or `1e9`) if metadata is flaky. "Tick-based" is better for compression; "Fixed Multiplier" is safer for operations.
+**Python API:**
+```python
+from pointline.encoding import get_profile, encode_price, decode_price
+
+profile = get_profile("binance-futures")  # → crypto profile
+# Encode: df.select(encode_price("price_px", profile).alias("px_int"))
+# Decode: df.select(decode_price("px_int", profile).alias("price_px"))
+```
 
 ---
 
@@ -648,7 +663,7 @@ Delta Lake (via Parquet) does not support unsigned integer types `UInt16` and `U
 | `trades` | Silver | `exchange`, `date` | `ts_local_us`, `symbol_id`, `px_int`, `qty_int` |
 | `quotes` | Silver | `exchange`, `date` | `ts_local_us`, `symbol_id`, `bid_px_int`, `ask_px_int` |
 | `book_ticker` | Silver | `exchange`, `date` | `ts_local_us`, `symbol_id`, `bid_px_int`, `ask_px_int` |
-| `derivative_ticker` | Silver | `exchange`, `date` | `ts_local_us`, `symbol_id`, `mark_px`, `funding_rate` |
+| `derivative_ticker` | Silver | `exchange`, `date` | `ts_local_us`, `symbol_id`, `mark_px_int`, `funding_rate_int` |
 | `liquidations` | Silver | `exchange`, `date` | `ts_local_us`, `symbol_id`, `px_int`, `qty_int` |
 | `options_chain` | Silver | `exchange`, `date` | `ts_local_us`, `underlying_symbol_id`, `option_symbol_id` |
 | `kline_1h` | Silver | `exchange`, `date` | `ts_bucket_start_us`, `symbol_id`, OHLCV |

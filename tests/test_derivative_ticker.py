@@ -5,6 +5,7 @@ from pointline.io.vendors.tardis.parsers.derivative_ticker import (
 )
 from pointline.tables.derivative_ticker import (
     DERIVATIVE_TICKER_SCHEMA,
+    encode_fixed_point,
     normalize_derivative_ticker_schema,
     validate_derivative_ticker,
 )
@@ -91,7 +92,12 @@ def test_validate_derivative_ticker_accepts_valid() -> None:
             pl.lit("binance-futures").alias("exchange"),
             pl.lit(2, dtype=pl.Int16).alias("exchange_id"),
             pl.lit(100, dtype=pl.Int64).alias("symbol_id"),
+            pl.lit(1, dtype=pl.Int32).alias("file_id"),
+            pl.lit(1, dtype=pl.Int32).alias("file_line_number"),
+            pl.lit("2024-05-01").str.strptime(pl.Date, "%Y-%m-%d").alias("date"),
         ]
     )
-    validated = validate_derivative_ticker(df)
+    encoded = encode_fixed_point(df, pl.DataFrame(), "binance-futures")
+    normalized = normalize_derivative_ticker_schema(encoded)
+    validated = validate_derivative_ticker(normalized)
     assert validated.height == 1

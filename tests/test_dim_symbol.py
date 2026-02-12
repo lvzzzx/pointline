@@ -19,8 +19,6 @@ def _base_updates(valid_from_ts: int, tick_size: float = 0.5) -> pl.DataFrame:
             "asset_type": [1],
             "tick_size": [tick_size],
             "lot_size": [1.0],
-            "price_increment": [tick_size],
-            "amount_increment": [0.1],
             "contract_size": [1.0],
             "valid_from_ts": [valid_from_ts],
         }
@@ -74,8 +72,6 @@ def test_upsert_detects_null_to_value_change():
             "asset_type": [1],
             "tick_size": [None],
             "lot_size": [1.0],
-            "price_increment": [None],
-            "amount_increment": [0.1],
             "contract_size": [1.0],
             "valid_from_ts": [100],
         }
@@ -321,8 +317,6 @@ def test_resolve_symbol_ids_respects_valid_until_ts_gap():
             "asset_type": [1, 1],
             "tick_size": [0.5, 1.0],
             "lot_size": [1.0, 1.0],
-            "price_increment": [0.5, 1.0],
-            "amount_increment": [0.1, 0.1],
             "contract_size": [1.0, 1.0],
             "expiry_ts_us": [None, None],
             "underlying_symbol_id": [None, None],

@@ -18,8 +18,6 @@ def _base_row(ts: int, tick_size: float = 0.5, symbol: str = "BTC-PERPETUAL"):
             "asset_type": [1],
             "tick_size": [tick_size],
             "lot_size": [1.0],
-            "price_increment": [tick_size],
-            "amount_increment": [0.1],
             "contract_size": [1.0],
             "valid_from_ts": [ts],
         }

@@ -89,6 +89,79 @@ class BronzeLayoutSpec:
 
 
 @dataclass
+class BronzeSnapshotManifest:
+    """Manifest for v2 API bronze snapshots (manifest + records separation)."""
+
+    schema_version: int
+    vendor: str
+    dataset: str
+    data_type: str
+    capture_mode: str
+    record_format: str
+    complete: bool
+    captured_at_us: int
+    api_endpoint: str
+    request_params: dict[str, Any]
+    record_count: int
+    records_content_sha256: str
+    records_file_sha256: str
+    partitions: dict[str, str]
+    vendor_effective_ts_us: int | None = None
+    expected_record_count: int | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize to a JSON-compatible dict."""
+        return {
+            "schema_version": self.schema_version,
+            "vendor": self.vendor,
+            "dataset": self.dataset,
+            "data_type": self.data_type,
+            "capture_mode": self.capture_mode,
+            "record_format": self.record_format,
+            "complete": self.complete,
+            "captured_at_us": self.captured_at_us,
+            "vendor_effective_ts_us": self.vendor_effective_ts_us,
+            "api_endpoint": self.api_endpoint,
+            "request_params": self.request_params,
+            "record_count": self.record_count,
+            "expected_record_count": self.expected_record_count,
+            "records_content_sha256": self.records_content_sha256,
+            "records_file_sha256": self.records_file_sha256,
+            "partitions": self.partitions,
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> BronzeSnapshotManifest:
+        """Deserialize from a dict (e.g. loaded from JSON)."""
+        return cls(
+            schema_version=d["schema_version"],
+            vendor=d["vendor"],
+            dataset=d["dataset"],
+            data_type=d["data_type"],
+            capture_mode=d["capture_mode"],
+            record_format=d["record_format"],
+            complete=d["complete"],
+            captured_at_us=d["captured_at_us"],
+            vendor_effective_ts_us=d.get("vendor_effective_ts_us"),
+            api_endpoint=d["api_endpoint"],
+            request_params=d.get("request_params", {}),
+            record_count=d["record_count"],
+            expected_record_count=d.get("expected_record_count"),
+            records_content_sha256=d["records_content_sha256"],
+            records_file_sha256=d["records_file_sha256"],
+            partitions=d.get("partitions", {}),
+        )
+
+    @classmethod
+    def from_file(cls, path: Path) -> BronzeSnapshotManifest:
+        """Load manifest from a JSON file."""
+        import json
+
+        with open(path, encoding="utf-8") as f:
+            return cls.from_dict(json.load(f))
+
+
+@dataclass
 class ApiSnapshotSpec:
     """Vendor dataset contract for API snapshot capture/replay."""
 

@@ -81,7 +81,7 @@ L3_TICKS_SCHEMA: dict[str, pl.DataType] = {
     "bid_appl_seq_num": pl.Int64,  # Buy order ID (0 if N/A)
     "offer_appl_seq_num": pl.Int64,  # Sell order ID (0 if N/A)
     "exec_type": pl.UInt8,  # 0=fill, 1=cancel
-    "px_int": pl.Int64,  # Fixed-point encoded (price / price_increment), 0 for cancellations
+    "px_int": pl.Int64,  # Fixed-point encoded (price / profile.price), 0 for cancellations
     "qty_int": pl.Int64,  # Lot-based encoding (qty / 100 shares)
     "channel_no": pl.Int32,  # Exchange channel ID
     "trading_phase": pl.UInt8,  # 0=unknown, 1=open call, 2=continuous, 3=close call
@@ -231,115 +231,76 @@ def validate_l3_ticks(df: pl.DataFrame) -> pl.DataFrame:
 def encode_fixed_point(
     df: pl.DataFrame,
     dim_symbol: pl.DataFrame,
+    exchange: str,
 ) -> pl.DataFrame:
-    """Encode price and quantity as fixed-point integers using dim_symbol metadata.
+    """Encode price and quantity as fixed-point integers using asset-class scalar profile.
 
-    Requires:
-    - df must have 'symbol_id' column (from resolve_symbol_ids)
-    - df must have 'price_px', 'qty' columns (floats/ints)
-    - dim_symbol must have 'symbol_id', 'price_increment', 'amount_increment' columns
-
-    Computes:
-    - px_int = round(price_px / price_increment)
-    - qty_int = round(qty / amount_increment)
-
-    Lot-based quantity encoding (amount_increment = 100 shares):
-    - 100 shares → qty_int = 1
-    - 500 shares → qty_int = 5
-    - 1000 shares → qty_int = 10
+    For cn-equity: price scalar=1e-4 (sub-fen), amount scalar=1.0 (1 share).
 
     Returns DataFrame with px_int, qty_int columns added.
     """
-    if "symbol_id" not in df.columns:
-        raise ValueError("encode_fixed_point: df must have 'symbol_id' column")
+    from pointline.encoding import encode_amount, encode_price, get_profile
 
     required_cols = ["price_px", "qty"]
     missing = [c for c in required_cols if c not in df.columns]
     if missing:
         raise ValueError(f"encode_fixed_point: df missing columns: {missing}")
 
-    required_dims = ["symbol_id", "price_increment", "amount_increment"]
-    missing_dims = [c for c in required_dims if c not in dim_symbol.columns]
-    if missing_dims:
-        raise ValueError(f"encode_fixed_point: dim_symbol missing columns: {missing_dims}")
-
-    joined = df.join(
-        dim_symbol.select(["symbol_id", "price_increment", "amount_increment"]),
-        on="symbol_id",
-        how="left",
-    )
-
-    missing_ids = joined.filter(pl.col("price_increment").is_null())
-    if not missing_ids.is_empty():
-        missing_symbols = missing_ids.select("symbol_id").unique()
-        raise ValueError(
-            f"encode_fixed_point: {missing_symbols.height} symbol_ids not found in dim_symbol"
-        )
-
-    result = joined.with_columns(
+    profile = get_profile(exchange)
+    result = df.with_columns(
         [
-            (pl.col("price_px") / pl.col("price_increment")).round().cast(pl.Int64).alias("px_int"),
-            (pl.col("qty") / pl.col("amount_increment")).round().cast(pl.Int64).alias("qty_int"),
+            encode_price("price_px", profile).alias("px_int"),
+            encode_amount("qty", profile).alias("qty_int"),
         ]
     )
-
-    drop_cols = ["price_increment", "amount_increment", "price_px", "qty"]
-    return result.drop(drop_cols)
+    return result.drop(["price_px", "qty"])
 
 
 def decode_fixed_point(
     df: pl.DataFrame,
-    dim_symbol: pl.DataFrame,
+    dim_symbol: pl.DataFrame | None = None,
     *,
     keep_ints: bool = False,
+    exchange: str | None = None,
 ) -> pl.DataFrame:
-    """Decode fixed-point integers into float price and int quantity using dim_symbol metadata.
-
-    Requires:
-    - df must have 'symbol_id' column
-    - df must have 'px_int', 'qty_int' columns
-    - dim_symbol must have 'symbol_id', 'price_increment', 'amount_increment' columns
+    """Decode fixed-point integers into float price and int quantity using asset-class profile.
 
     Returns DataFrame with price_px (Float64) and qty (Int64) columns added.
     By default, drops the *_int columns.
     """
-    if "symbol_id" not in df.columns:
-        raise ValueError("decode_fixed_point: df must have 'symbol_id' column")
-
     required_cols = ["px_int", "qty_int"]
     missing = [c for c in required_cols if c not in df.columns]
     if missing:
         raise ValueError(f"decode_fixed_point: df missing columns: {missing}")
 
-    required_dims = ["symbol_id", "price_increment", "amount_increment"]
-    missing_dims = [c for c in required_dims if c not in dim_symbol.columns]
-    if missing_dims:
-        raise ValueError(f"decode_fixed_point: dim_symbol missing columns: {missing_dims}")
+    profile = _resolve_profile(df, exchange)
 
-    joined = df.join(
-        dim_symbol.select(["symbol_id", "price_increment", "amount_increment"]),
-        on="symbol_id",
-        how="left",
-    )
-
-    missing_ids = joined.filter(pl.col("price_increment").is_null())
-    if not missing_ids.is_empty():
-        missing_symbols = missing_ids.select("symbol_id").unique()
-        raise ValueError(
-            f"decode_fixed_point: {missing_symbols.height} symbol_ids not found in dim_symbol"
-        )
-
-    result = joined.with_columns(
+    result = df.with_columns(
         [
-            (pl.col("px_int") * pl.col("price_increment")).cast(pl.Float64).alias("price_px"),
-            (pl.col("qty_int") * pl.col("amount_increment")).cast(pl.Int64).alias("qty"),
+            (pl.col("px_int") * profile.price).cast(pl.Float64).alias("price_px"),
+            (pl.col("qty_int") * profile.amount).cast(pl.Int64).alias("qty"),
         ]
     )
 
-    drop_cols = ["price_increment", "amount_increment"]
     if not keep_ints:
-        drop_cols += required_cols
-    return result.drop(drop_cols)
+        result = result.drop(required_cols)
+    return result
+
+
+def _resolve_profile(df: pl.DataFrame, exchange: str | None = None):
+    """Resolve ScalarProfile from exchange parameter or DataFrame 'exchange' column."""
+    from pointline.encoding import get_profile
+
+    if exchange is not None:
+        return get_profile(exchange)
+    if "exchange" in df.columns:
+        exchanges = df["exchange"].unique().to_list()
+        if len(exchanges) != 1:
+            raise ValueError(
+                f"decode: DataFrame has {len(exchanges)} exchanges; pass exchange= explicitly"
+            )
+        return get_profile(exchanges[0])
+    raise ValueError("No 'exchange' column and no exchange= argument")
 
 
 def resolve_symbol_ids(

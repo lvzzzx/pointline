@@ -135,6 +135,13 @@ class TushareVendor:
 
         return build_dim_symbol_updates_from_stock_basic_cn(pl.DataFrame(records))
 
+    def get_scd2_tracked_columns(self, dataset: str) -> list[str] | None:
+        if dataset == "dim_symbol":
+            from pointline.dim_symbol import TRACKED_COLS
+
+            return list(TRACKED_COLS)
+        return None
+
     def read_and_parse(self, path: Path, meta: BronzeFileMetadata) -> pl.DataFrame:
         """Tushare does not support file parsing."""
         raise NotImplementedError(f"{self.name} does not support read_and_parse")
