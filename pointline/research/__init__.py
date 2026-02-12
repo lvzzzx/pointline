@@ -3,7 +3,7 @@
 This package provides four layers:
 
 1. Core API (explicit symbol resolution):
-   - research.load_trades(symbol_id=..., start_ts_us=..., end_ts_us=...)
+   - research.load_trades(exchange=..., symbol=..., start_ts_us=..., end_ts_us=...)
    - Best for: production research, reproducibility, when you need control
 
 2. Query API (automatic symbol resolution):
@@ -20,16 +20,13 @@ This package provides four layers:
    - Best for: composing event_joined/tick_then_bar/bar_then_feature in one run
 
 Example - Core API (explicit):
-    >>> from pointline import research, registry
+    >>> from pointline import research
     >>> from datetime import datetime, timezone
     >>>
-    >>> # Explicitly resolve symbol_ids
-    >>> symbols = registry.find_symbol("SOLUSDT", exchange="binance-futures")
-    >>> symbol_ids = symbols["symbol_id"].to_list()
-    >>>
-    >>> # Load with explicit symbol_ids
+    >>> # Load with explicit exchange and symbol
     >>> trades = research.load_trades(
-    ...     symbol_id=symbol_ids,
+    ...     exchange="binance-futures",
+    ...     symbol="SOLUSDT",
     ...     start_ts_us=datetime(2024, 5, 1, tzinfo=timezone.utc),
     ...     end_ts_us=datetime(2024, 5, 2, tzinfo=timezone.utc),
     ... )
@@ -37,7 +34,8 @@ Example - Core API (explicit):
 Example - Core API (decoded convenience):
     >>> from pointline import research
     >>> trades = research.load_trades_decoded(
-    ...     symbol_id=symbol_ids,
+    ...     exchange="binance-futures",
+    ...     symbol="SOLUSDT",
     ...     start_ts_us=datetime(2024, 5, 1, tzinfo=timezone.utc),
     ...     end_ts_us=datetime(2024, 5, 2, tzinfo=timezone.utc),
     ... )

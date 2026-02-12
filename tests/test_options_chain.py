@@ -108,9 +108,7 @@ def test_normalize_and_validate_options_chain() -> None:
     df = parsed.with_columns(
         [
             pl.lit("deribit").alias("exchange"),
-            pl.lit(21, dtype=pl.Int16).alias("exchange_id"),
-            pl.lit(2001, dtype=pl.Int64).alias("option_symbol_id"),
-            pl.lit(1001, dtype=pl.Int64).alias("underlying_symbol_id"),
+            pl.col("exchange_symbol").alias("symbol"),
             pl.lit(120000, dtype=pl.Int64).alias("strike_int"),
             pl.lit(201, dtype=pl.Int64).alias("bid_px_int"),
             pl.lit(202, dtype=pl.Int64).alias("ask_px_int"),
@@ -164,8 +162,8 @@ def test_options_chain_ingestion_service_ingest_file(sample_manifest_repo, tmp_p
     assert result.row_count == 1
     written = repo.read_all()
     assert written.height == 1
-    assert written["option_symbol_id"][0] == 2001
-    assert written["underlying_symbol_id"][0] is None
+    assert written["symbol"][0] == "BTC-30JUN24-60000-C"
+    assert written["underlying_index"][0] == "BTC"
     # crypto profile: price=1e-9 → 60000/1e-9 = 60000000000000
     assert written["strike_int"][0] == 60000000000000
 

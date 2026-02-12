@@ -13,50 +13,6 @@ import polars as pl
 from pointline.validation_utils import DataQualityWarning
 
 
-def generic_resolve_symbol_ids(
-    data: pl.DataFrame,
-    dim_symbol: pl.DataFrame,
-    exchange_id: int | None,
-    exchange_symbol: str | None,
-    *,
-    ts_col: str = "ts_local_us",
-) -> pl.DataFrame:
-    """Resolve symbol_ids for data using as-of join with dim_symbol.
-
-    This is a reusable wrapper around dim_symbol.resolve_symbol_ids that handles
-    adding exchange_id and exchange_symbol columns if not present.
-
-    Args:
-        data: DataFrame with timestamp column
-        dim_symbol: dim_symbol table in canonical schema
-        exchange_id: Exchange ID to use for all rows
-        exchange_symbol: Exchange symbol to use for all rows
-        ts_col: Timestamp column name (default: ts_local_us)
-
-    Returns:
-        DataFrame with symbol_id column added
-    """
-    from pointline.dim_symbol import resolve_symbol_ids as _resolve_symbol_ids
-
-    result = data.clone()
-    if "exchange_id" not in result.columns:
-        if exchange_id is None:
-            raise ValueError("exchange_id is required when DataFrame lacks exchange_id column.")
-        # Cast to match dim_symbol's exchange_id type (Int16, not UInt16)
-        result = result.with_columns(pl.lit(exchange_id, dtype=pl.Int16).alias("exchange_id"))
-    else:
-        # Ensure existing exchange_id matches dim_symbol type
-        result = result.with_columns(pl.col("exchange_id").cast(pl.Int16))
-    if "exchange_symbol" not in result.columns:
-        if exchange_symbol is None:
-            raise ValueError(
-                "exchange_symbol is required when DataFrame lacks exchange_symbol column."
-            )
-        result = result.with_columns(pl.lit(exchange_symbol).alias("exchange_symbol"))
-
-    return _resolve_symbol_ids(result, dim_symbol, ts_col=ts_col)
-
-
 def generic_validate(
     df: pl.DataFrame,
     combined_filter: pl.Expr,

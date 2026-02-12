@@ -19,10 +19,8 @@ import polars as pl
 
 # Import parser from new location for backward compatibility
 from pointline.tables._base import (
-    generic_resolve_symbol_ids,
     generic_validate,
 )
-from pointline.validation_utils import with_expected_exchange_id
 
 # Required metadata fields for ingestion
 REQUIRED_METADATA_FIELDS: set[str] = set()
@@ -32,7 +30,6 @@ REQUIRED_METADATA_FIELDS: set[str] = set()
 # Delta Lake Integer Type Limitations:
 # - Delta Lake (via Parquet) does not support unsigned integer types UInt16 and UInt32
 # - These are automatically converted to signed types (Int16 and Int32) when written
-# - Use Int16 instead of UInt16 for exchange_id
 # - Use Int32 instead of UInt32 for symbol_id, file_id
 # - UInt8 is supported and maps to TINYINT
 #
@@ -40,8 +37,7 @@ REQUIRED_METADATA_FIELDS: set[str] = set()
 QUOTES_SCHEMA: dict[str, pl.DataType] = {
     "date": pl.Date,
     "exchange": pl.Utf8,  # Exchange name (string) for partitioning and human readability
-    "exchange_id": pl.Int16,  # Delta Lake stores as Int16 (not UInt16) - for joins and compression
-    "symbol_id": pl.Int64,  # Match dim_symbol's symbol_id type
+    "symbol": pl.Utf8,
     "ts_local_us": pl.Int64,
     "ts_exch_us": pl.Int64,
     "bid_px_int": pl.Int64,
@@ -95,7 +91,6 @@ def validate_quotes(df: pl.DataFrame) -> pl.DataFrame:
     - Valid timestamp ranges (reasonable values) for local and exchange times
     - Crossed book check: bid_px_int < ask_px_int when both are present
     - At least one of bid or ask must be present (filter rows with both missing)
-    - exchange_id matches normalized exchange
 
     Returns filtered DataFrame (invalid rows removed) or raises on critical errors.
     """
@@ -111,17 +106,15 @@ def validate_quotes(df: pl.DataFrame) -> pl.DataFrame:
         "ts_local_us",
         "ts_exch_us",
         "exchange",
-        "exchange_id",
-        "symbol_id",
+        "symbol",
     ]
     missing = [c for c in required if c not in df.columns]
     if missing:
         raise ValueError(f"validate_quotes: missing required columns: {missing}")
 
-    df_with_expected = with_expected_exchange_id(df)
-    combined_filter, rules = _quote_validation_rules(df_with_expected)
+    combined_filter, rules = _quote_validation_rules(df)
 
-    valid = generic_validate(df_with_expected, combined_filter, rules, "quotes")
+    valid = generic_validate(df, combined_filter, rules, "quotes")
     return valid.select(df.columns)
 
 
@@ -135,9 +128,7 @@ def _quote_validation_rules(df: pl.DataFrame) -> tuple[pl.Expr, list[tuple[str, 
         & (pl.col("ts_exch_us") > 0)
         & (pl.col("ts_exch_us") < 2**63)
         & (pl.col("exchange").is_not_null())
-        & (pl.col("exchange_id").is_not_null())
-        & (pl.col("symbol_id").is_not_null())
-        & (pl.col("exchange_id") == pl.col("expected_exchange_id")),
+        & (pl.col("symbol").is_not_null()),
         has_bid | has_ask,
         pl.when(has_bid)
         .then((pl.col("bid_px_int") > 0) & (pl.col("bid_sz_int") > 0))
@@ -172,13 +163,7 @@ def _quote_validation_rules(df: pl.DataFrame) -> tuple[pl.Expr, list[tuple[str, 
             | (pl.col("ts_exch_us") >= 2**63),
         ),
         ("exchange", pl.col("exchange").is_null()),
-        ("exchange_id", pl.col("exchange_id").is_null()),
-        ("symbol_id", pl.col("symbol_id").is_null()),
-        (
-            "exchange_id_mismatch",
-            pl.col("expected_exchange_id").is_null()
-            | (pl.col("exchange_id") != pl.col("expected_exchange_id")),
-        ),
+        ("symbol", pl.col("symbol").is_null()),
     ]
 
     return combined_filter, rules
@@ -287,31 +272,6 @@ def _resolve_profile(df: pl.DataFrame, exchange: str | None = None):
             )
         return get_profile(exchanges[0])
     raise ValueError("decode_fixed_point: no 'exchange' column and no exchange= argument")
-
-
-def resolve_symbol_ids(
-    data: pl.DataFrame,
-    dim_symbol: pl.DataFrame,
-    exchange_id: int | None,
-    exchange_symbol: str | None,
-    *,
-    ts_col: str = "ts_local_us",
-) -> pl.DataFrame:
-    """Resolve symbol_ids for quotes data using as-of join with dim_symbol.
-
-    This is a wrapper around the generic symbol resolution function.
-
-    Args:
-        data: DataFrame with ts_local_us (or ts_col) column
-        dim_symbol: dim_symbol table in canonical schema
-        exchange_id: Exchange ID to use for all rows
-        exchange_symbol: Exchange symbol to use for all rows
-        ts_col: Timestamp column name (default: ts_local_us)
-
-    Returns:
-        DataFrame with symbol_id column added
-    """
-    return generic_resolve_symbol_ids(data, dim_symbol, exchange_id, exchange_symbol, ts_col=ts_col)
 
 
 def required_quotes_columns() -> Sequence[str]:

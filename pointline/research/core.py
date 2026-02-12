@@ -11,12 +11,10 @@ import polars as pl
 
 from pointline._error_messages import (
     invalid_timestamp_range_error,
-    symbol_id_required_error,
     timestamp_required_error,
 )
 from pointline.config import TABLE_HAS_DATE, TABLE_PATHS, get_table_path
 from pointline.encoding import get_profile
-from pointline.registry import resolve_symbols
 from pointline.tables.book_snapshots import decode_fixed_point as decode_book_snapshots
 from pointline.tables.klines import decode_fixed_point as decode_klines
 from pointline.tables.quotes import decode_fixed_point as decode_quotes
@@ -95,7 +93,8 @@ def _normalize_timestamp(ts: TimestampInput | None, param_name: str) -> int | No
 def scan_table(
     table_name: TableName,
     *,
-    symbol_id: int | Iterable[int] | None = None,
+    exchange: str | None = None,
+    symbol: str | Iterable[str] | None = None,
     start_ts_us: TimestampInput | None = None,
     end_ts_us: TimestampInput | None = None,
     ts_col: str = "ts_local_us",
@@ -103,13 +102,14 @@ def scan_table(
 ) -> pl.LazyFrame:
     """Return a filtered LazyFrame for a Delta table.
 
-    Requires symbol_id + time range. Exchange partitions are derived from symbol_id
-    for pruning. Timestamps are applied to the selected time column and implicitly
-    prune date partitions when available.
+    Requires exchange + time range for partition pruning. Symbol is optional
+    (can query all symbols for an exchange).
 
     Args:
         table_name: Name of the table to scan (e.g., "trades", "quotes")
-        symbol_id: Symbol ID(s) to filter. Required for partition pruning.
+        exchange: Exchange name for partition pruning (e.g., "binance-futures").
+            Required.
+        symbol: Symbol name(s) to filter (e.g., "BTCUSDT"). Optional.
         start_ts_us: Start timestamp (microseconds since epoch or datetime object)
         end_ts_us: End timestamp (microseconds since epoch or datetime object)
         ts_col: Timestamp column to filter on (default: "ts_local_us")
@@ -126,18 +126,20 @@ def scan_table(
         >>> from datetime import datetime, timezone
         >>> from pointline import research
         >>>
-        >>> # Using int timestamps (existing API)
+        >>> # Using int timestamps
         >>> lf = research.scan_table(
         ...     "trades",
-        ...     symbol_id=101,
+        ...     exchange="binance-futures",
+        ...     symbol="BTCUSDT",
         ...     start_ts_us=1700000000000000,
         ...     end_ts_us=1700003600000000,
         ... )
         >>>
-        >>> # Using datetime objects (new convenience)
+        >>> # Using datetime objects
         >>> lf = research.scan_table(
         ...     "trades",
-        ...     symbol_id=101,
+        ...     exchange="binance-futures",
+        ...     symbol="BTCUSDT",
         ...     start_ts_us=datetime(2023, 11, 14, 12, 0, tzinfo=timezone.utc),
         ...     end_ts_us=datetime(2023, 11, 14, 13, 0, tzinfo=timezone.utc),
         ... )
@@ -147,15 +149,13 @@ def scan_table(
     end_ts_us_int = _normalize_timestamp(end_ts_us, "end_ts_us")
 
     # Validation with enhanced error messages
-    if symbol_id is None:
-        raise ValueError(symbol_id_required_error())
+    if exchange is None:
+        raise ValueError("exchange is required for partition pruning.")
     if start_ts_us_int is None or end_ts_us_int is None:
         raise ValueError(timestamp_required_error())
 
     _validate_ts_range(start_ts_us_int, end_ts_us_int)
     _validate_ts_col(ts_col)
-
-    resolved_symbol_ids = symbol_id
 
     start_date, end_date = _derive_date_bounds_from_ts(start_ts_us_int, end_ts_us_int)
     date_filter_is_implicit = True
@@ -164,7 +164,8 @@ def scan_table(
     lf = _apply_filters(
         lf,
         table_name=table_name,
-        symbol_id=resolved_symbol_ids,
+        exchange=exchange,
+        symbol=symbol,
         start_date=start_date,
         end_date=end_date,
         start_ts_us=start_ts_us_int,
@@ -180,7 +181,8 @@ def scan_table(
 def read_table(
     table_name: TableName,
     *,
-    symbol_id: int | Iterable[int] | None = None,
+    exchange: str | None = None,
+    symbol: str | Iterable[str] | None = None,
     start_ts_us: TimestampInput | None = None,
     end_ts_us: TimestampInput | None = None,
     ts_col: str = "ts_local_us",
@@ -189,11 +191,13 @@ def read_table(
     """Return a filtered DataFrame for a Delta table.
 
     This is an eager version of scan_table() that immediately collects results.
-    Requires symbol_id + time range.
+    Requires exchange + time range.
 
     Args:
         table_name: Name of the table to read
-        symbol_id: Symbol ID(s) to filter
+        exchange: Exchange name for partition pruning (e.g., "binance-futures").
+            Required.
+        symbol: Symbol name(s) to filter (e.g., "BTCUSDT"). Optional.
         start_ts_us: Start timestamp (microseconds since epoch or datetime object)
         end_ts_us: End timestamp (microseconds since epoch or datetime object)
         ts_col: Timestamp column to filter on (default: "ts_local_us")
@@ -206,14 +210,16 @@ def read_table(
         >>> from datetime import datetime, timezone
         >>> df = research.read_table(
         ...     "trades",
-        ...     symbol_id=101,
+        ...     exchange="binance-futures",
+        ...     symbol="BTCUSDT",
         ...     start_ts_us=datetime(2023, 11, 14, 12, 0, tzinfo=timezone.utc),
         ...     end_ts_us=datetime(2023, 11, 14, 13, 0, tzinfo=timezone.utc),
         ... )
     """
     return scan_table(
         table_name,
-        symbol_id=symbol_id,
+        exchange=exchange,
+        symbol=symbol,
         start_ts_us=start_ts_us,
         end_ts_us=end_ts_us,
         ts_col=ts_col,
@@ -223,7 +229,8 @@ def read_table(
 
 def load_trades(
     *,
-    symbol_id: int | Iterable[int] | None = None,
+    exchange: str | None = None,
+    symbol: str | Iterable[str] | None = None,
     start_ts_us: TimestampInput | None = None,
     end_ts_us: TimestampInput | None = None,
     ts_col: str = "ts_local_us",
@@ -232,10 +239,11 @@ def load_trades(
 ) -> pl.DataFrame | pl.LazyFrame:
     """Load trades with common filters applied.
 
-    Requires symbol_id + time range.
+    Requires exchange + time range.
 
     Args:
-        symbol_id: Symbol ID(s) to filter
+        exchange: Exchange name for partition pruning (e.g., "binance-futures")
+        symbol: Symbol name(s) to filter (e.g., "BTCUSDT"). Optional.
         start_ts_us: Start timestamp (microseconds since epoch or datetime object)
         end_ts_us: End timestamp (microseconds since epoch or datetime object)
         ts_col: Timestamp column to filter on (default: "ts_local_us")
@@ -248,14 +256,16 @@ def load_trades(
     Examples:
         >>> from datetime import datetime, timezone
         >>> trades = research.load_trades(
-        ...     symbol_id=101,
+        ...     exchange="binance-futures",
+        ...     symbol="BTCUSDT",
         ...     start_ts_us=datetime(2023, 11, 14, 12, 0, tzinfo=timezone.utc),
         ...     end_ts_us=datetime(2023, 11, 14, 13, 0, tzinfo=timezone.utc),
         ... )
     """
     lf = scan_table(
         "trades",
-        symbol_id=symbol_id,
+        exchange=exchange,
+        symbol=symbol,
         start_ts_us=start_ts_us,
         end_ts_us=end_ts_us,
         ts_col=ts_col,
@@ -266,7 +276,8 @@ def load_trades(
 
 def load_quotes(
     *,
-    symbol_id: int | Iterable[int] | None = None,
+    exchange: str | None = None,
+    symbol: str | Iterable[str] | None = None,
     start_ts_us: TimestampInput | None = None,
     end_ts_us: TimestampInput | None = None,
     ts_col: str = "ts_local_us",
@@ -275,10 +286,11 @@ def load_quotes(
 ) -> pl.DataFrame | pl.LazyFrame:
     """Load quotes with common filters applied.
 
-    Requires symbol_id + time range.
+    Requires exchange + time range.
 
     Args:
-        symbol_id: Symbol ID(s) to filter
+        exchange: Exchange name for partition pruning (e.g., "binance-futures")
+        symbol: Symbol name(s) to filter (e.g., "BTCUSDT"). Optional.
         start_ts_us: Start timestamp (microseconds since epoch or datetime object)
         end_ts_us: End timestamp (microseconds since epoch or datetime object)
         ts_col: Timestamp column to filter on (default: "ts_local_us")
@@ -291,14 +303,16 @@ def load_quotes(
     Examples:
         >>> from datetime import datetime, timezone
         >>> quotes = research.load_quotes(
-        ...     symbol_id=101,
+        ...     exchange="binance-futures",
+        ...     symbol="BTCUSDT",
         ...     start_ts_us=datetime(2023, 11, 14, 12, 0, tzinfo=timezone.utc),
         ...     end_ts_us=datetime(2023, 11, 14, 13, 0, tzinfo=timezone.utc),
         ... )
     """
     lf = scan_table(
         "quotes",
-        symbol_id=symbol_id,
+        exchange=exchange,
+        symbol=symbol,
         start_ts_us=start_ts_us,
         end_ts_us=end_ts_us,
         ts_col=ts_col,
@@ -309,7 +323,8 @@ def load_quotes(
 
 def load_book_snapshot_25(
     *,
-    symbol_id: int | Iterable[int] | None = None,
+    exchange: str | None = None,
+    symbol: str | Iterable[str] | None = None,
     start_ts_us: TimestampInput | None = None,
     end_ts_us: TimestampInput | None = None,
     ts_col: str = "ts_local_us",
@@ -318,10 +333,11 @@ def load_book_snapshot_25(
 ) -> pl.DataFrame | pl.LazyFrame:
     """Load top-25 book snapshots with common filters applied.
 
-    Requires symbol_id + time range.
+    Requires exchange + time range.
 
     Args:
-        symbol_id: Symbol ID(s) to filter
+        exchange: Exchange name for partition pruning (e.g., "binance-futures")
+        symbol: Symbol name(s) to filter (e.g., "BTCUSDT"). Optional.
         start_ts_us: Start timestamp (microseconds since epoch or datetime object)
         end_ts_us: End timestamp (microseconds since epoch or datetime object)
         ts_col: Timestamp column to filter on (default: "ts_local_us")
@@ -334,14 +350,16 @@ def load_book_snapshot_25(
     Examples:
         >>> from datetime import datetime, timezone
         >>> book = research.load_book_snapshot_25(
-        ...     symbol_id=101,
+        ...     exchange="binance-futures",
+        ...     symbol="BTCUSDT",
         ...     start_ts_us=datetime(2023, 11, 14, 12, 0, tzinfo=timezone.utc),
         ...     end_ts_us=datetime(2023, 11, 14, 13, 0, tzinfo=timezone.utc),
         ... )
     """
     lf = scan_table(
         "book_snapshot_25",
-        symbol_id=symbol_id,
+        exchange=exchange,
+        symbol=symbol,
         start_ts_us=start_ts_us,
         end_ts_us=end_ts_us,
         ts_col=ts_col,
@@ -352,7 +370,8 @@ def load_book_snapshot_25(
 
 def load_derivative_ticker(
     *,
-    symbol_id: int | Iterable[int] | None = None,
+    exchange: str | None = None,
+    symbol: str | Iterable[str] | None = None,
     start_ts_us: TimestampInput | None = None,
     end_ts_us: TimestampInput | None = None,
     ts_col: str = "ts_local_us",
@@ -361,13 +380,14 @@ def load_derivative_ticker(
 ) -> pl.DataFrame | pl.LazyFrame:
     """Load derivative ticker data with common filters applied.
 
-    Requires symbol_id + time range.
+    Requires exchange + time range.
 
     Derivative ticker data includes funding rates, open interest, mark price,
     index price, and last price for perpetual futures and other derivatives.
 
     Args:
-        symbol_id: Symbol ID(s) to filter
+        exchange: Exchange name for partition pruning (e.g., "binance-futures")
+        symbol: Symbol name(s) to filter (e.g., "BTCUSDT"). Optional.
         start_ts_us: Start timestamp (microseconds since epoch or datetime object)
         end_ts_us: End timestamp (microseconds since epoch or datetime object)
         ts_col: Timestamp column to filter on (default: "ts_local_us")
@@ -380,14 +400,16 @@ def load_derivative_ticker(
     Examples:
         >>> from datetime import datetime, timezone
         >>> ticker = research.load_derivative_ticker(
-        ...     symbol_id=101,
+        ...     exchange="binance-futures",
+        ...     symbol="BTCUSDT",
         ...     start_ts_us=datetime(2023, 11, 14, 12, 0, tzinfo=timezone.utc),
         ...     end_ts_us=datetime(2023, 11, 14, 13, 0, tzinfo=timezone.utc),
         ... )
     """
     lf = scan_table(
         "derivative_ticker",
-        symbol_id=symbol_id,
+        exchange=exchange,
+        symbol=symbol,
         start_ts_us=start_ts_us,
         end_ts_us=end_ts_us,
         ts_col=ts_col,
@@ -398,7 +420,8 @@ def load_derivative_ticker(
 
 def load_trades_decoded(
     *,
-    symbol_id: int | Iterable[int] | None = None,
+    exchange: str | None = None,
+    symbol: str | Iterable[str] | None = None,
     start_ts_us: TimestampInput | None = None,
     end_ts_us: TimestampInput | None = None,
     ts_col: str = "ts_local_us",
@@ -419,7 +442,8 @@ def load_trades_decoded(
     if lazy:
         lf = scan_table(
             "trades",
-            symbol_id=symbol_id,
+            exchange=exchange,
+            symbol=symbol,
             start_ts_us=start_ts_us,
             end_ts_us=end_ts_us,
             ts_col=ts_col,
@@ -430,7 +454,8 @@ def load_trades_decoded(
 
     df = read_table(
         "trades",
-        symbol_id=symbol_id,
+        exchange=exchange,
+        symbol=symbol,
         start_ts_us=start_ts_us,
         end_ts_us=end_ts_us,
         ts_col=ts_col,
@@ -442,7 +467,8 @@ def load_trades_decoded(
 
 def load_quotes_decoded(
     *,
-    symbol_id: int | Iterable[int] | None = None,
+    exchange: str | None = None,
+    symbol: str | Iterable[str] | None = None,
     start_ts_us: TimestampInput | None = None,
     end_ts_us: TimestampInput | None = None,
     ts_col: str = "ts_local_us",
@@ -463,7 +489,8 @@ def load_quotes_decoded(
     if lazy:
         lf = scan_table(
             "quotes",
-            symbol_id=symbol_id,
+            exchange=exchange,
+            symbol=symbol,
             start_ts_us=start_ts_us,
             end_ts_us=end_ts_us,
             ts_col=ts_col,
@@ -474,7 +501,8 @@ def load_quotes_decoded(
 
     df = read_table(
         "quotes",
-        symbol_id=symbol_id,
+        exchange=exchange,
+        symbol=symbol,
         start_ts_us=start_ts_us,
         end_ts_us=end_ts_us,
         ts_col=ts_col,
@@ -486,7 +514,8 @@ def load_quotes_decoded(
 
 def load_book_snapshot_25_decoded(
     *,
-    symbol_id: int | Iterable[int] | None = None,
+    exchange: str | None = None,
+    symbol: str | Iterable[str] | None = None,
     start_ts_us: TimestampInput | None = None,
     end_ts_us: TimestampInput | None = None,
     ts_col: str = "ts_local_us",
@@ -503,7 +532,8 @@ def load_book_snapshot_25_decoded(
     if lazy:
         lf = scan_table(
             "book_snapshot_25",
-            symbol_id=symbol_id,
+            exchange=exchange,
+            symbol=symbol,
             start_ts_us=start_ts_us,
             end_ts_us=end_ts_us,
             ts_col=ts_col,
@@ -514,7 +544,8 @@ def load_book_snapshot_25_decoded(
 
     df = read_table(
         "book_snapshot_25",
-        symbol_id=symbol_id,
+        exchange=exchange,
+        symbol=symbol,
         start_ts_us=start_ts_us,
         end_ts_us=end_ts_us,
         ts_col=ts_col,
@@ -526,7 +557,8 @@ def load_book_snapshot_25_decoded(
 
 def load_kline_1h_decoded(
     *,
-    symbol_id: int | Iterable[int] | None = None,
+    exchange: str | None = None,
+    symbol: str | Iterable[str] | None = None,
     start_ts_us: TimestampInput | None = None,
     end_ts_us: TimestampInput | None = None,
     ts_col: str = "ts_bucket_start_us",
@@ -556,7 +588,8 @@ def load_kline_1h_decoded(
     if lazy:
         lf = scan_table(
             "kline_1h",
-            symbol_id=symbol_id,
+            exchange=exchange,
+            symbol=symbol,
             start_ts_us=start_ts_us,
             end_ts_us=end_ts_us,
             ts_col=ts_col,
@@ -567,7 +600,8 @@ def load_kline_1h_decoded(
 
     df = read_table(
         "kline_1h",
-        symbol_id=symbol_id,
+        exchange=exchange,
+        symbol=symbol,
         start_ts_us=start_ts_us,
         end_ts_us=end_ts_us,
         ts_col=ts_col,
@@ -579,7 +613,8 @@ def load_kline_1h_decoded(
 
 def load_kline_1d_decoded(
     *,
-    symbol_id: int | Iterable[int] | None = None,
+    exchange: str | None = None,
+    symbol: str | Iterable[str] | None = None,
     start_ts_us: TimestampInput | None = None,
     end_ts_us: TimestampInput | None = None,
     ts_col: str = "ts_bucket_start_us",
@@ -609,7 +644,8 @@ def load_kline_1d_decoded(
     if lazy:
         lf = scan_table(
             "kline_1d",
-            symbol_id=symbol_id,
+            exchange=exchange,
+            symbol=symbol,
             start_ts_us=start_ts_us,
             end_ts_us=end_ts_us,
             ts_col=ts_col,
@@ -620,7 +656,8 @@ def load_kline_1d_decoded(
 
     df = read_table(
         "kline_1d",
-        symbol_id=symbol_id,
+        exchange=exchange,
+        symbol=symbol,
         start_ts_us=start_ts_us,
         end_ts_us=end_ts_us,
         ts_col=ts_col,
@@ -634,7 +671,8 @@ def _apply_filters(
     lf: pl.LazyFrame,
     *,
     table_name: str | None,
-    symbol_id: int | Iterable[int] | None,
+    exchange: str | None,
+    symbol: str | Iterable[str] | None,
     start_date: date | None,
     end_date: date | None,
     start_ts_us: int | None,
@@ -642,23 +680,14 @@ def _apply_filters(
     ts_col: str,
     date_filter_is_implicit: bool = False,
 ) -> pl.LazyFrame:
-    # 1. Resolve Exchange from Symbol ID (for partition pruning)
-    exchanges_to_filter: list[str] = []
+    # 1. Apply exchange filter (partition pruning)
+    if exchange is not None:
+        lf = lf.filter(pl.col("exchange") == exchange)
 
-    if symbol_id is not None:
-        ids = [symbol_id] if isinstance(symbol_id, int) else list(symbol_id)
-        resolved = resolve_symbols(ids)
-        if not resolved:
-            raise ValueError("scan_table: symbol_id values not found in dim_symbol registry")
-        exchanges_to_filter.extend(resolved)
-
-        # Apply symbol_id filter
-        lf = lf.filter(pl.col("symbol_id").is_in(ids))
-
-    # 2. Apply unique exchange filters
-    if exchanges_to_filter:
-        unique_exchanges = sorted(set(exchanges_to_filter))
-        lf = lf.filter(pl.col("exchange").is_in(unique_exchanges))
+    # 2. Apply symbol filter
+    if symbol is not None:
+        symbols = [symbol] if isinstance(symbol, str) else list(symbol)
+        lf = lf.filter(pl.col("symbol").is_in(symbols))
 
     # 3. Apply Date Filters
     if start_date is not None or end_date is not None:

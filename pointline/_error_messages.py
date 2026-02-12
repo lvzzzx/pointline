@@ -12,18 +12,18 @@ from __future__ import annotations
 from difflib import get_close_matches
 
 
-def symbol_id_required_error() -> str:
-    """Error message when symbol_id is not provided to research functions."""
+def exchange_required_error() -> str:
+    """Error message when exchange is not provided to research functions."""
     return (
-        "symbol_id is required for partition pruning.\n"
+        "exchange is required for partition pruning.\n"
         "\n"
-        "To resolve symbol IDs from exchange symbols, use:\n"
-        "  from pointline import registry\n"
-        "  symbols = registry.find_symbol('BTC-PERPETUAL', exchange='deribit')\n"
-        "  symbol_ids = symbols['symbol_id'].to_list()\n"
-        "\n"
-        "Then pass to your query:\n"
-        "  research.load_trades(symbol_id=symbol_ids, start_ts_us=..., end_ts_us=...)"
+        "Example:\n"
+        "  research.load_trades(\n"
+        "      exchange='binance-futures',\n"
+        "      symbol='BTCUSDT',\n"
+        "      start_ts_us=...,\n"
+        "      end_ts_us=...,\n"
+        "  )"
     )
 
 
@@ -85,20 +85,22 @@ def exchange_not_found_error(exchange: str, available_exchanges: list[str]) -> s
     return msg
 
 
-def symbol_not_found_error(symbol_id: int) -> str:
-    """Error message when symbol_id is not found in dim_symbol registry.
+def symbol_not_found_error(symbol: str, exchange: str = "") -> str:
+    """Error message when symbol is not found in dim_symbol registry.
 
     Args:
-        symbol_id: The symbol ID that was not found
+        symbol: The exchange symbol that was not found
+        exchange: The exchange name (optional)
 
     Returns:
         Formatted error message with troubleshooting suggestions
     """
+    ctx = f" on exchange '{exchange}'" if exchange else ""
     return (
-        f"Symbol ID {symbol_id} not found in dim_symbol registry.\n"
+        f"Symbol '{symbol}' not found{ctx} in dim_symbol registry.\n"
         "\n"
         "Possible causes:\n"
-        "  1. Symbol ID is incorrect or from a different data lake\n"
+        "  1. Symbol name is incorrect\n"
         "  2. dim_symbol table needs to be populated\n"
         "  3. Symbol was deactivated or never activated\n"
         "\n"
@@ -160,7 +162,7 @@ def invalid_timestamp_range_error(start_ts_us: int, end_ts_us: int) -> str:
 
 
 __all__ = [
-    "symbol_id_required_error",
+    "exchange_required_error",
     "timestamp_required_error",
     "exchange_not_found_error",
     "symbol_not_found_error",

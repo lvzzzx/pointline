@@ -9,13 +9,10 @@ import polars as pl
 
 # Import parser from new location for backward compatibility
 from pointline.tables._base import (
-    exchange_id_validation_expr,
-    generic_resolve_symbol_ids,
     generic_validate,
     required_columns_validation_expr,
     timestamp_validation_expr,
 )
-from pointline.validation_utils import with_expected_exchange_id
 
 logger = logging.getLogger(__name__)
 
@@ -41,8 +38,7 @@ KLINE_INTERVAL_ROWS_PER_DAY = {
 KLINE_SCHEMA: dict[str, pl.DataType] = {
     "date": pl.Date,
     "exchange": pl.Utf8,
-    "exchange_id": pl.Int16,
-    "symbol_id": pl.Int64,
+    "symbol": pl.Utf8,
     "ts_bucket_start_us": pl.Int64,
     "ts_bucket_end_us": pl.Int64,
     "open_px_int": pl.Int64,
@@ -242,14 +238,11 @@ def validate_klines(df: pl.DataFrame) -> pl.DataFrame:
         "quote_volume_int",
         "taker_buy_quote_qty_int",
         "exchange",
-        "exchange_id",
-        "symbol_id",
+        "symbol",
     ]
     missing = [c for c in required if c not in df.columns]
     if missing:
         raise ValueError(f"validate_klines: missing required columns: {missing}")
-
-    df_with_expected = with_expected_exchange_id(df)
 
     combined_filter = (
         timestamp_validation_expr("ts_bucket_start_us")
@@ -264,15 +257,8 @@ def validate_klines(df: pl.DataFrame) -> pl.DataFrame:
         & (pl.col("quote_volume_int") >= 0)
         & (pl.col("taker_buy_quote_qty_int") >= 0)
         & required_columns_validation_expr(
-            [
-                "exchange",
-                "exchange_id",
-                "symbol_id",
-                "quote_volume_int",
-                "taker_buy_quote_qty_int",
-            ]
+            ["exchange", "symbol", "quote_volume_int", "taker_buy_quote_qty_int"]
         )
-        & exchange_id_validation_expr()
     )
 
     rules = [
@@ -310,42 +296,11 @@ def validate_klines(df: pl.DataFrame) -> pl.DataFrame:
             pl.col("taker_buy_quote_qty_int").is_null() | (pl.col("taker_buy_quote_qty_int") < 0),
         ),
         ("exchange", pl.col("exchange").is_null()),
-        ("exchange_id", pl.col("exchange_id").is_null()),
-        ("symbol_id", pl.col("symbol_id").is_null()),
-        (
-            "exchange_id_mismatch",
-            pl.col("expected_exchange_id").is_null()
-            | (pl.col("exchange_id") != pl.col("expected_exchange_id")),
-        ),
+        ("symbol", pl.col("symbol").is_null()),
     ]
 
-    valid = generic_validate(df_with_expected, combined_filter, rules, "klines")
+    valid = generic_validate(df, combined_filter, rules, "klines")
     return valid.select(df.columns)
-
-
-def resolve_symbol_ids(
-    data: pl.DataFrame,
-    dim_symbol: pl.DataFrame,
-    exchange_id: int | None,
-    exchange_symbol: str | None,
-    *,
-    ts_col: str = "ts_bucket_start_us",
-) -> pl.DataFrame:
-    """Resolve symbol_ids for kline data using as-of join with dim_symbol.
-
-    This is a wrapper around the generic symbol resolution function.
-
-    Args:
-        data: DataFrame with timestamp column
-        dim_symbol: dim_symbol table in canonical schema
-        exchange_id: Exchange ID to use for all rows
-        exchange_symbol: Exchange symbol to use for all rows
-        ts_col: Timestamp column name (default: ts_bucket_start_us)
-
-    Returns:
-        DataFrame with symbol_id column added
-    """
-    return generic_resolve_symbol_ids(data, dim_symbol, exchange_id, exchange_symbol, ts_col=ts_col)
 
 
 def check_kline_completeness(

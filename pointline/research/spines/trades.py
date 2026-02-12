@@ -1,8 +1,8 @@
 """Trades spine builder: Event-driven resampling at unique trade timestamps.
 
-Generates one spine point per unique (exchange_id, symbol_id, ts_local_us).
+Generates one spine point per unique (exchange, symbol, ts_local_us).
 In crypto, a single aggressive order sweeping the book produces multiple
-trade records with the same timestamp — these are collapsed into one spine
+trade records with the same timestamp -- these are collapsed into one spine
 point so that downstream as-of joins see one event per market decision,
 not one per fill.
 """
@@ -66,28 +66,30 @@ class TradesSpineBuilder:
 
     def build_spine(
         self,
-        symbol_id: int | list[int],
+        exchange: str,
+        symbol: str | list[str],
         start_ts_us: int,
         end_ts_us: int,
         config: SpineBuilderConfig,
     ) -> pl.LazyFrame:
         """Build trades spine from trades stream.
 
-        Loads trades and deduplicates by (exchange_id, symbol_id, ts_local_us)
+        Loads trades and deduplicates by (exchange, symbol, ts_local_us)
         so that order-book sweeps (multiple fills at the same timestamp) produce
         a single spine point.
 
         Args:
-            symbol_id: Single symbol_id or list of symbol_ids
+            exchange: Exchange name (e.g., "binance-futures")
+            symbol: Single symbol or list of symbols (e.g., "BTCUSDT")
             start_ts_us: Start timestamp (microseconds, UTC)
             end_ts_us: End timestamp (microseconds, UTC)
             config: TradesSpineConfig instance
 
         Returns:
-            LazyFrame with (ts_local_us, exchange_id, symbol_id)
-            sorted by (exchange_id, symbol_id, ts_local_us).
+            LazyFrame with (ts_local_us, exchange, symbol)
+            sorted by (exchange, symbol, ts_local_us).
 
-            ts_local_us is the BAR END — each unique trade timestamp
+            ts_local_us is the BAR END -- each unique trade timestamp
             is both the event time and the bar boundary.
         """
         if not isinstance(config, TradesSpineConfig):
@@ -96,18 +98,19 @@ class TradesSpineBuilder:
         # Load trades stream (only need spine columns)
         lf = research_core.scan_table(
             "trades",
-            symbol_id=symbol_id,
+            exchange=exchange,
+            symbol=symbol,
             start_ts_us=start_ts_us,
             end_ts_us=end_ts_us,
-            columns=["ts_local_us", "exchange_id", "symbol_id"],
+            columns=["ts_local_us", "exchange", "symbol"],
         )
 
         # Deduplicate: collapse order-book sweeps (same timestamp) into
-        # one spine point per (exchange_id, symbol_id, ts_local_us)
-        lf = lf.unique(subset=["exchange_id", "symbol_id", "ts_local_us"])
+        # one spine point per (exchange, symbol, ts_local_us)
+        lf = lf.unique(subset=["exchange", "symbol", "ts_local_us"])
 
         # Deterministic ordering
-        return lf.sort(["exchange_id", "symbol_id", "ts_local_us"])
+        return lf.sort(["exchange", "symbol", "ts_local_us"])
 
 
 # Auto-register on module import

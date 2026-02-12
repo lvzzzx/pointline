@@ -6,6 +6,7 @@ such as referential integrity, manifest consistency, and temporal alignment.
 
 from __future__ import annotations
 
+import contextlib
 from dataclasses import dataclass, field
 from datetime import date
 from enum import Enum
@@ -160,7 +161,7 @@ class BaseCrossTableCheck:
 
 
 class SymbolIntegrityCheck(BaseCrossTableCheck):
-    """Check that all symbol_ids in data tables exist in dim_symbol."""
+    """Check that all symbols in data tables exist in dim_symbol."""
 
     CHECK_NAME = "symbol_integrity"
     SEVERITY = Severity.CRITICAL
@@ -218,24 +219,24 @@ class SymbolIntegrityCheck(BaseCrossTableCheck):
             if date_partition and TABLE_HAS_DATE.get(table_name, False):
                 lf_target = lf_target.filter(pl.col("date") == pl.lit(date_partition))
 
-            # Get unique symbol_ids from target
-            target_symbols = lf_target.select(
-                pl.col("symbol_id").alias("target_symbol_id")
-            ).unique()
+            # Get unique symbols from target event table
+            target_symbols = lf_target.select(pl.col("symbol").alias("target_symbol")).unique()
 
-            # Scan dim_symbol (current symbols only)
+            # Scan dim_symbol (current symbols only) — dim_symbol uses
+            # ``exchange_symbol`` for the ticker string that event tables
+            # now store in the ``symbol`` column.
             lf_dim = pl.scan_delta(str(dim_path))
-            dim_symbols = lf_dim.select(pl.col("symbol_id").alias("dim_symbol_id")).unique()
+            dim_symbols = lf_dim.select(pl.col("exchange_symbol").alias("dim_symbol")).unique()
 
             # Find orphans via anti-join
             orphans = (
                 target_symbols.join(
                     dim_symbols,
-                    left_on="target_symbol_id",
-                    right_on="dim_symbol_id",
+                    left_on="target_symbol",
+                    right_on="dim_symbol",
                     how="anti",
                 )
-                .select(pl.col("target_symbol_id").alias("orphan_symbol_id"))
+                .select(pl.col("target_symbol").alias("orphan_symbol"))
                 .collect()
             )
 
@@ -251,15 +252,15 @@ class SymbolIntegrityCheck(BaseCrossTableCheck):
             recommendation = None
 
             if not passed:
-                orphan_ids = orphans["orphan_symbol_id"].to_list()[:10]  # First 10
+                orphan_ids = orphans["orphan_symbol"].to_list()[:10]  # First 10
                 details = {
-                    "orphan_symbol_ids": orphan_ids,
+                    "orphan_symbols": orphan_ids,
                     "orphan_count": orphan_count,
                 }
                 recommendation = (
                     f"Found {orphan_count:,} orphan rows with {len(orphan_ids)} "
-                    f"unique invalid symbol_ids: {orphan_ids}. "
-                    "Check if dim_symbol needs updating or if symbol_ids are corrupted."
+                    f"unique invalid symbols: {orphan_ids}. "
+                    "Check if dim_symbol needs updating or if symbols are corrupted."
                 )
 
             return CheckResult(
@@ -676,7 +677,7 @@ class TemporalAlignmentCheck(BaseCrossTableCheck):
 
 
 class ExchangeConsistencyCheck(BaseCrossTableCheck):
-    """Check that exchange_id values are consistent between tables and dim_symbol."""
+    """Check that (exchange, symbol) pairs in event tables exist in dim_symbol."""
 
     CHECK_NAME = "exchange_consistency"
     SEVERITY = Severity.HIGH
@@ -687,8 +688,14 @@ class ExchangeConsistencyCheck(BaseCrossTableCheck):
         table_name: str,
         date_partition: date | None,
     ) -> CheckResult:
-        """Execute exchange consistency check."""
+        """Execute exchange consistency check.
+
+        Verifies that every (exchange, symbol) pair in the fact table has a
+        corresponding entry in dim_symbol (via exchange → exchange_id mapping).
+        """
         import time
+
+        from pointline.config import get_exchange_id
 
         start_ms = int(time.time() * 1000)
 
@@ -717,24 +724,45 @@ class ExchangeConsistencyCheck(BaseCrossTableCheck):
             if date_partition and TABLE_HAS_DATE.get(table_name, False):
                 lf_target = lf_target.filter(pl.col("date") == pl.lit(date_partition))
 
-            # Get exchange_id + symbol_id pairs from target
-            target_pairs = lf_target.select([pl.col("exchange_id"), pl.col("symbol_id")]).unique()
+            # Get (exchange, symbol) pairs from target event table
+            target_pairs = lf_target.select(["exchange", "symbol"]).unique().collect()
 
-            # Get exchange_id + symbol_id pairs from dim_symbol
+            # Derive exchange_id from exchange name for dim_symbol lookup
+            exchange_id_map = {}
+            for exch in target_pairs["exchange"].unique().to_list():
+                with contextlib.suppress(ValueError):
+                    exchange_id_map[exch] = get_exchange_id(exch)
+
+            target_with_id = target_pairs.with_columns(
+                pl.col("exchange")
+                .replace_strict(exchange_id_map, default=None)
+                .cast(pl.Int16)
+                .alias("derived_exchange_id")
+            )
+
+            # Get exchange_id + exchange_symbol pairs from dim_symbol
             lf_dim = pl.scan_delta(str(dim_path))
-            dim_pairs = lf_dim.select(
-                [pl.col("exchange_id").alias("dim_exchange_id"), pl.col("symbol_id")]
-            ).unique()
-
-            # Join and find mismatches
-            mismatches = (
-                target_pairs.join(dim_pairs, on="symbol_id", how="left")
-                .filter(pl.col("exchange_id") != pl.col("dim_exchange_id"))
+            dim_pairs = (
+                lf_dim.select(
+                    [
+                        pl.col("exchange_id").alias("dim_exchange_id"),
+                        pl.col("exchange_symbol").alias("symbol"),
+                    ]
+                )
+                .unique()
                 .collect()
             )
 
+            # Join and find symbols not in dim_symbol
+            joined = target_with_id.join(dim_pairs, on="symbol", how="left")
+            mismatches = joined.filter(
+                pl.col("derived_exchange_id").is_null()
+                | pl.col("dim_exchange_id").is_null()
+                | (pl.col("derived_exchange_id") != pl.col("dim_exchange_id"))
+            )
+
             mismatch_count = mismatches.height
-            total_pairs = target_pairs.select(pl.len()).collect().item()
+            total_pairs = target_pairs.height
 
             violation_rate = mismatch_count / total_pairs if total_pairs > 0 else 0.0
             passed = violation_rate <= self.THRESHOLD
@@ -745,12 +773,11 @@ class ExchangeConsistencyCheck(BaseCrossTableCheck):
             recommendation = None
 
             if not passed:
-                sample = mismatches.head(5).to_dicts()
+                sample = mismatches.select(["exchange", "symbol"]).head(5).to_dicts()
                 details = {"mismatch_count": mismatch_count, "sample": sample}
                 recommendation = (
-                    f"Found {mismatch_count:,} rows with inconsistent exchange_id. "
-                    f"Check if dim_symbol was updated incorrectly or if exchange_id "
-                    f"mapping changed."
+                    f"Found {mismatch_count:,} (exchange, symbol) pairs not in dim_symbol. "
+                    f"Check if dim_symbol was updated incorrectly or if symbols are missing."
                 )
 
             return CheckResult(

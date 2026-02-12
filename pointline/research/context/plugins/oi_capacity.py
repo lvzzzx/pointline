@@ -10,12 +10,12 @@ from pointline.research.context.registry import ContextRegistry
 
 @ContextRegistry.register_context(
     name="oi_capacity",
-    required_columns=["exchange_id", "symbol_id", "ts_local_us"],
+    required_columns=["exchange_id", "symbol", "ts_local_us"],
     mode_allowlist=["MFT", "LFT"],
     pit_policy={"feature_direction": "backward_only"},
     determinism_policy={
-        "required_sort": ["exchange_id", "symbol_id", "ts_local_us"],
-        "partition_by": ["exchange_id", "symbol_id"],
+        "required_sort": ["exchange_id", "symbol", "ts_local_us"],
+        "partition_by": ["exchange_id", "symbol"],
     },
     required_params={
         "oi_col": "column_name",
@@ -60,12 +60,12 @@ def oi_capacity(frame: pl.LazyFrame, spec: ContextSpec) -> pl.LazyFrame:
     schema_names = set(frame.collect_schema().names())
     sort_cols = [
         col
-        for col in ["exchange_id", "symbol_id", "ts_local_us", "file_id", "file_line_number"]
+        for col in ["exchange_id", "symbol", "ts_local_us", "file_id", "file_line_number"]
         if col in schema_names
     ]
     out = frame.sort(sort_cols) if sort_cols else frame
 
-    partition_by = [col for col in ["exchange_id", "symbol_id"] if col in schema_names]
+    partition_by = [col for col in ["exchange_id", "symbol"] if col in schema_names]
 
     oi_expr = pl.col(oi_col)
     if partition_by:

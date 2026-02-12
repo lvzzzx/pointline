@@ -18,8 +18,7 @@ def test_run_dq_summary_passed(tmp_path):
         {
             "date": [date(2026, 1, 30), date(2026, 1, 30)],
             "exchange": ["binance", "binance"],
-            "exchange_id": [1, 1],
-            "symbol_id": [101, 101],
+            "symbol": ["BTCUSDT", "BTCUSDT"],
             "ts_local_us": [10, 20],
             "ts_exch_us": [10, 20],
             "trade_id": ["t1", "t2"],
@@ -55,7 +54,6 @@ def test_run_dq_summary_detects_issues(tmp_path):
         {
             "date": [date(2026, 1, 30), date(2026, 1, 30), date(2026, 1, 30)],
             "exchange": ["binance", "binance", "binance"],
-            "exchange_id": [1, 1, 1],
             "symbol_id": [101, 101, 101],
             "ts_local_us": [10, 20, 30],
             "ts_exch_us": [10, 20, 30],

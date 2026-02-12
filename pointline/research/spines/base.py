@@ -4,11 +4,11 @@ Spine builders define resampling strategies for feature engineering. Each builde
 implements a specific sampling method (clock, trades, volume bars, dollar bars, etc.).
 
 Spine Contract:
-- Must return LazyFrame with columns: (ts_local_us, exchange_id, symbol_id)
-- ts_local_us is the BAR END timestamp — the right boundary of the half-open
+- Must return LazyFrame with columns: (ts_local_us, exchange, symbol)
+- ts_local_us is the BAR END timestamp -- the right boundary of the half-open
   window [prev_bar_end, ts_local_us).  All data assigned to this bar satisfies
   data.ts_local_us < bar.ts_local_us (strict less-than).
-- Must be sorted by (exchange_id, symbol_id, ts_local_us) for deterministic ordering
+- Must be sorted by (exchange, symbol, ts_local_us) for deterministic ordering
 - Must preserve PIT correctness (no lookahead bias)
 """
 
@@ -48,15 +48,15 @@ class SpineBuilder(Protocol):
         Bar at 120ms contains: data in [60ms, 120ms)
         Bar at 180ms contains: data in [120ms, 180ms)
 
-        Data at 50ms → assigned to bar at 60ms
-        Data at 60ms → assigned to bar at 120ms (boundary goes to next)
-        Data at 110ms → assigned to bar at 120ms
+        Data at 50ms -> assigned to bar at 60ms
+        Data at 60ms -> assigned to bar at 120ms (boundary goes to next)
+        Data at 110ms -> assigned to bar at 120ms
 
     This ensures Point-In-Time (PIT) correctness: all data in bar has ts < bar timestamp.
 
     Contract:
-    - build_spine() must return LazyFrame with (ts_local_us, exchange_id, symbol_id)
-    - Output must be sorted by (exchange_id, symbol_id, ts_local_us)
+    - build_spine() must return LazyFrame with (ts_local_us, exchange, symbol)
+    - Output must be sorted by (exchange, symbol, ts_local_us)
     - ts_local_us values are BAR ENDS (interval ends)
     - Must preserve PIT correctness (no lookahead bias)
     """
@@ -101,7 +101,8 @@ class SpineBuilder(Protocol):
 
     def build_spine(
         self,
-        symbol_id: int | list[int],
+        exchange: str,
+        symbol: str | list[str],
         start_ts_us: int,
         end_ts_us: int,
         config: SpineBuilderConfig,
@@ -109,24 +110,25 @@ class SpineBuilder(Protocol):
         """Build resampled spine with specified config.
 
         Args:
-            symbol_id: Single symbol_id or list of symbol_ids
+            exchange: Exchange name (e.g., "binance-futures")
+            symbol: Single symbol or list of symbols (e.g., "BTCUSDT")
             start_ts_us: Start timestamp (microseconds, UTC)
             end_ts_us: End timestamp (microseconds, UTC)
             config: Builder-specific configuration
 
         Returns:
             LazyFrame with columns:
-            - ts_local_us (Int64): BAR END timestamp — right boundary of
+            - ts_local_us (Int64): BAR END timestamp -- right boundary of
               the half-open window [prev_bar_end, ts_local_us).
               NOT the bar start. assign_to_buckets() relies on
               data.ts_local_us < spine.ts_local_us.
-            - exchange_id (Int16): Exchange ID
-            - symbol_id (Int64): Symbol ID
+            - exchange (Utf8): Exchange name
+            - symbol (Utf8): Symbol name
 
-            Sorted by (exchange_id, symbol_id, ts_local_us)
+            Sorted by (exchange, symbol, ts_local_us)
 
         Raises:
-            ValueError: If config is invalid or symbol_id not found
+            ValueError: If config is invalid or symbol not found
             RuntimeError: If spine exceeds max_rows safety limit
         """
         ...

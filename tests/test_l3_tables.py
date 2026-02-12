@@ -28,8 +28,7 @@ def test_normalize_l3_orders_derives_trading_phase() -> None:
         {
             "date": [date(2024, 9, 30)],
             "exchange": ["szse"],
-            "exchange_id": [30],
-            "symbol_id": [1001],
+            "symbol": ["000001.SZ"],
             # 2024-09-30 09:20:00 Asia/Shanghai in UTC microseconds
             "ts_local_us": [1727659200000000],
             "appl_seq_num": [1],
@@ -52,8 +51,7 @@ def test_validate_l3_orders_accepts_valid() -> None:
         {
             "date": [date(2024, 9, 30)],
             "exchange": ["szse"],
-            "exchange_id": [30],
-            "symbol_id": [1001],
+            "symbol": ["000001.SZ"],
             "ts_local_us": [1727659800000000],
             "appl_seq_num": [2],
             "side": [1],
@@ -76,10 +74,9 @@ def test_normalize_l3_ticks_derives_trading_phase() -> None:
         {
             "date": [date(2024, 9, 30)],
             "exchange": ["sse"],
-            "exchange_id": [31],
+            "symbol": ["600000.SH"],
             # 2024-09-30 14:58:00 Asia/Shanghai in UTC microseconds
             "ts_local_us": [1727679480000000],
-            "symbol_id": [2001],
             "appl_seq_num": [1],
             "bid_appl_seq_num": [123],
             "offer_appl_seq_num": [456],
@@ -101,8 +98,7 @@ def test_validate_l3_ticks_filters_invalid_tick_semantics() -> None:
         {
             "date": [date(2024, 9, 30)],
             "exchange": ["szse"],
-            "exchange_id": [30],
-            "symbol_id": [1001],
+            "symbol": ["000001.SZ"],
             "ts_local_us": [1727659800000000],
             "appl_seq_num": [1],
             "bid_appl_seq_num": [1],
@@ -133,8 +129,7 @@ def test_validate_l3_orders_rejects_non_cn_exchange() -> None:
         {
             "date": [date(2024, 9, 30)],
             "exchange": ["binance-futures"],
-            "exchange_id": [2],
-            "symbol_id": [1001],
+            "symbol": ["BTCUSDT"],
             "ts_local_us": [1727659800000000],
             "appl_seq_num": [1],
             "side": [0],
@@ -158,8 +153,7 @@ def test_validate_l3_ticks_rejects_non_cn_exchange() -> None:
         {
             "date": [date(2024, 9, 30)],
             "exchange": ["binance"],
-            "exchange_id": [1],
-            "symbol_id": [1001],
+            "symbol": ["BTCUSDT"],
             "ts_local_us": [1727659800000000],
             "appl_seq_num": [1],
             "bid_appl_seq_num": [1],

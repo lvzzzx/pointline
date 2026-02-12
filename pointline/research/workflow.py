@@ -648,7 +648,7 @@ def _normalized_base_source_fingerprints(
         fp = {
             "name": spec["name"],
             "table": spec.get("table"),
-            "symbol_id": spec.get("symbol_id"),
+            "symbol": spec.get("symbol"),
             "start_ts_us": spec.get("start_ts_us"),
             "end_ts_us": spec.get("end_ts_us"),
             "columns": spec.get("columns", []),

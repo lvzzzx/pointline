@@ -22,25 +22,17 @@ from pointline.research.spines import (
 from pointline.research.spines.clock import ClockSpineBuilder
 
 
-@pytest.fixture
-def mock_dim_symbol():
-    """Mock resolve_exchange_ids for testing."""
-    with patch("pointline.research.spines.clock.resolve_exchange_ids") as mock:
-        # Map each symbol_id to exchange_id=1
-        mock.side_effect = lambda ids: [1] * len(ids)
-        yield mock
-
-
 class TestClockSpineBarEndSemantics:
     """Test clock spine generates bar ENDS (interval ends)."""
 
-    def test_clock_spine_bar_end_semantics(self, mock_dim_symbol):
+    def test_clock_spine_bar_end_semantics(self):
         """CRITICAL: Verify spine timestamps are bar ENDS."""
         builder = ClockSpineBuilder()
         config = ClockSpineConfig(step_ms=60_000)  # 1 minute
 
         spine = builder.build_spine(
-            symbol_id=12345,
+            exchange="binance-futures",
+            symbol="BTCUSDT",
             start_ts_us=0,
             end_ts_us=180_000_000,  # 3 minutes
             config=config,
@@ -66,13 +58,14 @@ class TestClockSpineBarEndSemantics:
         assert hasattr(builder, "can_handle")
         assert builder.name == "clock"
 
-    def test_clock_spine_grid_alignment(self, mock_dim_symbol):
+    def test_clock_spine_grid_alignment(self):
         """Verify clock spine aligns to grid correctly."""
         builder = ClockSpineBuilder()
         config = ClockSpineConfig(step_ms=60_000)  # 1 minute
 
         spine = builder.build_spine(
-            symbol_id=12345,
+            exchange="binance-futures",
+            symbol="BTCUSDT",
             start_ts_us=0,
             end_ts_us=300_000_000,  # 5 minutes
             config=config,
@@ -91,14 +84,15 @@ class TestClockSpineBarEndSemantics:
             300_000_000,
         ]
 
-    def test_clock_spine_non_zero_start(self, mock_dim_symbol):
+    def test_clock_spine_non_zero_start(self):
         """Verify clock spine handles non-zero start correctly."""
         builder = ClockSpineBuilder()
         config = ClockSpineConfig(step_ms=60_000)  # 1 minute
 
         # Start at 50ms, should align to next bar end at 60ms
         spine = builder.build_spine(
-            symbol_id=12345,
+            exchange="binance-futures",
+            symbol="BTCUSDT",
             start_ts_us=50_000_000,  # 50 seconds
             end_ts_us=180_000_000,  # 3 minutes
             config=config,
@@ -109,14 +103,15 @@ class TestClockSpineBarEndSemantics:
         assert spine["ts_local_us"][1] == 120_000_000
         assert spine["ts_local_us"][2] == 180_000_000
 
-    def test_clock_spine_mid_interval_start(self, mock_dim_symbol):
+    def test_clock_spine_mid_interval_start(self):
         """Verify clock spine aligns mid-interval starts correctly."""
         builder = ClockSpineBuilder()
         config = ClockSpineConfig(step_ms=60_000)  # 1 minute
 
         # Start at 70ms (after first bar), should start at 120ms
         spine = builder.build_spine(
-            symbol_id=12345,
+            exchange="binance-futures",
+            symbol="BTCUSDT",
             start_ts_us=70_000_000,  # 70 seconds (1m 10s)
             end_ts_us=300_000_000,  # 5 minutes
             config=config,
@@ -126,36 +121,38 @@ class TestClockSpineBarEndSemantics:
         timestamps = spine["ts_local_us"].to_list()
         assert timestamps == [120_000_000, 180_000_000, 240_000_000, 300_000_000]
 
-    def test_clock_spine_multi_symbol(self, mock_dim_symbol):
+    def test_clock_spine_multi_symbol(self):
         """Verify clock spine supports multiple symbols correctly."""
         builder = ClockSpineBuilder()
         config = ClockSpineConfig(step_ms=60_000)  # 1 minute
 
         spine = builder.build_spine(
-            symbol_id=[12345, 12346],  # Two symbols
+            exchange="binance-futures",
+            symbol=["BTCUSDT", "ETHUSDT"],  # Two symbols
             start_ts_us=0,
             end_ts_us=120_000_000,  # 2 minutes
             config=config,
         ).collect()
 
-        # Should have 2 timestamps × 2 symbols = 4 rows
+        # Should have 2 timestamps x 2 symbols = 4 rows
         assert len(spine) == 4
 
         # Check both symbols have same timestamps
-        symbol_12345 = spine.filter(pl.col("symbol_id") == 12345)
-        symbol_12346 = spine.filter(pl.col("symbol_id") == 12346)
+        btcusdt = spine.filter(pl.col("symbol") == "BTCUSDT")
+        ethusdt = spine.filter(pl.col("symbol") == "ETHUSDT")
 
-        assert symbol_12345["ts_local_us"].to_list() == [60_000_000, 120_000_000]
-        assert symbol_12346["ts_local_us"].to_list() == [60_000_000, 120_000_000]
+        assert btcusdt["ts_local_us"].to_list() == [60_000_000, 120_000_000]
+        assert ethusdt["ts_local_us"].to_list() == [60_000_000, 120_000_000]
 
-    def test_clock_spine_empty_range(self, mock_dim_symbol):
+    def test_clock_spine_empty_range(self):
         """Verify clock spine handles empty range (no bars)."""
         builder = ClockSpineBuilder()
         config = ClockSpineConfig(step_ms=60_000)  # 1 minute
 
         # End before first bar
         spine = builder.build_spine(
-            symbol_id=12345,
+            exchange="binance-futures",
+            symbol="BTCUSDT",
             start_ts_us=0,
             end_ts_us=30_000_000,  # 30 seconds (before first bar at 60s)
             config=config,
@@ -168,7 +165,7 @@ class TestClockSpineBarEndSemantics:
 class TestClockSpineBarWindowSemantics:
     """Test that bar windows are half-open [T_prev, T)."""
 
-    def test_bar_window_interpretation(self, mock_dim_symbol):
+    def test_bar_window_interpretation(self):
         """Test conceptual bar window boundaries.
 
         This test documents the expected behavior for bucket assignment:
@@ -179,7 +176,8 @@ class TestClockSpineBarWindowSemantics:
         config = ClockSpineConfig(step_ms=60_000)  # 1 minute
 
         spine = builder.build_spine(
-            symbol_id=12345,
+            exchange="binance-futures",
+            symbol="BTCUSDT",
             start_ts_us=0,
             end_ts_us=180_000_000,
             config=config,
@@ -191,11 +189,11 @@ class TestClockSpineBarWindowSemantics:
         assert spine["ts_local_us"][2] == 180_000_000
 
         # Interpretation for bucket assignment (tested in Phase 2):
-        # - Data at 50ms → bar at 60ms (50ms < 60ms, in window [0, 60))
-        # - Data at 60ms → bar at 120ms (60ms >= 60ms, in window [60, 120))
-        # - Data at 110ms → bar at 120ms (110ms < 120ms, in window [60, 120))
+        # - Data at 50ms -> bar at 60ms (50ms < 60ms, in window [0, 60))
+        # - Data at 60ms -> bar at 120ms (60ms >= 60ms, in window [60, 120))
+        # - Data at 110ms -> bar at 120ms (110ms < 120ms, in window [60, 120))
 
-    def test_pit_correctness_invariant(self, mock_dim_symbol):
+    def test_pit_correctness_invariant(self):
         """Document the PIT correctness invariant.
 
         PIT invariant: For any data point assigned to bar at time T,
@@ -208,7 +206,8 @@ class TestClockSpineBarWindowSemantics:
         config = ClockSpineConfig(step_ms=60_000)
 
         spine = builder.build_spine(
-            symbol_id=12345,
+            exchange="binance-futures",
+            symbol="BTCUSDT",
             start_ts_us=0,
             end_ts_us=120_000_000,
             config=config,
@@ -232,7 +231,8 @@ class TestClockSpineEdgeCases:
 
         with pytest.raises(ValueError, match="step_ms must be positive"):
             builder.build_spine(
-                symbol_id=12345,
+                exchange="binance-futures",
+                symbol="BTCUSDT",
                 start_ts_us=0,
                 end_ts_us=100_000_000,
                 config=config,
@@ -245,13 +245,14 @@ class TestClockSpineEdgeCases:
 
         with pytest.raises(ValueError, match="step_ms must be positive"):
             builder.build_spine(
-                symbol_id=12345,
+                exchange="binance-futures",
+                symbol="BTCUSDT",
                 start_ts_us=0,
                 end_ts_us=100_000_000,
                 config=config,
             )
 
-    def test_max_rows_safety_limit(self, mock_dim_symbol):
+    def test_max_rows_safety_limit(self):
         """Test max_rows safety limit prevents runaway queries."""
         builder = ClockSpineBuilder()
         config = ClockSpineConfig(
@@ -261,7 +262,8 @@ class TestClockSpineEdgeCases:
 
         with pytest.raises(RuntimeError, match="too many rows"):
             builder.build_spine(
-                symbol_id=12345,
+                exchange="binance-futures",
+                symbol="BTCUSDT",
                 start_ts_us=0,
                 end_ts_us=10_000_000,  # 10 seconds = 10,000 bars
                 config=config,
@@ -277,41 +279,42 @@ class TestClockSpineEdgeCases:
 
         with pytest.raises(TypeError, match="Expected ClockSpineConfig"):
             builder.build_spine(
-                symbol_id=12345,
+                exchange="binance-futures",
+                symbol="BTCUSDT",
                 start_ts_us=0,
                 end_ts_us=100_000_000,
                 config=config,
             )
 
-    def test_deterministic_ordering(self, mock_dim_symbol):
+    def test_deterministic_ordering(self):
         """Test spine is sorted deterministically."""
         builder = ClockSpineBuilder()
         config = ClockSpineConfig(step_ms=60_000)
 
         spine = builder.build_spine(
-            symbol_id=[12346, 12345],  # Intentionally out of order
+            exchange="binance-futures",
+            symbol=["ETHUSDT", "BTCUSDT"],  # Intentionally out of order
             start_ts_us=0,
             end_ts_us=120_000_000,
             config=config,
         ).collect()
 
-        # Should be sorted by (exchange_id, symbol_id, ts_local_us)
-        # Since both symbols likely have same exchange_id, check symbol_id ordering
-        prev_symbol_id = None
+        # Should be sorted by (exchange, symbol, ts_local_us)
+        prev_symbol = None
         prev_ts = None
 
         for row in spine.iter_rows(named=True):
-            symbol_id = row["symbol_id"]
+            symbol = row["symbol"]
             ts = row["ts_local_us"]
 
-            if prev_symbol_id is not None:
-                # Either symbol_id increases, or same symbol with increasing ts
-                if symbol_id == prev_symbol_id:
+            if prev_symbol is not None:
+                # Either symbol increases, or same symbol with increasing ts
+                if symbol == prev_symbol:
                     assert ts > prev_ts, "Timestamps should be increasing for same symbol"
-                # Symbol IDs should be in sorted order for same timestamp
-                # (but with cross join, we'll see all symbol_id values for each timestamp)
+                # Symbol names should be in sorted order for same timestamp
+                # (but with cross join, we'll see all symbol values for each timestamp)
 
-            prev_symbol_id = symbol_id
+            prev_symbol = symbol
             prev_ts = ts
 
 
@@ -358,15 +361,15 @@ class TestVolumeSpineBarEndSemantics:
         """Create synthetic trades for volume bar testing.
 
         Uses szse (cn-equity profile: amount=1.0), so volume = qty_int * 1.0.
-        6 trades with qty_int=100 → volume=100 per trade.
-        volume_threshold=200 → 4 bars.
+        6 trades with qty_int=100 -> volume=100 per trade.
+        volume_threshold=200 -> 4 bars.
         """
         return pl.LazyFrame(
             {
                 "ts_local_us": [100, 200, 300, 400, 500, 600],
                 "exchange": ["szse"] * 6,
                 "exchange_id": pl.Series([30] * 6, dtype=pl.Int16),
-                "symbol_id": pl.Series([42] * 6, dtype=pl.Int64),
+                "symbol": ["000001"] * 6,
                 "qty_int": pl.Series([100] * 6, dtype=pl.Int64),
                 "file_id": pl.Series([1] * 6, dtype=pl.Int32),
                 "file_line_number": pl.Series(list(range(1, 7)), dtype=pl.Int32),
@@ -384,7 +387,8 @@ class TestVolumeSpineBarEndSemantics:
         config = VolumeBarConfig(volume_threshold=200.0)
 
         spine = builder.build_spine(
-            symbol_id=42,
+            exchange="szse",
+            symbol="000001",
             start_ts_us=0,
             end_ts_us=1000,
             config=config,
@@ -410,12 +414,13 @@ class TestVolumeSpineBarEndSemantics:
         from pointline.research.spines.volume import VolumeSpineBuilder
 
         builder = VolumeSpineBuilder()
-        # threshold=100 → 6 bars, but max_rows=2
+        # threshold=100 -> 6 bars, but max_rows=2
         config = VolumeBarConfig(volume_threshold=100.0, max_rows=2)
 
         with pytest.raises(RuntimeError, match="too many rows"):
             builder.build_spine(
-                symbol_id=42,
+                exchange="szse",
+                symbol="000001",
                 start_ts_us=0,
                 end_ts_us=1000,
                 config=config,
@@ -429,17 +434,17 @@ class TestDollarSpineBarEndSemantics:
         """Create synthetic trades for dollar bar testing.
 
         Uses szse (cn-equity profile: price=1e-4, amount=1.0).
-        px_int=10_000_000 → price = 10_000_000 * 1e-4 = 1000.0
-        qty_int=1 → qty = 1 * 1.0 = 1.0
+        px_int=10_000_000 -> price = 10_000_000 * 1e-4 = 1000.0
+        qty_int=1 -> qty = 1 * 1.0 = 1.0
         notional = 1000.0 * 1.0 = 1000 per trade.
-        dollar_threshold=2000 → 3 bars from 4 trades.
+        dollar_threshold=2000 -> 3 bars from 4 trades.
         """
         return pl.LazyFrame(
             {
                 "ts_local_us": [100, 200, 300, 400],
                 "exchange": ["szse"] * 4,
                 "exchange_id": pl.Series([30] * 4, dtype=pl.Int16),
-                "symbol_id": pl.Series([42] * 4, dtype=pl.Int64),
+                "symbol": ["000001"] * 4,
                 "px_int": pl.Series([10_000_000] * 4, dtype=pl.Int64),
                 "qty_int": pl.Series([1] * 4, dtype=pl.Int64),
                 "file_id": pl.Series([1] * 4, dtype=pl.Int32),
@@ -458,7 +463,8 @@ class TestDollarSpineBarEndSemantics:
         config = DollarBarConfig(dollar_threshold=2000.0)
 
         spine = builder.build_spine(
-            symbol_id=42,
+            exchange="szse",
+            symbol="000001",
             start_ts_us=0,
             end_ts_us=1000,
             config=config,
@@ -482,12 +488,13 @@ class TestDollarSpineBarEndSemantics:
         from pointline.research.spines.dollar import DollarSpineBuilder
 
         builder = DollarSpineBuilder()
-        # threshold=1000 → 4 bars, but max_rows=2
+        # threshold=1000 -> 4 bars, but max_rows=2
         config = DollarBarConfig(dollar_threshold=1000.0, max_rows=2)
 
         with pytest.raises(RuntimeError, match="too many rows"):
             builder.build_spine(
-                symbol_id=42,
+                exchange="szse",
+                symbol="000001",
                 start_ts_us=0,
                 end_ts_us=1000,
                 config=config,

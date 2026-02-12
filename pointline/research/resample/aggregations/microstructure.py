@@ -98,7 +98,7 @@ def spread_distribution(lf: pl.LazyFrame, spec: AggregationSpec) -> pl.LazyFrame
     mode_allowlist=["HFT"],
     required_columns=[
         "exchange_id",
-        "symbol_id",
+        "symbol",
         "ts_local_us",
         "bids_px_int",
         "asks_px_int",
@@ -126,12 +126,12 @@ def ofi_cont(lf: pl.LazyFrame, spec: AggregationSpec) -> pl.LazyFrame:
     schema_names = set(lf.collect_schema().names())
     sort_cols = [
         col
-        for col in ["exchange_id", "symbol_id", "ts_local_us", "file_id", "file_line_number"]
+        for col in ["exchange_id", "symbol", "ts_local_us", "file_id", "file_line_number"]
         if col in schema_names
     ]
     sorted_lf = lf.sort(sort_cols) if sort_cols else lf
 
-    partition_cols = [col for col in ["exchange_id", "symbol_id"] if col in schema_names]
+    partition_cols = [col for col in ["exchange_id", "symbol"] if col in schema_names]
 
     bid_px = pl.col("bids_px_int").list.get(0)
     ask_px = pl.col("asks_px_int").list.get(0)

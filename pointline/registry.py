@@ -9,11 +9,9 @@ from __future__ import annotations
 import logging
 import threading
 import time
-from collections.abc import Iterable
 
 import polars as pl
 
-from pointline._error_messages import symbol_not_found_error
 from pointline.dim_symbol import read_dim_symbol_table
 
 logger = logging.getLogger(__name__)
@@ -97,45 +95,6 @@ def invalidate_cache() -> None:
     with _cache_lock:
         _cached_df = None
         _cached_at = 0.0
-
-
-def resolve_symbol(symbol_id: int) -> tuple[str, int, str]:
-    """
-    Resolves a symbol_id to its (exchange_name, exchange_id, exchange_symbol).
-
-    Args:
-        symbol_id: The global symbol identifier.
-
-    Returns:
-        tuple[str, int, str]: (normalized_exchange_name, exchange_id, exchange_symbol)
-
-    Raises:
-        ValueError: If symbol_id is not found.
-    """
-    df = _read_dim_symbol()
-    row = df.filter(pl.col("symbol_id") == symbol_id)
-
-    if row.height == 0:
-        raise ValueError(symbol_not_found_error(symbol_id))
-
-    exchange_id = row["exchange_id"][0]
-    exchange_name = row["exchange"][0]
-    exchange_symbol = row["exchange_symbol"][0]
-
-    return exchange_name, exchange_id, exchange_symbol
-
-
-def resolve_symbols(symbol_ids: Iterable[int]) -> list[str]:
-    """
-    Resolves a list of symbol_ids to a unique list of exchange names.
-    Useful for partition pruning across multiple symbols.
-    """
-    df = _read_dim_symbol()
-    ids = list(symbol_ids)
-
-    matches = df.filter(pl.col("symbol_id").is_in(ids))
-
-    return matches.select("exchange").unique()["exchange"].to_list()
 
 
 def find_symbol(

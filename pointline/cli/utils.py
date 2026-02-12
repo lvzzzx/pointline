@@ -181,13 +181,13 @@ def add_lineage(df: pl.DataFrame, file_id: int) -> pl.DataFrame:
     )
 
 
-def add_metadata(df: pl.DataFrame, exchange: str, exchange_id: int) -> pl.DataFrame:
+def add_metadata(df: pl.DataFrame, exchange: str, exchange_id: int | None = None) -> pl.DataFrame:
     """Add exchange metadata and derived date column to the DataFrame.
 
     Args:
         df: Input DataFrame with ts_local_us column.
         exchange: Exchange name.
-        exchange_id: Exchange ID.
+        exchange_id: Deprecated, ignored. Kept for call-site compatibility.
 
     Returns:
         DataFrame with exchange and date columns added.
@@ -195,7 +195,6 @@ def add_metadata(df: pl.DataFrame, exchange: str, exchange_id: int) -> pl.DataFr
     result = df.with_columns(
         [
             pl.lit(exchange, dtype=pl.Utf8).alias("exchange"),
-            pl.lit(exchange_id, dtype=pl.Int16).alias("exchange_id"),
         ]
     )
     return result.with_columns(
@@ -391,28 +390,6 @@ def parse_effective_ts(value: str | None) -> int:
         return int(value)
     except ValueError as exc:
         raise SystemExit(f"Invalid --effective-ts value: {value}") from exc
-
-
-def parse_symbol_id_single(value: str | None) -> int | None:
-    """Parse a single symbol ID from a comma-separated string.
-
-    Args:
-        value: Comma-separated string containing symbol IDs.
-
-    Returns:
-        Single symbol ID, or None if input is empty.
-
-    Raises:
-        ValueError: If more than one symbol ID is provided.
-    """
-    if not value:
-        return None
-    items = [int(part.strip()) for part in value.split(",") if part.strip()]
-    if not items:
-        return None
-    if len(items) != 1:
-        raise ValueError("symbol_id must be a single value")
-    return items[0]
 
 
 def normalize_exchange_arg(exchange: str | None) -> tuple[str, int] | tuple[None, None]:

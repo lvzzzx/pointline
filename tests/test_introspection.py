@@ -16,7 +16,7 @@ def test_get_schema_trades():
     assert "qty_int" in schema
     assert schema["px_int"] == pl.Int64
     assert schema["side"] == pl.UInt8
-    assert schema["symbol_id"] == pl.Int64
+    assert schema["symbol"] == pl.Utf8
 
 
 def test_get_schema_quotes():
@@ -62,7 +62,7 @@ def test_get_schema_l3_orders():
 
     assert isinstance(schema, dict)
     assert "ts_local_us" in schema
-    assert "symbol_id" in schema
+    assert "symbol" in schema
     assert "trading_phase" in schema
 
 
@@ -72,7 +72,7 @@ def test_get_schema_l3_ticks():
 
     assert isinstance(schema, dict)
     assert "ts_local_us" in schema
-    assert "symbol_id" in schema
+    assert "symbol" in schema
     assert "trading_phase" in schema
 
 
@@ -108,7 +108,7 @@ def test_list_columns_trades():
     assert "ts_local_us" in columns
     assert "px_int" in columns
     assert "qty_int" in columns
-    assert "symbol_id" in columns
+    assert "symbol" in columns
     assert "side" in columns
 
 

@@ -1163,7 +1163,7 @@ def build_parser() -> argparse.ArgumentParser:
     delta_optimize.add_argument(
         "--zorder",
         default=None,
-        help="Comma-separated columns to Z-order (default: symbol_id,ts_local_us when present)",
+        help="Comma-separated columns to Z-order (default: symbol,ts_local_us when present)",
     )
     delta_optimize.set_defaults(func=cmd_delta_optimize)
 

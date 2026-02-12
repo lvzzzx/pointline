@@ -627,19 +627,24 @@ def _get_table_description(table_name: str) -> str:
 
 
 def symbol_metadata(
-    symbol_id: int,
+    symbol: str,
+    exchange: str | None = None,
 ) -> pl.DataFrame:
     """Return symbol metadata from dim_symbol.
 
     Args:
-        symbol_id: The symbol_id to look up.
+        symbol: The exchange symbol to look up (e.g., "BTCUSDT").
+        exchange: Optional exchange filter (e.g., "binance-futures").
 
     Returns:
         DataFrame with symbol metadata.
-        Returns empty DataFrame if symbol_id not found.
+        Returns empty DataFrame if symbol not found.
     """
     dim = read_dim_symbol_table()
-    return dim.filter(pl.col("symbol_id") == symbol_id)
+    result = dim.filter(pl.col("exchange_symbol") == symbol)
+    if exchange is not None:
+        result = result.filter(pl.col("exchange") == normalize_exchange(exchange))
+    return result
 
 
 def trading_days(

@@ -22,7 +22,6 @@ from pointline.tables.trades import (
     encode_fixed_point,
     normalize_trades_schema,
     required_trades_columns,
-    resolve_symbol_ids,
     validate_trades,
 )
 from pointline.validation_utils import DataQualityWarning
@@ -173,8 +172,7 @@ def test_normalize_trades_schema():
         {
             "date": [date(2024, 5, 1)],
             "exchange": ["binance"],
-            "exchange_id": [1],
-            "symbol_id": [100],
+            "symbol": ["BTCUSDT"],
             "ts_local_us": [1714550400000000],
             "ts_exch_us": [1714550400100000],
             "trade_id": ["t1"],
@@ -190,8 +188,7 @@ def test_normalize_trades_schema():
     normalized = normalize_trades_schema(df)
 
     assert normalized["date"].dtype == pl.Date
-    assert normalized["exchange_id"].dtype == pl.Int16  # Delta Lake stores as Int16 (not UInt16)
-    assert normalized["symbol_id"].dtype == pl.Int64  # Delta Lake stores as Int64
+    assert normalized["symbol"].dtype == pl.Utf8
     assert normalized["ts_local_us"].dtype == pl.Int64
 
 
@@ -199,7 +196,7 @@ def test_normalize_trades_schema_missing_required():
     """Test that missing required columns raise error."""
     df = pl.DataFrame(
         {
-            "exchange_id": [1],
+            "exchange": ["binance"],
             # Missing other required columns
         }
     )
@@ -218,8 +215,7 @@ def test_validate_trades_basic():
             "ts_exch_us": [1714550400000000, 1714550401000000, 1714550402000000],
             "side": [0, 1, 2],
             "exchange": ["binance", "binance", "binance"],
-            "exchange_id": [1, 1, 1],
-            "symbol_id": [100, 100, 100],
+            "symbol": ["BTCUSDT", "BTCUSDT", "BTCUSDT"],
         }
     )
 
@@ -241,8 +237,7 @@ def test_validate_trades_invalid_side():
             "ts_exch_us": [1714550400000000] * 3,
             "side": [0, 1, 99],  # Last one invalid
             "exchange": ["binance"] * 3,
-            "exchange_id": [1] * 3,
-            "symbol_id": [100] * 3,
+            "symbol": ["BTCUSDT"] * 3,
         }
     )
 
@@ -255,11 +250,10 @@ def test_validate_trades_invalid_side():
 def test_encode_fixed_point():
     """Test fixed-point encoding using asset-class scalar profile."""
     dim_symbol = _sample_dim_symbol()
-    # dim_symbol already has symbol_id from scd2_bootstrap
 
     df = pl.DataFrame(
         {
-            "symbol_id": dim_symbol["symbol_id"].to_list() * 3,
+            "symbol": ["BTCUSDT"] * 3,
             "price_px": [50000.0, 50001.0, 50002.0],
             "qty": [0.1, 0.2, 0.15],
         }
@@ -280,7 +274,7 @@ def test_encode_fixed_point_missing_columns():
     """Test that missing float columns raise error."""
     df = pl.DataFrame(
         {
-            "symbol_id": [1],
+            "symbol": ["BTCUSDT"],
             "price_px": [50000.0],
             # Missing "qty" column
         }
@@ -310,25 +304,6 @@ def test_decode_fixed_point():
     assert decoded["qty"][0] == pytest.approx(0.1)
 
 
-def test_resolve_symbol_ids():
-    """Test symbol ID resolution using as-of join."""
-    dim_symbol = _sample_dim_symbol()
-
-    # Create data with timestamps
-    data = pl.DataFrame(
-        {
-            "ts_local_us": [1714550400000000, 1714550401000000],
-            "exchange_id": [1, 1],
-            "exchange_symbol": ["BTCUSDT", "BTCUSDT"],
-        }
-    )
-
-    resolved = resolve_symbol_ids(data, dim_symbol, exchange_id=1, exchange_symbol="BTCUSDT")
-
-    assert "symbol_id" in resolved.columns
-    assert resolved.height == 2
-
-
 def test_trades_service_validate():
     """Test TradesIngestionService.validate() method."""
     repo = Mock(spec=BaseDeltaRepository)
@@ -347,8 +322,7 @@ def test_trades_service_validate():
             "ts_exch_us": [1714550400000000, 1714550401000000],
             "side": [0, 1],
             "exchange": ["binance", "binance"],
-            "exchange_id": [1, 1],
-            "symbol_id": [100, 100],
+            "symbol": ["BTCUSDT", "BTCUSDT"],
         }
     )
 
@@ -372,8 +346,7 @@ def test_trades_service_compute_state():
         {
             "date": [date(2024, 5, 1)],
             "exchange": ["binance"],
-            "exchange_id": [1],
-            "symbol_id": [100],
+            "symbol": ["BTCUSDT"],
             "ts_local_us": [1714550400000000],
             "ts_exch_us": [1714550400100000],
             "trade_id": ["t1"],
@@ -408,8 +381,7 @@ def test_trades_service_write():
         {
             "date": [date(2024, 5, 1)],
             "exchange": ["binance"],
-            "exchange_id": [1],
-            "symbol_id": [100],
+            "symbol": ["BTCUSDT"],
             "ts_local_us": [1714550400000000],
             "ts_exch_us": [1714550400100000],
             "trade_id": ["t1"],
@@ -594,5 +566,4 @@ def test_required_trades_columns():
     assert len(cols) == len(TRADES_SCHEMA)
     assert "date" in cols
     assert "exchange" in cols
-    assert "exchange_id" in cols
-    assert "symbol_id" in cols
+    assert "symbol" in cols

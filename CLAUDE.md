@@ -27,6 +27,16 @@ PIT-correct, deterministic, reproducible data for quantitative trading research 
 - Double-check fixed-point encoding, timestamp conversions, bitwise operations
 - Don't use patterns from older code that has been refactored
 - Don't add abstractions, feature flags, or error handling beyond what's needed
+- Before writing code that touches table schemas, ALWAYS read the canonical schema in `pointline/tables/*.py` first
+- Before using Polars APIs, verify the method exists and accepts the arguments you're using
+
+**Design-first workflow:**
+- When asked to "design", "plan", or "review", write the document FIRST. Only read code if you need context for the document. Do not start implementing until the user explicitly says to proceed.
+- When asked for a change, prefer the clean redesign over workarounds or compatibility shims. If unsure whether a workaround or proper fix is wanted, ask — don't default to the workaround.
+- For multi-file changes, list every file you plan to modify with a 1-line summary BEFORE editing. Get approval first.
+
+**Code review protocol:**
+- When asked to "review" a git commit, review that specific commit's diff (`git show <hash>`), NOT open PRs or the general codebase.
 
 ## Project Overview
 

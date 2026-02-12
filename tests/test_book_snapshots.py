@@ -18,7 +18,6 @@ from pointline.tables.book_snapshots import (
     encode_fixed_point,
     normalize_book_snapshots_schema,
     required_book_snapshots_columns,
-    resolve_symbol_ids,
     validate_book_snapshots,
 )
 from pointline.validation_utils import DataQualityWarning
@@ -162,8 +161,7 @@ def test_normalize_book_snapshots_schema():
         {
             "date": [date(2024, 5, 1), date(2024, 5, 1)],
             "exchange": ["binance", "binance"],
-            "exchange_id": [1, 1],
-            "symbol_id": [100, 100],
+            "symbol": ["BTCUSDT", "BTCUSDT"],
             "ts_local_us": [base_ts, base_ts + 1_000_000],
             "ts_exch_us": [base_ts + 100_000, base_ts + 1_100_000],
             "bids_px_int": [[5000000, None] * 12 + [None], [5000100, None] * 12 + [None]],
@@ -185,8 +183,7 @@ def test_normalize_book_snapshots_schema():
     # Check types match schema
     assert normalized["date"].dtype == pl.Date
     assert normalized["exchange"].dtype == pl.Utf8
-    assert normalized["exchange_id"].dtype == pl.Int16
-    assert normalized["symbol_id"].dtype == pl.Int64
+    assert normalized["symbol"].dtype == pl.Utf8
     assert normalized["bids_px_int"].dtype == pl.List(pl.Int64)
     assert normalized["asks_px_int"].dtype == pl.List(pl.Int64)
 
@@ -198,8 +195,7 @@ def test_validate_book_snapshots_basic():
     df = pl.DataFrame(
         {
             "exchange": ["binance", "binance"],
-            "exchange_id": [1, 1],
-            "symbol_id": [100, 100],
+            "symbol": ["BTCUSDT", "BTCUSDT"],
             "ts_local_us": [base_ts, base_ts + 1_000_000],
             "bids_px_int": [
                 [5000000, 4999990, 4999980] + [None] * 22,
@@ -231,8 +227,7 @@ def test_validate_book_snapshots_crossed_book():
     df = pl.DataFrame(
         {
             "exchange": ["binance"],
-            "exchange_id": [1],
-            "symbol_id": [100],
+            "symbol": ["BTCUSDT"],
             "ts_local_us": [base_ts],
             "bids_px_int": [[5000050, None] * 12 + [None]],  # Best bid = 50000.5
             "bids_sz_int": [[10000, None] * 12 + [None]],
@@ -253,8 +248,7 @@ def test_validate_book_snapshots_invalid_ordering():
     df = pl.DataFrame(
         {
             "exchange": ["binance"],
-            "exchange_id": [1],
-            "symbol_id": [100],
+            "symbol": ["BTCUSDT"],
             "ts_local_us": [base_ts],
             "bids_px_int": [[4999990, 5000000, None] * 8 + [None]],  # Ascending (wrong!)
             "bids_sz_int": [[10000, 15000, None] * 8 + [None]],
@@ -274,10 +268,10 @@ def test_encode_fixed_point():
     dim_symbol = _sample_dim_symbol()
     base_ts = 1714557600000000
 
-    # Create DataFrame with symbol_id and raw float columns
+    # Create DataFrame with symbol and raw float columns
     df = pl.DataFrame(
         {
-            "symbol_id": [100, 100],
+            "symbol": ["BTCUSDT", "BTCUSDT"],
             "ts_local_us": [base_ts, base_ts + 1_000_000],
             "bids[0].price": [50000.0, 50001.0],
             "bids[0].amount": [0.1, 0.2],
@@ -314,7 +308,7 @@ def test_encode_fixed_point():
 
 
 def test_encode_fixed_point_multi_symbol():
-    """Encode with multiple symbol_id values — same profile scalar for all."""
+    """Encode with multiple symbol values — same profile scalar for all."""
     updates = pl.DataFrame(
         {
             "exchange_id": [1, 1],
@@ -330,12 +324,9 @@ def test_encode_fixed_point_multi_symbol():
     )
     dim_symbol = scd2_bootstrap(updates)
 
-    btc_id = dim_symbol.filter(pl.col("exchange_symbol") == "BTCUSDT")["symbol_id"][0]
-    eth_id = dim_symbol.filter(pl.col("exchange_symbol") == "ETHUSDT")["symbol_id"][0]
-
     df = pl.DataFrame(
         {
-            "symbol_id": [btc_id, eth_id],
+            "symbol": ["BTCUSDT", "ETHUSDT"],
             "ts_local_us": [1714557600000000, 1714557600000001],
             "asks[0].price": [50000.01, 250.01],
             "asks[0].amount": [0.15, 1.6],
@@ -367,7 +358,7 @@ def test_decode_fixed_point():
     # 0.1 → 100_000_000, 0.15 → 150_000_000
     df = pl.DataFrame(
         {
-            "symbol_id": [100],
+            "symbol": ["BTCUSDT"],
             "exchange": ["binance-futures"],
             "ts_local_us": [base_ts],
             "bids_px_int": [[50_000_000_000_000, 49_999_900_000_000, None] + [None] * 22],
@@ -391,14 +382,14 @@ def test_decode_fixed_point():
 
 
 def test_decode_fixed_point_multi_symbol():
-    """Decode with multiple symbol_id values — same profile scalar for all."""
+    """Decode with multiple symbol values — same profile scalar for all."""
     base_ts = 1714557600000000
 
     # Encoded with crypto profile (price=1e-9):
     # BTC 50000.0 → 50_000_000_000_000; ETH 250.0 → 250_000_000_000
     df = pl.DataFrame(
         {
-            "symbol_id": [1, 2],
+            "symbol": ["BTCUSDT", "ETHUSDT"],
             "exchange": ["binance-futures", "binance-futures"],
             "ts_local_us": [base_ts, base_ts + 1],
             "bids_px_int": [[50_000_000_000_000, None], [250_000_000_000, None]],
@@ -414,41 +405,6 @@ def test_decode_fixed_point_multi_symbol():
     assert decoded["asks_px"][0][0] == pytest.approx(50000.5)
     assert decoded["bids_px"][1][0] == pytest.approx(250.0)
     assert decoded["asks_px"][1][0] == pytest.approx(250.1)
-
-
-def test_resolve_symbol_ids():
-    """Test symbol ID resolution."""
-    dim_symbol = _sample_dim_symbol()
-    base_ts = 1714557600000000
-
-    df = pl.DataFrame(
-        {
-            "ts_local_us": [base_ts, base_ts + 1_000_000],
-            "bids_px_int": [
-                [5000000, None] * 12 + [None],
-                [5000100, None] * 12 + [None],
-            ],
-            "bids_sz_int": [
-                [10000, None] * 12 + [None],
-                [20000, None] * 12 + [None],
-            ],
-            "asks_px_int": [
-                [5000050, None] * 12 + [None],
-                [5000150, None] * 12 + [None],
-            ],
-            "asks_sz_int": [
-                [15000, None] * 12 + [None],
-                [25000, None] * 12 + [None],
-            ],
-        }
-    )
-
-    resolved = resolve_symbol_ids(df, dim_symbol, exchange_id=1, exchange_symbol="BTCUSDT")
-
-    assert "symbol_id" in resolved.columns
-    assert resolved["symbol_id"].dtype == pl.Int64
-    # Symbol ID should be resolved (non-null)
-    assert resolved["symbol_id"].is_not_null().all()
 
 
 def test_required_book_snapshots_columns():

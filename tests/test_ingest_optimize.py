@@ -80,7 +80,7 @@ def test_run_post_ingest_optimize_invokes_repo(monkeypatch):
     failures = ingest_cmd._run_post_ingest_optimize(
         touched,
         target_file_size=123,
-        zorder="symbol_id, ts_local_us",
+        zorder="symbol, ts_local_us",
     )
 
     assert failures == 0
@@ -89,7 +89,7 @@ def test_run_post_ingest_optimize_invokes_repo(monkeypatch):
     assert calls[0]["partition_by"] == ["exchange", "date"]
     assert calls[0]["filters"] == {"exchange": "binance", "date": date(2024, 5, 1)}
     assert calls[0]["target_file_size"] == 123
-    assert calls[0]["z_order"] == ["symbol_id", "ts_local_us"]
+    assert calls[0]["z_order"] == ["symbol", "ts_local_us"]
 
 
 def test_bronze_ingest_parser_accepts_optimize_flags():
@@ -100,14 +100,14 @@ def test_bronze_ingest_parser_accepts_optimize_flags():
             "ingest",
             "--optimize-after-ingest",
             "--optimize-zorder",
-            "symbol_id,ts_local_us",
+            "symbol,ts_local_us",
             "--optimize-target-file-size",
             "1048576",
         ]
     )
 
     assert args.optimize_after_ingest is True
-    assert args.optimize_zorder == "symbol_id,ts_local_us"
+    assert args.optimize_zorder == "symbol,ts_local_us"
     assert args.optimize_target_file_size == 1048576
 
 

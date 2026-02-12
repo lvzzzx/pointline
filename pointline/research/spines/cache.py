@@ -16,7 +16,8 @@ Usage::
     cache = SpineCache(skip_builders={"clock"})
     builder = get_builder("volume")
     spine = cache.get_or_build(
-        builder, 12345, start, end, VolumeBarConfig(volume_threshold=1000)
+        builder, "binance-futures", "BTCUSDT", start, end,
+        VolumeBarConfig(volume_threshold=1000),
     )
 """
 
@@ -44,19 +45,21 @@ logger = logging.getLogger(__name__)
 def _spine_cache_key(
     builder_name: str,
     config: SpineBuilderConfig,
-    symbol_ids: list[int],
+    exchange: str,
+    symbols: list[str],
     start_ts_us: int,
     end_ts_us: int,
 ) -> str:
     """Compute deterministic SHA-256 cache key from spine inputs.
 
     The key is the hex digest of the canonicalized JSON representation
-    of all inputs.  Symbol IDs are sorted to ensure order invariance.
+    of all inputs.  Symbols are sorted to ensure order invariance.
     """
     payload = {
         "builder_name": builder_name,
         "config": asdict(config),
-        "symbol_ids": sorted(symbol_ids),
+        "exchange": exchange,
+        "symbols": sorted(symbols),
         "start_ts_us": start_ts_us,
         "end_ts_us": end_ts_us,
     }
@@ -71,7 +74,8 @@ class CacheEntry:
     cache_key: str
     builder_name: str
     config: dict[str, Any]
-    symbol_ids: list[int]
+    exchange: str
+    symbols: list[str]
     start_ts_us: int
     end_ts_us: int
     created_at_utc: str
@@ -112,7 +116,8 @@ class SpineCache:
     def get_or_build(
         self,
         builder: SpineBuilder,
-        symbol_id: int | list[int],
+        exchange: str,
+        symbol: str | list[str],
         start_ts_us: int,
         end_ts_us: int,
         config: SpineBuilderConfig,
@@ -121,7 +126,8 @@ class SpineCache:
 
         Args:
             builder: SpineBuilder instance.
-            symbol_id: Single or list of symbol IDs.
+            exchange: Exchange name (e.g., "binance-futures").
+            symbol: Single or list of symbol names.
             start_ts_us: Start timestamp (microseconds UTC).
             end_ts_us: End timestamp (microseconds UTC).
             config: Builder-specific configuration.
@@ -129,13 +135,15 @@ class SpineCache:
         Returns:
             LazyFrame with the spine data.
         """
-        symbol_ids = _normalize_symbol_ids(symbol_id)
+        symbols = _normalize_symbols(symbol)
 
         # Bypass cache for skipped builders
         if builder.name in self._skip_builders:
-            return builder.build_spine(symbol_ids, start_ts_us, end_ts_us, config)
+            return builder.build_spine(exchange, symbols, start_ts_us, end_ts_us, config)
 
-        cache_key = _spine_cache_key(builder.name, config, symbol_ids, start_ts_us, end_ts_us)
+        cache_key = _spine_cache_key(
+            builder.name, config, exchange, symbols, start_ts_us, end_ts_us
+        )
 
         # Try cache hit
         hit = self._read_cached(cache_key)
@@ -143,13 +151,15 @@ class SpineCache:
             logger.debug("Spine cache HIT: %s (builder=%s)", cache_key[:12], builder.name)
             return hit
 
-        # Cache miss — build
+        # Cache miss -- build
         logger.debug("Spine cache MISS: %s (builder=%s)", cache_key[:12], builder.name)
-        lf = builder.build_spine(symbol_ids, start_ts_us, end_ts_us, config)
+        lf = builder.build_spine(exchange, symbols, start_ts_us, end_ts_us, config)
         df = lf.collect()
 
         # Write atomically
-        self._write_cached(cache_key, df, builder.name, config, symbol_ids, start_ts_us, end_ts_us)
+        self._write_cached(
+            cache_key, df, builder.name, config, exchange, symbols, start_ts_us, end_ts_us
+        )
 
         # Return as lazy scan of the written file
         return pl.scan_parquet(self._parquet_path(cache_key))
@@ -157,7 +167,8 @@ class SpineCache:
     def lookup(
         self,
         builder_name: str,
-        symbol_id: int | list[int],
+        exchange: str,
+        symbol: str | list[str],
         start_ts_us: int,
         end_ts_us: int,
         config: SpineBuilderConfig,
@@ -167,8 +178,10 @@ class SpineCache:
         Returns:
             LazyFrame if cached, None otherwise.
         """
-        symbol_ids = _normalize_symbol_ids(symbol_id)
-        cache_key = _spine_cache_key(builder_name, config, symbol_ids, start_ts_us, end_ts_us)
+        symbols = _normalize_symbols(symbol)
+        cache_key = _spine_cache_key(
+            builder_name, config, exchange, symbols, start_ts_us, end_ts_us
+        )
         return self._read_cached(cache_key)
 
     def list_cached(self) -> list[CacheEntry]:
@@ -251,7 +264,8 @@ class SpineCache:
         df: pl.DataFrame,
         builder_name: str,
         config: SpineBuilderConfig,
-        symbol_ids: list[int],
+        exchange: str,
+        symbols: list[str],
         start_ts_us: int,
         end_ts_us: int,
     ) -> None:
@@ -277,7 +291,8 @@ class SpineCache:
             cache_key=cache_key,
             builder_name=builder_name,
             config=asdict(config),
-            symbol_ids=sorted(symbol_ids),
+            exchange=exchange,
+            symbols=sorted(symbols),
             start_ts_us=start_ts_us,
             end_ts_us=end_ts_us,
             created_at_utc=datetime.now(timezone.utc).isoformat(),
@@ -297,7 +312,7 @@ class SpineCache:
             )
 
 
-def _normalize_symbol_ids(symbol_id: int | list[int]) -> list[int]:
-    if isinstance(symbol_id, int):
-        return [symbol_id]
-    return list(symbol_id)
+def _normalize_symbols(symbol: str | list[str]) -> list[str]:
+    if isinstance(symbol, str):
+        return [symbol]
+    return list(symbol)

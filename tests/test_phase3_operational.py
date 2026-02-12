@@ -25,10 +25,12 @@ from pointline.tables.validation_log import create_ingestion_record
 
 def _make_dim_symbol(rows: list[dict]) -> pl.DataFrame:
     """Build a minimal dim_symbol DataFrame for quarantine tests."""
+    from pointline.config import get_exchange_id
+
     base = {
         "symbol_id": 0,
         "exchange": "binance-futures",
-        "exchange_id": 1,
+        "exchange_id": get_exchange_id("binance-futures"),
         "exchange_symbol": "BTCUSDT",
         "base_asset": "BTC",
         "quote_asset": "USDT",
@@ -66,8 +68,7 @@ def test_vectorized_quarantine_pass():
     df = pl.DataFrame(
         {
             "exchange": ["binance-futures", "binance-futures"],
-            "exchange_id": [1, 1],
-            "exchange_symbol": ["BTCUSDT", "ETHUSDT"],
+            "symbol": ["BTCUSDT", "ETHUSDT"],
             "date": [dt.date(2024, 5, 1), dt.date(2024, 5, 1)],
             "ts_local_us": [1714521600000000, 1714521600000000],
         }
@@ -88,8 +89,7 @@ def test_vectorized_quarantine_filters_missing_symbol():
     df = pl.DataFrame(
         {
             "exchange": ["binance-futures", "binance-futures", "binance-futures"],
-            "exchange_id": [1, 1, 1],
-            "exchange_symbol": ["BTCUSDT", "ETHUSDT", "ETHUSDT"],
+            "symbol": ["BTCUSDT", "ETHUSDT", "ETHUSDT"],
             "date": [dt.date(2024, 5, 1), dt.date(2024, 5, 1), dt.date(2024, 5, 1)],
             "ts_local_us": [1714521600000000, 1714521600000000, 1714521600100000],
         }
@@ -99,7 +99,7 @@ def test_vectorized_quarantine_filters_missing_symbol():
     assert filtered.height == 1
     assert frc == 2
     assert fsc == 1
-    assert filtered["exchange_symbol"].to_list() == ["BTCUSDT"]
+    assert filtered["symbol"].to_list() == ["BTCUSDT"]
 
 
 def test_vectorized_quarantine_multiple_dates():
@@ -120,8 +120,7 @@ def test_vectorized_quarantine_multiple_dates():
     df = pl.DataFrame(
         {
             "exchange": ["binance-futures", "binance-futures"],
-            "exchange_id": [1, 1],
-            "exchange_symbol": ["BTCUSDT", "BTCUSDT"],
+            "symbol": ["BTCUSDT", "BTCUSDT"],
             "date": [dt.date(2024, 5, 1), dt.date(2024, 5, 3)],
             "ts_local_us": [1714521600000000, 1714694400000000],
         }
@@ -162,8 +161,7 @@ def test_vectorized_quarantine_filters_partial_day_coverage_gap():
     df = pl.DataFrame(
         {
             "exchange": ["binance-futures"],
-            "exchange_id": [1],
-            "exchange_symbol": ["BTCUSDT"],
+            "symbol": ["BTCUSDT"],
             "date": [dt.date(2024, 5, 1)],
             "ts_local_us": [day_start + 12 * one_hour],
         }
@@ -183,8 +181,7 @@ def test_vectorized_quarantine_empty_df():
     df = pl.DataFrame(
         {
             "exchange": pl.Series([], dtype=pl.Utf8),
-            "exchange_id": pl.Series([], dtype=pl.Int16),
-            "exchange_symbol": pl.Series([], dtype=pl.Utf8),
+            "symbol": pl.Series([], dtype=pl.Utf8),
             "date": pl.Series([], dtype=pl.Date),
         }
     )

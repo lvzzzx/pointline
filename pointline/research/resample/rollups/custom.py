@@ -14,7 +14,7 @@ from .registry import FeatureRollupRegistry
     mode_allowlist=["HFT", "MFT", "LFT"],
     semantic_allowlist=["any"],
     pit_policy={"feature_direction": "backward_only"},
-    determinism_policy={"required_sort": ["exchange_id", "symbol_id", "ts_local_us"]},
+    determinism_policy={"required_sort": ["exchange_id", "symbol", "ts_local_us"]},
 )
 def weighted_close(feature_col: str, params: dict[str, object]) -> pl.Expr:
     """Weighted close over ticks within a bar.
@@ -35,7 +35,7 @@ def weighted_close(feature_col: str, params: dict[str, object]) -> pl.Expr:
     mode_allowlist=["HFT", "MFT", "LFT"],
     semantic_allowlist=["any"],
     pit_policy={"feature_direction": "backward_only"},
-    determinism_policy={"required_sort": ["exchange_id", "symbol_id", "ts_local_us"]},
+    determinism_policy={"required_sort": ["exchange_id", "symbol", "ts_local_us"]},
 )
 def trimmed_mean_10pct(feature_col: str, params: dict[str, object]) -> pl.Expr:
     """Mean after symmetric 10% trimming using deterministic quantile interpolation."""
@@ -52,7 +52,7 @@ def trimmed_mean_10pct(feature_col: str, params: dict[str, object]) -> pl.Expr:
     mode_allowlist=["HFT", "MFT", "LFT"],
     semantic_allowlist=["any"],
     pit_policy={"feature_direction": "backward_only"},
-    determinism_policy={"required_sort": ["exchange_id", "symbol_id", "ts_local_us"]},
+    determinism_policy={"required_sort": ["exchange_id", "symbol", "ts_local_us"]},
     optional_params={"epsilon": "number"},
     default_params={"epsilon": 1e-12},
 )
@@ -73,7 +73,7 @@ def tail_ratio_p95_p50(feature_col: str, params: dict[str, object]) -> pl.Expr:
     mode_allowlist=["HFT", "MFT", "LFT"],
     semantic_allowlist=["any"],
     pit_policy={"feature_direction": "backward_only"},
-    determinism_policy={"required_sort": ["exchange_id", "symbol_id", "ts_local_us"]},
+    determinism_policy={"required_sort": ["exchange_id", "symbol", "ts_local_us"]},
     optional_params={"epsilon": "number"},
     default_params={"epsilon": 1e-12},
 )

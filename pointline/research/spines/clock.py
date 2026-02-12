@@ -10,8 +10,6 @@ from dataclasses import dataclass
 
 import polars as pl
 
-from pointline.dim_symbol import resolve_exchange_ids
-
 from .base import SpineBuilderConfig
 from .registry import register_builder
 
@@ -99,7 +97,8 @@ class ClockSpineBuilder:
 
     def build_spine(
         self,
-        symbol_id: int | list[int],
+        exchange: str,
+        symbol: str | list[str],
         start_ts_us: int,
         end_ts_us: int,
         config: SpineBuilderConfig,
@@ -109,22 +108,23 @@ class ClockSpineBuilder:
         CRITICAL: Spine timestamps are BAR ENDS (interval ends).
 
         Args:
-            symbol_id: Single symbol_id or list of symbol_ids
+            exchange: Exchange name (e.g., "binance-futures")
+            symbol: Single symbol or list of symbols (e.g., "BTCUSDT")
             start_ts_us: Start timestamp (microseconds, UTC)
             end_ts_us: End timestamp (microseconds, UTC)
             config: ClockSpineConfig instance
 
         Returns:
-            LazyFrame with (ts_local_us, exchange_id, symbol_id)
-            sorted by (exchange_id, symbol_id, ts_local_us)
+            LazyFrame with (ts_local_us, exchange, symbol)
+            sorted by (exchange, symbol, ts_local_us)
 
             IMPORTANT: ts_local_us values are bar ENDS (interval ends).
 
         Example:
             start_ts_us=0, end_ts_us=180_000_000, step_ms=60000
-            → Generates: [60_000_000, 120_000_000, 180_000_000]
-            → Bar at 60ms contains data in [0ms, 60ms)
-            → Bar at 120ms contains data in [60ms, 120ms)
+            -> Generates: [60_000_000, 120_000_000, 180_000_000]
+            -> Bar at 60ms contains data in [0ms, 60ms)
+            -> Bar at 120ms contains data in [60ms, 120ms)
         """
         if not isinstance(config, ClockSpineConfig):
             raise TypeError(f"Expected ClockSpineConfig, got {type(config).__name__}")
@@ -132,11 +132,8 @@ class ClockSpineBuilder:
         if config.step_ms <= 0:
             raise ValueError("step_ms must be positive")
 
-        # Ensure symbol_id is list
-        symbol_ids = [symbol_id] if isinstance(symbol_id, int) else list(symbol_id)
-
-        # Resolve exchange_ids
-        exchange_ids = resolve_exchange_ids(symbol_ids)
+        # Ensure symbol is list
+        symbols = [symbol] if isinstance(symbol, str) else list(symbol)
 
         # Compute step in microseconds
         step_us = config.step_ms * 1_000
@@ -149,13 +146,13 @@ class ClockSpineBuilder:
             return pl.LazyFrame(
                 schema={
                     "ts_local_us": pl.Int64,
-                    "exchange_id": pl.Int16,
-                    "symbol_id": pl.Int64,
+                    "exchange": pl.Utf8,
+                    "symbol": pl.Utf8,
                 }
             )
 
         # Safety check
-        total_rows = len(timestamps) * len(symbol_ids)
+        total_rows = len(timestamps) * len(symbols)
         if total_rows > config.max_rows:
             raise RuntimeError(
                 f"Clock spine would generate too many rows: {total_rows:,} > {config.max_rows:,}. "
@@ -165,19 +162,19 @@ class ClockSpineBuilder:
         # Create time DataFrame
         time_df = pl.DataFrame({"ts_local_us": timestamps})
 
-        # Create symbols table with correct types
+        # Create symbols table with exchange
         symbols_df = pl.DataFrame(
             {
-                "symbol_id": pl.Series(symbol_ids, dtype=pl.Int64),
-                "exchange_id": pl.Series(exchange_ids, dtype=pl.Int16),
+                "symbol": pl.Series(symbols, dtype=pl.Utf8),
+                "exchange": pl.Series([exchange] * len(symbols), dtype=pl.Utf8),
             }
         )
 
-        # Cross join: every symbol × every timestamp
+        # Cross join: every symbol x every timestamp
         spine = symbols_df.lazy().join(time_df.lazy(), how="cross")
 
-        # Sort by (exchange_id, symbol_id, ts_local_us) for deterministic ordering
-        return spine.sort(["exchange_id", "symbol_id", "ts_local_us"])
+        # Sort by (exchange, symbol, ts_local_us) for deterministic ordering
+        return spine.sort(["exchange", "symbol", "ts_local_us"])
 
 
 # Auto-register on module import

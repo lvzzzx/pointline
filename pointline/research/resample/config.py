@@ -33,7 +33,7 @@ class AggregateConfig:
     """Configuration for aggregation operations.
 
     Attributes:
-        by: Grouping columns (typically ["exchange_id", "symbol_id", "bucket_ts"])
+        by: Grouping columns (typically ["exchange_id", "symbol", "bucket_ts"])
         aggregations: List of aggregation specifications
         mode: Pipeline execution mode
         research_mode: Research frequency mode (HFT/MFT/LFT) for registry validation
@@ -53,7 +53,7 @@ class ResampleConfig:
 
     Attributes:
         time_col: Timestamp column name
-        by: Partitioning columns (typically ["exchange_id", "symbol_id"])
+        by: Partitioning columns (typically ["exchange_id", "symbol"])
         every: Resampling interval (e.g., "1m", "5m", "1h")
         period: Optional window period (defaults to every)
         closed: Interval closure ("left" or "right")

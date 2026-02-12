@@ -25,18 +25,12 @@ from pointline.tables.quotes import (
 from pointline.tables.quotes import (
     encode_fixed_point as encode_quotes_fixed_point,
 )
-from pointline.tables.quotes import (
-    resolve_symbol_ids as resolve_quotes_symbol_ids,
-)
 from pointline.tables.trades import (
     TRADES_SCHEMA,
     normalize_trades_schema,
 )
 from pointline.tables.trades import (
     encode_fixed_point as encode_trades_fixed_point,
-)
-from pointline.tables.trades import (
-    resolve_symbol_ids as resolve_trades_symbol_ids,
 )
 from pointline.tables.validation_log import create_validation_record
 
@@ -98,22 +92,20 @@ def cmd_validate_quotes(args: argparse.Namespace) -> int:
         return 0
 
     unique_exchanges = parsed_df["exchange"].unique().to_list()
-    exchange_map: dict[str, int] = {}
     invalid_exchanges: list[str] = []
     for exchange in unique_exchanges:
         try:
-            exchange_map[exchange] = get_exchange_id(exchange)
+            get_exchange_id(exchange)  # validate exchange is known
         except ValueError:
             invalid_exchanges.append(str(exchange))
     if invalid_exchanges:
         raise ValueError(f"Unknown exchanges: {sorted(set(invalid_exchanges))}")
 
-    parsed_df = parsed_df.with_columns(
-        pl.col("exchange").map_dict(exchange_map).cast(pl.Int16).alias("exchange_id")
-    )
+    # Rename exchange_symbol -> symbol (canonical event table column)
+    if "exchange_symbol" in parsed_df.columns and "symbol" not in parsed_df.columns:
+        parsed_df = parsed_df.rename({"exchange_symbol": "symbol"})
     dim_symbol = pl.read_delta(str(get_table_path("dim_symbol")))
-    resolved_df = resolve_quotes_symbol_ids(parsed_df, dim_symbol, None, None)
-    encoded_df = encode_quotes_fixed_point(resolved_df, dim_symbol, unique_exchanges[0])
+    encoded_df = encode_quotes_fixed_point(parsed_df, dim_symbol, unique_exchanges[0])
     expected_df = add_lineage(encoded_df, file_id)
     expected_df = normalize_quotes_schema(expected_df)
 
@@ -257,22 +249,20 @@ def cmd_validate_trades(args: argparse.Namespace) -> int:
         return 0
 
     unique_exchanges = parsed_df["exchange"].unique().to_list()
-    exchange_map: dict[str, int] = {}
     invalid_exchanges: list[str] = []
     for exchange in unique_exchanges:
         try:
-            exchange_map[exchange] = get_exchange_id(exchange)
+            get_exchange_id(exchange)  # validate exchange is known
         except ValueError:
             invalid_exchanges.append(str(exchange))
     if invalid_exchanges:
         raise ValueError(f"Unknown exchanges: {sorted(set(invalid_exchanges))}")
 
-    parsed_df = parsed_df.with_columns(
-        pl.col("exchange").map_dict(exchange_map).cast(pl.Int16).alias("exchange_id")
-    )
+    # Rename exchange_symbol -> symbol (canonical event table column)
+    if "exchange_symbol" in parsed_df.columns and "symbol" not in parsed_df.columns:
+        parsed_df = parsed_df.rename({"exchange_symbol": "symbol"})
     dim_symbol = pl.read_delta(str(get_table_path("dim_symbol")))
-    resolved_df = resolve_trades_symbol_ids(parsed_df, dim_symbol, None, None)
-    encoded_df = encode_trades_fixed_point(resolved_df, dim_symbol, unique_exchanges[0])
+    encoded_df = encode_trades_fixed_point(parsed_df, dim_symbol, unique_exchanges[0])
     expected_df = add_lineage(encoded_df, file_id)
     expected_df = normalize_trades_schema(expected_df)
 

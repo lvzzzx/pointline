@@ -24,6 +24,8 @@ from pointline.config import (
     get_exchange_timezone,
     get_table_path,
 )
+
+# get_exchange_id is still imported for quarantine checks against dim_symbol
 from pointline.dim_symbol import check_coverage
 from pointline.io.protocols import (
     BronzeFileMetadata,
@@ -40,7 +42,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class TableStrategy:
-    """Table-specific functions (encoding, validation, normalization, resolution).
+    """Table-specific functions (encoding, validation, normalization).
 
     This encapsulates all the table-specific domain logic while keeping the
     ingestion pipeline vendor-agnostic.
@@ -49,18 +51,11 @@ class TableStrategy:
         encode_fixed_point: Convert float prices/quantities to fixed-point integers (df, dim_symbol, exchange)
         validate: Apply quality checks and filter invalid rows
         normalize_schema: Cast to canonical schema and select only schema columns
-        resolve_symbol_ids: Map exchange symbols to symbol_ids with SCD Type 2 handling
-        normalize_symbol: Normalize exchange symbol for dim_symbol matching (optional)
-        ts_col: Timestamp column name for symbol resolution (default: ts_local_us)
     """
 
     encode_fixed_point: Callable[[pl.DataFrame, pl.DataFrame, str], pl.DataFrame]
     validate: Callable[[pl.DataFrame], pl.DataFrame]
     normalize_schema: Callable[[pl.DataFrame], pl.DataFrame]
-    resolve_symbol_ids: Callable[
-        [pl.DataFrame, pl.DataFrame, int | None, str | None, str], pl.DataFrame
-    ]  # (df, dim_symbol, exchange_id, symbol, ts_col) -> df
-    ts_col: str = "ts_local_us"  # Timestamp column for symbol resolution
 
 
 class GenericIngestionService(BaseService):
@@ -68,16 +63,15 @@ class GenericIngestionService(BaseService):
 
     This service implements the standard ingestion pipeline with column-based metadata:
     1. Vendor reads + parses file (adds metadata columns)
-    2. Validate required metadata columns
-    3. Map exchange -> exchange_id
+    2. Validate required metadata columns; rename exchange_symbol → symbol
+    3. Validate exchange names; check table-level exchange restrictions
     4. Load dim_symbol and perform quarantine checks
-    5. Resolve symbol IDs (SCD Type 2 as-of join)
-    6. Encode fixed-point (price/qty → integers)
-    7. Add lineage columns (file_id, file_line_number)
-    8. Normalize schema (enforce canonical schema)
-    9. Validate (quality checks)
-    10. Append to Delta table
-    11. Return IngestionResult
+    5. Encode fixed-point (price/qty → integers)
+    6. Add lineage columns (file_id, file_line_number)
+    7. Normalize schema (enforce canonical schema)
+    8. Validate (quality checks)
+    9. Append to Delta table
+    10. Return IngestionResult
 
     Only step 1 (read_and_parse) varies by vendor. All other steps are standardized.
     """
@@ -277,13 +271,12 @@ class GenericIngestionService(BaseService):
                     self._write_validation_log(meta, file_id, result, start_time_ms)
                 return result
 
-            # 3. Map exchange -> exchange_id (vectorized)
+            # 3. Validate exchange names
             unique_exchanges = df["exchange"].unique().to_list()
-            exchange_map: dict[str, int] = {}
             invalid_exchanges: list[str] = []
             for exchange in unique_exchanges:
                 try:
-                    exchange_map[exchange] = get_exchange_id(exchange)
+                    get_exchange_id(exchange)  # validates exchange is known
                 except ValueError:
                     invalid_exchanges.append(str(exchange))
 
@@ -300,10 +293,6 @@ class GenericIngestionService(BaseService):
                 if not dry_run:
                     self._write_validation_log(meta, file_id, result, start_time_ms)
                 return result
-
-            df = df.with_columns(
-                pl.col("exchange").replace_strict(exchange_map).cast(pl.Int16).alias("exchange_id")
-            )
 
             # 3b. Check table-level exchange restrictions (e.g., l3_* → szse/sse only)
             allowed = TABLE_ALLOWED_EXCHANGES.get(self.table_name)
@@ -326,9 +315,13 @@ class GenericIngestionService(BaseService):
                         self._write_validation_log(meta, file_id, result, start_time_ms)
                     return result
 
+            # 2b. Rename exchange_symbol → symbol (canonical event table column)
+            df = df.rename({"exchange_symbol": "symbol"})
+
             # 4. Validate date partition alignment against exchange-local timezone
+            ts_col = "ts_bucket_start_us" if "ts_bucket_start_us" in df.columns else "ts_local_us"
             date_alignment_ok, date_alignment_error = self._validate_date_partition_alignment(
-                df, ts_col=self.strategy.ts_col
+                df, ts_col=ts_col
             )
             if not date_alignment_ok:
                 result = IngestionResult(
@@ -372,27 +365,18 @@ class GenericIngestionService(BaseService):
                     filtered_row_count,
                 )
 
-            # 7. Resolve symbol IDs (SCD Type 2 as-of join using columns)
-            resolved_df = self.strategy.resolve_symbol_ids(
-                df,
-                dim_symbol,
-                exchange_id=None,
-                exchange_symbol=None,
-                ts_col=self.strategy.ts_col,
-            )
-
-            # 8. Encode fixed-point (price/qty → integers)
+            # 7. Encode fixed-point (price/qty → integers)
             # Use first exchange from data — files are single-exchange by convention
             exchange = unique_exchanges[0]
-            encoded_df = self.strategy.encode_fixed_point(resolved_df, dim_symbol, exchange)
+            encoded_df = self.strategy.encode_fixed_point(df, dim_symbol, exchange)
 
-            # 9. Add lineage columns (file_id, file_line_number)
+            # 8. Add lineage columns (file_id, file_line_number)
             lineage_df = self._add_lineage(encoded_df, file_id)
 
-            # 10. Normalize schema (enforce canonical schema)
+            # 9. Normalize schema (enforce canonical schema)
             normalized_df = self.strategy.normalize_schema(lineage_df)
 
-            # 11. Validate (quality checks)
+            # 10. Validate (quality checks)
             validated_df = self.validate(normalized_df)
 
             filtered_by_validation = normalized_df.height - validated_df.height
@@ -414,7 +398,7 @@ class GenericIngestionService(BaseService):
                         self._write_validation_log(meta, file_id, result, start_time_ms)
                     return result
 
-            # 12. Append to Delta table (skip in dry-run mode)
+            # 11. Append to Delta table (skip in dry-run mode)
             if dry_run:
                 logger.info(
                     f"DRY RUN: would ingest {validated_df.height} rows from "
@@ -423,9 +407,9 @@ class GenericIngestionService(BaseService):
             else:
                 self.write(validated_df, use_merge=idempotent_write)
 
-            # 13. Compute result stats
-            ts_min = validated_df[self.strategy.ts_col].min()
-            ts_max = validated_df[self.strategy.ts_col].max()
+            # 12. Compute result stats
+            ts_min = validated_df[ts_col].min()
+            ts_max = validated_df[ts_col].max()
 
             logger.info(
                 f"Ingested {validated_df.height} rows from {meta.bronze_file_path} "
@@ -470,20 +454,21 @@ class GenericIngestionService(BaseService):
         Replaces the previous row-by-row loop with a single vectorized operation.
 
         Args:
-            df: Input DataFrame with exchange, exchange_id, exchange_symbol, date columns
+            df: Input DataFrame with exchange, symbol, date columns
             dim_symbol: Symbol dimension table
 
         Returns:
             (filtered_df, filtered_row_count, filtered_symbol_count) tuple
         """
-        # 1. Build unique (exchange, exchange_id, exchange_symbol, date) pairs
-        unique_pairs = df.select(["exchange", "exchange_id", "exchange_symbol", "date"]).unique()
+        # 1. Build unique (exchange, symbol, date) pairs
+        unique_pairs = df.select(["exchange", "symbol", "date"]).unique()
 
         if unique_pairs.is_empty():
             return df, 0, 0
 
         # 2. Compute day boundaries per exchange timezone (vectorized by exchange)
         exchange_tz_cache: dict[str, ZoneInfo] = {}
+        exchange_id_cache: dict[str, int] = {}
         day_starts: list[int] = []
         day_ends: list[int] = []
 
@@ -494,6 +479,7 @@ class GenericIngestionService(BaseService):
             if exchange_name not in exchange_tz_cache:
                 tz_name = get_exchange_timezone(str(exchange_name), strict=True)
                 exchange_tz_cache[exchange_name] = ZoneInfo(tz_name)
+                exchange_id_cache[exchange_name] = get_exchange_id(str(exchange_name))
 
             tz = exchange_tz_cache[exchange_name]
             day_start = datetime.combine(trading_date, datetime.min.time(), tzinfo=tz)
@@ -508,7 +494,8 @@ class GenericIngestionService(BaseService):
             pl.Series("day_end_us", day_ends, dtype=pl.Int64),
         )
 
-        # 3. Evaluate full-window coverage per (exchange_id, exchange_symbol, date).
+        # 3. Evaluate full-window coverage per (exchange, symbol, date).
+        # Derive exchange_id from exchange name for dim_symbol lookup.
         # A pair is covered only if dim_symbol has contiguous coverage for the
         # entire trading-day window [day_start_us, day_end_us).
         dim_subset = dim_symbol.select(
@@ -518,8 +505,8 @@ class GenericIngestionService(BaseService):
         coverage_flags = [
             check_coverage(
                 dim_subset,
-                row["exchange_id"],
-                row["exchange_symbol"],
+                exchange_id_cache[row["exchange"]],
+                row["symbol"],
                 row["day_start_us"],
                 row["day_end_us"],
             )
@@ -539,17 +526,16 @@ class GenericIngestionService(BaseService):
         # Log quarantined symbols
         for row in quarantined.iter_rows(named=True):
             logger.warning(
-                "Symbol quarantined: exchange=%s, exchange_id=%s, symbol=%s, date=%s",
+                "Symbol quarantined: exchange=%s, symbol=%s, date=%s",
                 row["exchange"],
-                row["exchange_id"],
-                row["exchange_symbol"],
+                row["symbol"],
                 row["date"],
             )
 
         # 5. Filter DataFrame in one pass using anti-join
         filtered_df = df.join(
-            quarantined.select(["exchange_id", "exchange_symbol", "date"]),
-            on=["exchange_id", "exchange_symbol", "date"],
+            quarantined.select(["exchange", "symbol", "date"]),
+            on=["exchange", "symbol", "date"],
             how="anti",
         )
 

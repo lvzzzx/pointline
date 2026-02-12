@@ -15,7 +15,8 @@ Usage:
 
     builder = get_builder("clock")
     spine = builder.build_spine(
-        symbol_id=12345,
+        exchange="binance-futures",
+        symbol="BTCUSDT",
         start_ts_us=...,
         end_ts_us=...,
         config=ClockSpineConfig(step_ms=1000)

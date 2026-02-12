@@ -254,8 +254,8 @@ class BaseDeltaRepository:
         if z_order is None:
             try:
                 schema_fields = dt.schema().to_pyarrow().names
-                if "symbol_id" in schema_fields and "ts_local_us" in schema_fields:
-                    z_order = ["symbol_id", "ts_local_us"]
+                if "symbol" in schema_fields and "ts_local_us" in schema_fields:
+                    z_order = ["symbol", "ts_local_us"]
             except Exception:
                 z_order = None
 

@@ -31,9 +31,9 @@ def aggregate(
 
     Args:
         bucketed_data: Data with bucket_ts from assign_to_buckets()
-            Required columns: bucket_ts, exchange_id, symbol_id, ...
+            Required columns: bucket_ts, exchange_id, symbol, ...
         config: Aggregation configuration
-            - by: Grouping columns (typically ["exchange_id", "symbol_id", "bucket_ts"])
+            - by: Grouping columns (typically ["exchange_id", "symbol", "bucket_ts"])
             - aggregations: List of aggregation specs
             - mode: Pipeline mode (for logging/observability)
             - research_mode: Research mode for registry validation (HFT/MFT/LFT)
@@ -49,7 +49,7 @@ def aggregate(
     Example:
         >>> bucketed = assign_to_buckets(trades, spine)
         >>> config = AggregateConfig(
-        ...     by=["exchange_id", "symbol_id", "bucket_ts"],
+        ...     by=["exchange_id", "symbol", "bucket_ts"],
         ...     aggregations=[
         ...         AggregationSpec(name="volume", source_column="qty", agg="sum"),
         ...         AggregationSpec(name="trade_count", source_column="trade_id", agg="count"),
@@ -149,7 +149,7 @@ def aggregate(
     if spine is not None:
         result = spine.join(
             result,
-            left_on=["exchange_id", "symbol_id", "ts_local_us"],
+            left_on=["exchange_id", "symbol", "ts_local_us"],
             right_on=config.by,
             how="left",
         )

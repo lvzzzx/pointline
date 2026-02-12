@@ -19,13 +19,10 @@ import polars as pl
 
 # Import parser from new location for backward compatibility
 from pointline.tables._base import (
-    exchange_id_validation_expr,
-    generic_resolve_symbol_ids,
     generic_validate,
     required_columns_validation_expr,
     timestamp_validation_expr,
 )
-from pointline.validation_utils import with_expected_exchange_id
 
 # Required metadata fields for ingestion
 REQUIRED_METADATA_FIELDS: set[str] = set()
@@ -35,16 +32,14 @@ REQUIRED_METADATA_FIELDS: set[str] = set()
 # Delta Lake Integer Type Limitations:
 # - Delta Lake (via Parquet) does not support unsigned integer types UInt16 and UInt32
 # - These are automatically converted to signed types (Int16 and Int32) when written
-# - Use Int16 instead of UInt16 for exchange_id
-# - Use Int32 instead of UInt32 for symbol_id, file_id, flags
+# - Use Int32 instead of UInt32 for file_id, flags
 # - UInt8 is supported and maps to TINYINT (use for side, asset_type)
 #
 # This schema is the single source of truth - all code should use these types directly.
 TRADES_SCHEMA: dict[str, pl.DataType] = {
     "date": pl.Date,
     "exchange": pl.Utf8,  # Exchange name (string) for partitioning and human readability
-    "exchange_id": pl.Int16,  # Delta Lake stores as Int16 (not UInt16) - for joins and compression
-    "symbol_id": pl.Int64,  # Match dim_symbol's symbol_id type
+    "symbol": pl.Utf8,  # Exchange symbol string (e.g., "BTCUSDT")
     "ts_local_us": pl.Int64,
     "ts_exch_us": pl.Int64,
     "trade_id": pl.Utf8,
@@ -109,8 +104,6 @@ def validate_trades(df: pl.DataFrame) -> pl.DataFrame:
     - Valid side codes (0-2)
     - Non-null required fields
     - Exchange column exists and is non-null
-    - exchange_id matches normalized exchange
-
     Returns filtered DataFrame (invalid rows removed) or raises on critical errors.
     """
     if df.is_empty():
@@ -124,24 +117,20 @@ def validate_trades(df: pl.DataFrame) -> pl.DataFrame:
         "ts_exch_us",
         "side",
         "exchange",
-        "exchange_id",
-        "symbol_id",
+        "symbol",
     ]
     missing = [c for c in required if c not in df.columns]
     if missing:
         raise ValueError(f"validate_trades: missing required columns: {missing}")
 
     # Build filter expression
-    df_with_expected = with_expected_exchange_id(df)
-
     combined_filter = (
         (pl.col("px_int") > 0)
         & (pl.col("qty_int") > 0)
         & timestamp_validation_expr("ts_local_us")
         & timestamp_validation_expr("ts_exch_us")
         & (pl.col("side").is_in([0, 1, 2]))
-        & required_columns_validation_expr(["exchange", "exchange_id", "symbol_id"])
-        & exchange_id_validation_expr()
+        & required_columns_validation_expr(["exchange", "symbol"])
     )
 
     # Define validation rules for diagnostics
@@ -162,17 +151,11 @@ def validate_trades(df: pl.DataFrame) -> pl.DataFrame:
         ),
         ("side", ~pl.col("side").is_in([0, 1, 2]) | pl.col("side").is_null()),
         ("exchange", pl.col("exchange").is_null()),
-        ("exchange_id", pl.col("exchange_id").is_null()),
-        ("symbol_id", pl.col("symbol_id").is_null()),
-        (
-            "exchange_id_mismatch",
-            pl.col("expected_exchange_id").is_null()
-            | (pl.col("exchange_id") != pl.col("expected_exchange_id")),
-        ),
+        ("symbol", pl.col("symbol").is_null()),
     ]
 
     # Use generic validation
-    valid = generic_validate(df_with_expected, combined_filter, rules, "trades")
+    valid = generic_validate(df, combined_filter, rules, "trades")
     return valid.select(df.columns)
 
 
@@ -264,31 +247,6 @@ def _resolve_profile(df: pl.DataFrame, exchange: str | None = None):
             )
         return get_profile(exchanges[0])
     raise ValueError("decode_fixed_point: no 'exchange' column and no exchange= argument")
-
-
-def resolve_symbol_ids(
-    data: pl.DataFrame,
-    dim_symbol: pl.DataFrame,
-    exchange_id: int | None,
-    exchange_symbol: str | None,
-    *,
-    ts_col: str = "ts_local_us",
-) -> pl.DataFrame:
-    """Resolve symbol_ids for trades data using as-of join with dim_symbol.
-
-    This is a wrapper around the generic symbol resolution function.
-
-    Args:
-        data: DataFrame with ts_local_us (or ts_col) column
-        dim_symbol: dim_symbol table in canonical schema
-        exchange_id: Exchange ID to use for all rows
-        exchange_symbol: Exchange symbol to use for all rows
-        ts_col: Timestamp column name (default: ts_local_us)
-
-    Returns:
-        DataFrame with symbol_id column added
-    """
-    return generic_resolve_symbol_ids(data, dim_symbol, exchange_id, exchange_symbol, ts_col=ts_col)
 
 
 def required_trades_columns() -> Sequence[str]:

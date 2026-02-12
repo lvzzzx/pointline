@@ -2,22 +2,20 @@
 
 from pointline._error_messages import (
     exchange_not_found_error,
+    exchange_required_error,
     invalid_timestamp_range_error,
-    symbol_id_required_error,
     symbol_not_found_error,
     table_not_found_error,
     timestamp_required_error,
 )
 
 
-def test_symbol_id_required_error():
-    """Test symbol_id required error message."""
-    error = symbol_id_required_error()
+def test_exchange_required_error():
+    """Test exchange required error message."""
+    error = exchange_required_error()
 
-    assert "symbol_id is required" in error
+    assert "exchange is required" in error
     assert "partition pruning" in error
-    assert "registry.find_symbol" in error
-    assert "symbol_ids = symbols['symbol_id'].to_list()" in error
 
 
 def test_timestamp_required_error():
@@ -64,12 +62,23 @@ def test_exchange_not_found_truncates_long_list():
 
 def test_symbol_not_found_error():
     """Test symbol not found error message."""
-    error = symbol_not_found_error(12345)
+    error = symbol_not_found_error("BTCUSDT", "binance-futures")
 
-    assert "12345" in error
-    assert "not found in dim_symbol registry" in error
+    assert "BTCUSDT" in error
+    assert "binance-futures" in error
+    assert "not found" in error
+    assert "dim_symbol" in error
     assert "Possible causes" in error
     assert "registry.find_symbol" in error
+
+
+def test_symbol_not_found_error_no_exchange():
+    """Test symbol not found error without exchange context."""
+    error = symbol_not_found_error("BTCUSDT")
+
+    assert "BTCUSDT" in error
+    assert "not found" in error
+    assert "dim_symbol" in error
 
 
 def test_table_not_found_with_suggestions():

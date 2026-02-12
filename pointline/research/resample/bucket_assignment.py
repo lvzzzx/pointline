@@ -45,9 +45,9 @@ def assign_to_buckets(
 
     Args:
         data: Raw data (trades, quotes, book, etc.)
-            Required columns: ts_local_us, exchange_id, symbol_id
+            Required columns: ts_local_us, exchange_id, symbol
         spine: Spine with bucket boundaries
-            Required columns: ts_local_us, exchange_id, symbol_id
+            Required columns: ts_local_us, exchange_id, symbol
             Timestamps are bar ENDS (interval ends)
         deterministic: Enforce deterministic sort order (default: True)
 
@@ -83,21 +83,21 @@ def assign_to_buckets(
 
     # Step 3: Build explicit window map [bucket_start, bucket_ts)
     window_map = (
-        spine.sort(["exchange_id", "symbol_id", "ts_local_us"])
+        spine.sort(["exchange_id", "symbol", "ts_local_us"])
         .with_columns(
             [
                 # bucket_start = previous spine timestamp (start of window)
                 # For first bar, use 0 as start (all data before first boundary)
                 pl.col("ts_local_us")
                 .shift(1)
-                .over(["exchange_id", "symbol_id"])
+                .over(["exchange_id", "symbol"])
                 .fill_null(0)  # First bar starts at timestamp 0
                 .alias("bucket_start"),
                 # bucket_ts = current spine timestamp (end of window)
                 pl.col("ts_local_us").alias("bucket_ts"),
             ]
         )
-        .select(["exchange_id", "symbol_id", "bucket_start", "bucket_ts"])
+        .select(["exchange_id", "symbol", "bucket_start", "bucket_ts"])
     )
 
     # Step 4: Assign using backward as-of on bucket_start
@@ -106,7 +106,7 @@ def assign_to_buckets(
         window_map,
         left_on="ts_local_us",
         right_on="bucket_start",
-        by=["exchange_id", "symbol_id"],
+        by=["exchange_id", "symbol"],
         strategy="backward",
     )
 
@@ -138,7 +138,7 @@ def _validate_bucket_assignment(data: pl.LazyFrame, spine: pl.LazyFrame) -> None
     Raises:
         ValueError: If required columns are missing
     """
-    required = {"ts_local_us", "exchange_id", "symbol_id"}
+    required = {"ts_local_us", "exchange_id", "symbol"}
 
     data_cols = set(data.columns)
     spine_cols = set(spine.columns)
@@ -162,10 +162,10 @@ def _enforce_deterministic_sort(lf: pl.LazyFrame) -> pl.LazyFrame:
         Sorted LazyFrame with deterministic ordering
 
     Note:
-        Sort order: (exchange_id, symbol_id, ts_local_us, file_id, file_line_number)
+        Sort order: (exchange_id, symbol, ts_local_us, file_id, file_line_number)
         File-level tie-breakers ensure reproducibility across reruns.
     """
-    sort_cols = ["exchange_id", "symbol_id", "ts_local_us"]
+    sort_cols = ["exchange_id", "symbol", "ts_local_us"]
 
     # Add tie-breakers if available
     if "file_id" in lf.columns:

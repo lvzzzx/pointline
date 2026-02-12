@@ -261,7 +261,7 @@ def evaluate_quality_gates(
         deterministic_policy = op.get("determinism_policy", {})
         if deterministic_policy.get("stateful"):
             partition_by = deterministic_policy.get("partition_by", [])
-            required = {"exchange_id", "symbol_id"}
+            required = {"exchange_id", "symbol"}
             if not required.issubset(set(partition_by)):
                 partition_violations += 1
 
@@ -436,7 +436,7 @@ def _load_source(spec: dict[str, Any], timeline_col: str) -> pl.LazyFrame:
 
     return research_core.scan_table(
         spec["table"],
-        symbol_id=spec["symbol_id"],
+        symbol=spec["symbol"],
         start_ts_us=spec["start_ts_us"],
         end_ts_us=spec["end_ts_us"],
         ts_col=timeline_col,
@@ -517,7 +517,7 @@ def _execute_event_joined(
     primary_lf = prepared_sources[primary]
 
     spine = primary_lf.sort(_event_join_sort_columns(primary_lf)).select(
-        ["ts_local_us", "exchange_id", "symbol_id", "file_id", "file_line_number"]
+        ["ts_local_us", "exchange_id", "symbol", "file_id", "file_line_number"]
     )
     others = {name: lf for name, lf in prepared_sources.items() if name != primary}
     aligned = pit_align(spine, others)
@@ -525,17 +525,17 @@ def _execute_event_joined(
 
 
 def _extract_spine_params(compiled: dict[str, Any]) -> tuple[int | list[int], int, int]:
-    """Extract symbol_id and timestamp bounds for builder dispatch.
+    """Extract symbol and timestamp bounds for builder dispatch.
 
     Returns:
-        (symbol_id, start_ts_us, end_ts_us) from the primary source spec,
+        (symbol, start_ts_us, end_ts_us) from the primary source spec,
         with optional overrides from spine config.
     """
     primary = compiled["sources"][0]
-    symbol_id: int | list[int] = primary["symbol_id"]
+    symbol: int | list[int] = primary["symbol"]
     start_ts_us = int(compiled["spine"].get("start_ts_us", primary["start_ts_us"]))
     end_ts_us = int(compiled["spine"].get("end_ts_us", primary["end_ts_us"]))
-    return symbol_id, start_ts_us, end_ts_us
+    return symbol, start_ts_us, end_ts_us
 
 
 # Keys in the spine dict that are pipeline-level, not builder-specific.
@@ -567,7 +567,7 @@ def _build_spine(
     if spine_type == "trades":
         trade_spine = _ensure_event_join_order_columns(source)
         return trade_spine.sort(_event_join_sort_columns(trade_spine)).select(
-            ["ts_local_us", "exchange_id", "symbol_id", "file_id", "file_line_number"]
+            ["ts_local_us", "exchange_id", "symbol", "file_id", "file_line_number"]
         )
 
     if spine_type == "clock":
@@ -579,12 +579,12 @@ def _build_spine(
     except KeyError:
         raise PipelineError(f"Unsupported spine.type for pipeline v2: {spine_type}")
 
-    symbol_id, start_ts_us, end_ts_us = _extract_spine_params(compiled)
+    symbol, start_ts_us, end_ts_us = _extract_spine_params(compiled)
     builder_config = _resolve_builder_config(builder, spine_cfg)
 
     if cache is not None:
-        return cache.get_or_build(builder, symbol_id, start_ts_us, end_ts_us, builder_config)
-    return builder.build_spine(symbol_id, start_ts_us, end_ts_us, builder_config)
+        return cache.get_or_build(builder, symbol, start_ts_us, end_ts_us, builder_config)
+    return builder.build_spine(symbol, start_ts_us, end_ts_us, builder_config)
 
 
 def _build_clock_spine(compiled: dict[str, Any], source: pl.LazyFrame) -> pl.LazyFrame:
@@ -611,19 +611,19 @@ def _build_clock_spine(compiled: dict[str, Any], source: pl.LazyFrame) -> pl.Laz
 
     timestamps = generate_bar_end_timestamps(start_ts_us, end_ts_us, step_us)
 
-    symbols = source.select(["exchange_id", "symbol_id"]).unique().collect()
+    symbols = source.select(["exchange_id", "symbol"]).unique().collect()
     if not timestamps:
         return pl.LazyFrame(
             schema={
                 "ts_local_us": pl.Int64,
                 "exchange_id": symbols.schema.get("exchange_id", pl.Int64),
-                "symbol_id": symbols.schema.get("symbol_id", pl.Int64),
+                "symbol": symbols.schema.get("symbol", pl.Utf8),
             }
         )
 
     time_df = pl.DataFrame({"ts_local_us": timestamps})
     spine = symbols.lazy().join(time_df.lazy(), how="cross")
-    return spine.sort(["exchange_id", "symbol_id", "ts_local_us"])
+    return spine.sort(["exchange_id", "symbol", "ts_local_us"])
 
 
 def _aggregate_config_from_operators(compiled: dict[str, Any]) -> AggregateConfig:
@@ -692,7 +692,7 @@ def _aggregate_config_from_operators(compiled: dict[str, Any]) -> AggregateConfi
         raise PipelineError("At least one aggregation operator with 'agg' is required")
 
     return AggregateConfig(
-        by=["exchange_id", "symbol_id", "bucket_ts"],
+        by=["exchange_id", "symbol", "bucket_ts"],
         aggregations=aggregations,
         mode=compiled["mode"],
         research_mode=research_mode,
@@ -703,11 +703,11 @@ def _apply_labels(lf: pl.LazyFrame, labels: list[dict[str, Any]]) -> pl.LazyFram
     if not labels:
         return lf
 
-    out = lf.sort(["exchange_id", "symbol_id", "ts_local_us"])
+    out = lf.sort(["exchange_id", "symbol", "ts_local_us"])
     for label in labels:
         direction = label["direction"]
         horizon = int(label["horizon_bars"])
-        group_by = label.get("group_by", ["exchange_id", "symbol_id"])
+        group_by = label.get("group_by", ["exchange_id", "symbol"])
         source_col = label["source_column"]
         out_col = label["name"]
 
@@ -815,7 +815,7 @@ def _ensure_event_join_order_columns(lf: pl.LazyFrame) -> pl.LazyFrame:
 
 def _event_join_sort_columns(lf: pl.LazyFrame) -> list[str]:
     schema_names = set(lf.collect_schema().names())
-    sort_cols = ["exchange_id", "symbol_id", "ts_local_us"]
+    sort_cols = ["exchange_id", "symbol", "ts_local_us"]
     if "file_id" in schema_names:
         sort_cols.append("file_id")
     if "file_line_number" in schema_names:
@@ -845,7 +845,7 @@ def _normalized_source_fingerprints(source_specs: list[dict[str, Any]]) -> list[
             "name": spec["name"],
             "ref": spec.get("ref"),
             "table": spec.get("table"),
-            "symbol_id": spec.get("symbol_id"),
+            "symbol": spec.get("symbol"),
             "start_ts_us": spec.get("start_ts_us"),
             "end_ts_us": spec.get("end_ts_us"),
             "columns": spec.get("columns", []),

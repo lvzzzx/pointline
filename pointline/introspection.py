@@ -43,7 +43,7 @@ def get_schema(table_name: TableName) -> dict[str, pl.DataType]:
         >>> schema["px_int"]
         Int64
         >>> list(schema.keys())
-        ['date', 'exchange', 'exchange_id', 'symbol_id', 'ts_local_us', ...]
+        ['date', 'exchange', 'symbol', 'ts_local_us', ...]
     """
     if table_name not in TABLE_PATHS:
         available = sorted(TABLE_PATHS.keys())
@@ -77,7 +77,7 @@ def list_columns(table_name: TableName) -> list[str]:
         >>> from pointline.introspection import list_columns
         >>> columns = list_columns("trades")
         >>> columns
-        ['date', 'exchange', 'exchange_id', 'symbol_id', 'ts_local_us', ...]
+        ['date', 'exchange', 'symbol', 'ts_local_us', ...]
     """
     schema = get_schema(table_name)
     return list(schema.keys())

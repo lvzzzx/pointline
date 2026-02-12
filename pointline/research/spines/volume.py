@@ -5,8 +5,8 @@ at equal volume intervals. This is particularly useful for HFT research where
 trading activity varies significantly throughout the day.
 
 References:
-- Easley, D., López de Prado, M., O'Hara, M. (2012). Flow Toxicity and Liquidity in a High-frequency World
-- López de Prado, M. (2018). Advances in Financial Machine Learning, Ch. 2
+- Easley, D., Lopez de Prado, M., O'Hara, M. (2012). Flow Toxicity and Liquidity in a High-frequency World
+- Lopez de Prado, M. (2018). Advances in Financial Machine Learning, Ch. 2
 """
 
 from dataclasses import dataclass
@@ -63,7 +63,8 @@ class VolumeSpineBuilder:
 
     def build_spine(
         self,
-        symbol_id: int | list[int],
+        exchange: str,
+        symbol: str | list[str],
         start_ts_us: int,
         end_ts_us: int,
         config: SpineBuilderConfig,
@@ -73,24 +74,25 @@ class VolumeSpineBuilder:
         Algorithm:
         1. Load trades with qty_int
         2. Resolve encoding profile from exchange
-        3. Decode volume = qty_int × profile.amount
+        3. Decode volume = qty_int * profile.amount
         4. Optionally take absolute value (ignore side)
         5. Compute cumulative volume per symbol
         6. Compute bar_id = floor(cum_volume / volume_threshold)
-        7. Group by (exchange_id, symbol_id, bar_id), take first timestamp
+        7. Group by (exchange, symbol, bar_id), take first timestamp
         8. Enforce max_rows safety limit
 
         Args:
-            symbol_id: Single symbol_id or list of symbol_ids
+            exchange: Exchange name (e.g., "binance-futures")
+            symbol: Single symbol or list of symbols (e.g., "BTCUSDT")
             start_ts_us: Start timestamp (microseconds, UTC)
             end_ts_us: End timestamp (microseconds, UTC)
             config: VolumeBarConfig instance
 
         Returns:
-            LazyFrame with (ts_local_us, exchange_id, symbol_id)
-            sorted by (exchange_id, symbol_id, ts_local_us).
+            LazyFrame with (ts_local_us, exchange, symbol)
+            sorted by (exchange, symbol, ts_local_us).
 
-            ts_local_us is the BAR END — the right boundary of each
+            ts_local_us is the BAR END -- the right boundary of each
             volume bar window, NOT the first trade timestamp.
             assign_to_buckets() relies on data.ts < bar.ts_local_us.
 
@@ -108,25 +110,24 @@ class VolumeSpineBuilder:
         # Load trades with qty_int
         trades = research_core.scan_table(
             "trades",
-            symbol_id=symbol_id,
+            exchange=exchange,
+            symbol=symbol,
             start_ts_us=start_ts_us,
             end_ts_us=end_ts_us,
             columns=[
                 "ts_local_us",
                 "exchange",
-                "exchange_id",
-                "symbol_id",
+                "symbol",
                 "qty_int",
                 "file_id",
                 "file_line_number",
             ],
         )
 
-        # Resolve profile from exchange (partition column)
-        exchange_name = trades.select("exchange").first().collect()["exchange"][0]
-        profile = get_profile(exchange_name)
+        # Resolve profile from exchange
+        profile = get_profile(exchange)
 
-        # Decode volume = qty_int × profile.amount
+        # Decode volume = qty_int * profile.amount
         if config.use_absolute_volume:
             # Absolute volume: ignore side (buy + sell)
             trades = trades.with_columns((pl.col("qty_int") * profile.amount).abs().alias("volume"))
@@ -138,8 +139,8 @@ class VolumeSpineBuilder:
         # Must sort first to ensure correct cumulative sum
         trades = trades.sort(
             [
-                "exchange_id",
-                "symbol_id",
+                "exchange",
+                "symbol",
                 "ts_local_us",
                 "file_id",
                 "file_line_number",
@@ -147,7 +148,7 @@ class VolumeSpineBuilder:
         )
 
         trades = trades.with_columns(
-            pl.col("volume").cum_sum().over(["exchange_id", "symbol_id"]).alias("cum_volume")
+            pl.col("volume").cum_sum().over(["exchange", "symbol"]).alias("cum_volume")
         )
 
         # Compute bar_id = floor(cum_volume / volume_threshold)
@@ -155,29 +156,29 @@ class VolumeSpineBuilder:
             (pl.col("cum_volume") / config.volume_threshold).floor().cast(pl.Int64).alias("bar_id")
         )
 
-        # Group by (exchange_id, symbol_id, bar_id), take first timestamp
+        # Group by (exchange, symbol, bar_id), take first timestamp
         # These are bar BOUNDARIES (starts), which we shift forward to get bar ENDS
-        spine = trades.group_by(["exchange_id", "symbol_id", "bar_id"]).agg(
+        spine = trades.group_by(["exchange", "symbol", "bar_id"]).agg(
             [
                 pl.col("ts_local_us").min().alias("bar_start_ts"),
             ]
         )
 
-        # Sort by (exchange_id, symbol_id, bar_start_ts) for correct shifting
-        spine = spine.sort(["exchange_id", "symbol_id", "bar_start_ts"])
+        # Sort by (exchange, symbol, bar_start_ts) for correct shifting
+        spine = spine.sort(["exchange", "symbol", "bar_start_ts"])
 
         # Shift forward: bar_end[k] = bar_start[k+1], last bar gets end_ts_us
         # This converts bar STARTS to bar ENDS as required by the protocol
         spine = spine.with_columns(
             pl.col("bar_start_ts")
             .shift(-1)
-            .over(["exchange_id", "symbol_id"])
+            .over(["exchange", "symbol"])
             .fill_null(end_ts_us)
             .alias("ts_local_us")
         )
 
         # Sort by bar-end timestamps
-        spine = spine.sort(["exchange_id", "symbol_id", "ts_local_us"])
+        spine = spine.sort(["exchange", "symbol", "ts_local_us"])
 
         # Enforce max_rows safety limit (eager check)
         row_count = spine.select(pl.len()).collect().item()
@@ -188,7 +189,7 @@ class VolumeSpineBuilder:
             )
 
         # Select final columns
-        spine = spine.select(["ts_local_us", "exchange_id", "symbol_id"])
+        spine = spine.select(["ts_local_us", "exchange", "symbol"])
 
         return spine
 

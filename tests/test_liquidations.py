@@ -108,8 +108,7 @@ def test_normalize_encode_and_validate_liquidations() -> None:
     with_meta = parsed.with_columns(
         [
             pl.lit("binance-futures").alias("exchange"),
-            pl.lit(2, dtype=pl.Int16).alias("exchange_id"),
-            pl.lit(1001, dtype=pl.Int64).alias("symbol_id"),
+            pl.col("exchange_symbol").alias("symbol"),
             pl.lit(1, dtype=pl.Int32).alias("file_id"),
             pl.lit(1, dtype=pl.Int32).alias("file_line_number"),
             pl.lit(date(2024, 5, 1)).alias("date"),
@@ -131,8 +130,7 @@ def test_validate_liquidations_filters_invalid_side() -> None:
     df = parsed.with_columns(
         [
             pl.lit("binance-futures").alias("exchange"),
-            pl.lit(2, dtype=pl.Int16).alias("exchange_id"),
-            pl.lit(1001, dtype=pl.Int64).alias("symbol_id"),
+            pl.col("exchange_symbol").alias("symbol"),
             pl.lit(1, dtype=pl.Int64).alias("px_int"),
             pl.lit(1, dtype=pl.Int64).alias("qty_int"),
             pl.lit(1, dtype=pl.Int32).alias("file_id"),
@@ -183,7 +181,7 @@ def test_liquidations_ingestion_service_ingest_file(sample_manifest_repo, tmp_pa
     assert result.row_count == 1
     written = repo.read_all()
     assert written.height == 1
-    assert written["symbol_id"][0] == 1001
+    assert written["symbol"][0] == "BTCUSDT"
     # crypto profile: price=1e-9, amount=1e-9
     assert written["px_int"][0] == 60651100000000
     assert written["qty_int"][0] == 5000000

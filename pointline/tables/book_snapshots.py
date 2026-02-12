@@ -30,8 +30,7 @@ from collections.abc import Sequence
 import polars as pl
 
 # Import parser from new location for backward compatibility
-from pointline.tables._base import generic_resolve_symbol_ids
-from pointline.validation_utils import DataQualityWarning, with_expected_exchange_id
+from pointline.validation_utils import DataQualityWarning
 
 # Required metadata fields for ingestion
 REQUIRED_METADATA_FIELDS: set[str] = set()
@@ -41,7 +40,6 @@ REQUIRED_METADATA_FIELDS: set[str] = set()
 # Delta Lake Integer Type Limitations:
 # - Delta Lake (via Parquet) does not support unsigned integer types UInt16 and UInt32
 # - These are automatically converted to signed types (Int16 and Int32) when written
-# - Use Int16 instead of UInt16 for exchange_id
 # - Use Int32 instead of UInt32 for file_id, file_line_number
 # - Use Int64 for symbol_id to match dim_symbol
 #
@@ -49,8 +47,7 @@ REQUIRED_METADATA_FIELDS: set[str] = set()
 BOOK_SNAPSHOTS_SCHEMA: dict[str, pl.DataType] = {
     "date": pl.Date,
     "exchange": pl.Utf8,  # Exchange name (string) for partitioning and human readability
-    "exchange_id": pl.Int16,  # Delta Lake stores as Int16 (not UInt16) - for joins and compression
-    "symbol_id": pl.Int64,  # Match dim_symbol's symbol_id type
+    "symbol": pl.Utf8,
     "ts_local_us": pl.Int64,
     "ts_exch_us": pl.Int64,
     "bids_px_int": pl.List(pl.Int64),  # List of 25 bid prices (nulls for missing levels)
@@ -100,7 +97,6 @@ def validate_book_snapshots(df: pl.DataFrame) -> pl.DataFrame:
     - Crossed book check: best bid < best ask
     - Non-negative sizes when present
     - Valid timestamp ranges (reasonable values)
-    - exchange_id matches normalized exchange
 
     Returns filtered DataFrame (invalid rows removed) or raises on critical errors.
     """
@@ -115,22 +111,18 @@ def validate_book_snapshots(df: pl.DataFrame) -> pl.DataFrame:
         "asks_sz_int",
         "ts_local_us",
         "exchange",
-        "exchange_id",
-        "symbol_id",
+        "symbol",
     ]
     missing = [c for c in required if c not in df.columns]
     if missing:
         raise ValueError(f"validate_book_snapshots: missing required columns: {missing}")
 
-    df_with_expected = with_expected_exchange_id(df)
     # Build validation filters
     filters = [
         (pl.col("ts_local_us") > 0)
         & (pl.col("ts_local_us") < 2**63)
         & (pl.col("exchange").is_not_null())
-        & (pl.col("exchange_id").is_not_null())
-        & (pl.col("symbol_id").is_not_null())
-        & (pl.col("exchange_id") == pl.col("expected_exchange_id"))
+        & (pl.col("symbol").is_not_null())
     ]
 
     # Ensure list lengths are 25 (pad with nulls if needed, truncate if longer)
@@ -154,7 +146,7 @@ def validate_book_snapshots(df: pl.DataFrame) -> pl.DataFrame:
         return pl.when(col_expr.is_null()).then(null_pad).otherwise(padded)
 
     # Normalize all list columns to length 25
-    result = df_with_expected.with_columns(
+    result = df.with_columns(
         [
             normalize_list_length("bids_px_int").alias("bids_px_int"),
             normalize_list_length("bids_sz_int").alias("bids_sz_int"),
@@ -416,31 +408,6 @@ def decode_fixed_point(
     if not keep_ints:
         result = result.drop(int_cols)
     return result
-
-
-def resolve_symbol_ids(
-    data: pl.DataFrame,
-    dim_symbol: pl.DataFrame,
-    exchange_id: int | None,
-    exchange_symbol: str | None,
-    *,
-    ts_col: str = "ts_local_us",
-) -> pl.DataFrame:
-    """Resolve symbol_ids for book snapshots data using as-of join with dim_symbol.
-
-    This is a wrapper around the generic symbol resolution function.
-
-    Args:
-        data: DataFrame with ts_local_us (or ts_col) column
-        dim_symbol: dim_symbol table in canonical schema
-        exchange_id: Exchange ID to use for all rows
-        exchange_symbol: Exchange symbol to use for all rows
-        ts_col: Timestamp column name (default: ts_local_us)
-
-    Returns:
-        DataFrame with symbol_id column added
-    """
-    return generic_resolve_symbol_ids(data, dim_symbol, exchange_id, exchange_symbol, ts_col=ts_col)
 
 
 def required_book_snapshots_columns() -> Sequence[str]:

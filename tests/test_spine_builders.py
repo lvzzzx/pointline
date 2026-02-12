@@ -66,12 +66,13 @@ class TestRegistry:
 class TestEventSpineAPI:
     """Test EventSpineConfig API with explicit builder configs."""
 
-    def test_clock_spine_api(self, sample_symbol_id):
+    def test_clock_spine_api(self, sample_symbol):
         """Clock spine should work with EventSpineConfig."""
         config = EventSpineConfig(builder_config=ClockSpineConfig(step_ms=1000, max_rows=1000))
 
         spine = build_event_spine(
-            symbol_id=sample_symbol_id,
+            exchange="binance-futures",
+            symbol=sample_symbol,
             start_ts_us="2024-05-01T00:00:00Z",
             end_ts_us="2024-05-01T00:01:00Z",
             config=config,
@@ -81,21 +82,22 @@ class TestEventSpineAPI:
 
         # Should have required columns
         assert "ts_local_us" in df.columns
-        assert "exchange_id" in df.columns
-        assert "symbol_id" in df.columns
+        assert "exchange" in df.columns
+        assert "symbol" in df.columns
 
-        # Should have ~60 rows (60 seconds × 1 symbol)
+        # Should have ~60 rows (60 seconds x 1 symbol)
         assert 50 <= df.height <= 70
 
         # Should be sorted
         assert df["ts_local_us"].is_sorted()
 
-    def test_trades_spine_api(self, sample_symbol_id):
+    def test_trades_spine_api(self, sample_symbol):
         """Trades spine should work with EventSpineConfig."""
         config = EventSpineConfig(builder_config=TradesSpineConfig())
 
         spine = build_event_spine(
-            symbol_id=sample_symbol_id,
+            exchange="binance-futures",
+            symbol=sample_symbol,
             start_ts_us="2024-05-01T00:00:00Z",
             end_ts_us="2024-05-01T00:05:00Z",
             config=config,
@@ -105,18 +107,19 @@ class TestEventSpineAPI:
 
         # Should have required columns
         assert "ts_local_us" in df.columns
-        assert "exchange_id" in df.columns
-        assert "symbol_id" in df.columns
+        assert "exchange" in df.columns
+        assert "symbol" in df.columns
 
         # Should be sorted
         assert df["ts_local_us"].is_sorted()
 
-    def test_volume_bar_api(self, sample_symbol_id):
+    def test_volume_bar_api(self, sample_symbol):
         """Volume bars should work with EventSpineConfig."""
         config = EventSpineConfig(builder_config=VolumeBarConfig(volume_threshold=1000.0))
 
         spine = build_event_spine(
-            symbol_id=sample_symbol_id,
+            exchange="binance-futures",
+            symbol=sample_symbol,
             start_ts_us="2024-05-01T00:00:00Z",
             end_ts_us="2024-05-01T00:05:00Z",
             config=config,
@@ -125,12 +128,13 @@ class TestEventSpineAPI:
         df = spine.collect()
         assert df.height >= 0
 
-    def test_dollar_bar_api(self, sample_symbol_id):
+    def test_dollar_bar_api(self, sample_symbol):
         """Dollar bars should work with EventSpineConfig."""
         config = EventSpineConfig(builder_config=DollarBarConfig(dollar_threshold=100_000.0))
 
         spine = build_event_spine(
-            symbol_id=sample_symbol_id,
+            exchange="binance-futures",
+            symbol=sample_symbol,
             start_ts_us="2024-05-01T00:00:00Z",
             end_ts_us="2024-05-01T00:05:00Z",
             config=config,
@@ -143,13 +147,14 @@ class TestEventSpineAPI:
 class TestSpineContract:
     """Test that all builders comply with spine contract."""
 
-    def test_spine_contract_clock(self, sample_symbol_id):
+    def test_spine_contract_clock(self, sample_symbol):
         """Clock spine should return required columns in correct order."""
         builder = get_builder("clock")
         config = ClockSpineConfig(step_ms=1000)
 
         spine = builder.build_spine(
-            symbol_id=sample_symbol_id,
+            exchange="binance-futures",
+            symbol=sample_symbol,
             start_ts_us=1714521600000000,  # 2024-05-01 00:00:00 UTC
             end_ts_us=1714521660000000,  # 2024-05-01 00:01:00 UTC
             config=config,
@@ -159,28 +164,29 @@ class TestSpineContract:
 
         # Required columns
         assert "ts_local_us" in df.columns
-        assert "exchange_id" in df.columns
-        assert "symbol_id" in df.columns
+        assert "exchange" in df.columns
+        assert "symbol" in df.columns
 
         # Correct types
         assert df["ts_local_us"].dtype == pl.Int64
-        assert df["exchange_id"].dtype == pl.Int16
-        assert df["symbol_id"].dtype == pl.Int64
+        assert df["exchange"].dtype == pl.Utf8
+        assert df["symbol"].dtype == pl.Utf8
 
-        # Deterministic ordering: (exchange_id, symbol_id, ts_local_us)
+        # Deterministic ordering: (exchange, symbol, ts_local_us)
         # Check each column is sorted with respect to previous columns
-        sorted_check = df.sort(["exchange_id", "symbol_id", "ts_local_us"])
-        assert df.select(["exchange_id", "symbol_id", "ts_local_us"]).equals(
-            sorted_check.select(["exchange_id", "symbol_id", "ts_local_us"])
+        sorted_check = df.sort(["exchange", "symbol", "ts_local_us"])
+        assert df.select(["exchange", "symbol", "ts_local_us"]).equals(
+            sorted_check.select(["exchange", "symbol", "ts_local_us"])
         )
 
-    def test_spine_contract_trades(self, sample_symbol_id):
+    def test_spine_contract_trades(self, sample_symbol):
         """Trades spine should return required columns in correct order."""
         builder = get_builder("trades")
         config = TradesSpineConfig()
 
         spine = builder.build_spine(
-            symbol_id=sample_symbol_id,
+            exchange="binance-futures",
+            symbol=sample_symbol,
             start_ts_us=1714521600000000,  # 2024-05-01 00:00:00 UTC
             end_ts_us=1714521900000000,  # 2024-05-01 00:05:00 UTC
             config=config,
@@ -190,26 +196,27 @@ class TestSpineContract:
 
         # Required columns
         assert "ts_local_us" in df.columns
-        assert "exchange_id" in df.columns
-        assert "symbol_id" in df.columns
+        assert "exchange" in df.columns
+        assert "symbol" in df.columns
 
         # Deterministic ordering
         if df.height > 0:
-            sorted_check = df.sort(["exchange_id", "symbol_id", "ts_local_us"])
-            assert df.select(["exchange_id", "symbol_id", "ts_local_us"]).equals(
-                sorted_check.select(["exchange_id", "symbol_id", "ts_local_us"])
+            sorted_check = df.sort(["exchange", "symbol", "ts_local_us"])
+            assert df.select(["exchange", "symbol", "ts_local_us"]).equals(
+                sorted_check.select(["exchange", "symbol", "ts_local_us"])
             )
 
-    def test_multi_symbol_spine(self, sample_symbol_ids):
+    def test_multi_symbol_spine(self, sample_symbols):
         """Multi-symbol spine should partition correctly."""
-        if len(sample_symbol_ids) < 2:
+        if len(sample_symbols) < 2:
             pytest.skip("Need at least 2 symbols for multi-symbol test")
 
         builder = get_builder("clock")
         config = ClockSpineConfig(step_ms=1000)
 
         spine = builder.build_spine(
-            symbol_id=sample_symbol_ids[:2],
+            exchange="binance-futures",
+            symbol=sample_symbols[:2],
             start_ts_us=1714521600000000,
             end_ts_us=1714521660000000,
             config=config,
@@ -218,25 +225,26 @@ class TestSpineContract:
         df = spine.collect()
 
         # Should have rows for both symbols
-        assert df["symbol_id"].n_unique() == 2
+        assert df["symbol"].n_unique() == 2
 
-        # Should be sorted by (exchange_id, symbol_id, ts_local_us)
-        sorted_check = df.sort(["exchange_id", "symbol_id", "ts_local_us"])
-        assert df.select(["exchange_id", "symbol_id", "ts_local_us"]).equals(
-            sorted_check.select(["exchange_id", "symbol_id", "ts_local_us"])
+        # Should be sorted by (exchange, symbol, ts_local_us)
+        sorted_check = df.sort(["exchange", "symbol", "ts_local_us"])
+        assert df.select(["exchange", "symbol", "ts_local_us"]).equals(
+            sorted_check.select(["exchange", "symbol", "ts_local_us"])
         )
 
 
 class TestClockSpineBuilder:
     """Test clock spine builder."""
 
-    def test_clock_spine_basic(self, sample_symbol_id):
+    def test_clock_spine_basic(self, sample_symbol):
         """Should generate spine at regular intervals."""
         builder = get_builder("clock")
         config = ClockSpineConfig(step_ms=1000)  # 1 second
 
         spine = builder.build_spine(
-            symbol_id=sample_symbol_id,
+            exchange="binance-futures",
+            symbol=sample_symbol,
             start_ts_us=1714521600000000,  # 2024-05-01 00:00:00 UTC
             end_ts_us=1714521660000000,  # 2024-05-01 00:01:00 UTC
             config=config,
@@ -252,27 +260,29 @@ class TestClockSpineBuilder:
             diffs = df["ts_local_us"].diff().drop_nulls()
             assert (diffs == 1_000_000).all()  # 1 second in microseconds
 
-    def test_clock_spine_invalid_step(self, sample_symbol_id):
+    def test_clock_spine_invalid_step(self, sample_symbol):
         """Should reject invalid step_ms."""
         builder = get_builder("clock")
         config = ClockSpineConfig(step_ms=0)
 
         with pytest.raises(ValueError, match="step_ms must be positive"):
             builder.build_spine(
-                symbol_id=sample_symbol_id,
+                exchange="binance-futures",
+                symbol=sample_symbol,
                 start_ts_us=1714521600000000,
                 end_ts_us=1714521660000000,
                 config=config,
             )
 
-    def test_clock_spine_max_rows_enforcement(self, sample_symbol_id):
+    def test_clock_spine_max_rows_enforcement(self, sample_symbol):
         """Should enforce max_rows safety limit."""
         builder = get_builder("clock")
         config = ClockSpineConfig(step_ms=1, max_rows=100)  # 1ms step, 100 row limit
 
         with pytest.raises(RuntimeError, match="too many rows"):
             builder.build_spine(
-                symbol_id=sample_symbol_id,
+                exchange="binance-futures",
+                symbol=sample_symbol,
                 start_ts_us=1714521600000000,
                 end_ts_us=1714521660000000,  # 60 seconds = 60,000 ms > 100
                 config=config,
@@ -282,13 +292,14 @@ class TestClockSpineBuilder:
 class TestTradesSpineBuilder:
     """Test trades spine builder."""
 
-    def test_trades_spine_basic(self, sample_symbol_id):
+    def test_trades_spine_basic(self, sample_symbol):
         """Should generate spine from trades stream."""
         builder = get_builder("trades")
         config = TradesSpineConfig()
 
         spine = builder.build_spine(
-            symbol_id=sample_symbol_id,
+            exchange="binance-futures",
+            symbol=sample_symbol,
             start_ts_us=1714521600000000,  # 2024-05-01 00:00:00 UTC
             end_ts_us=1714521900000000,  # 2024-05-01 00:05:00 UTC
             config=config,
@@ -302,19 +313,20 @@ class TestTradesSpineBuilder:
 
         # Standard 3-column contract (no lineage columns after sweep dedup)
         if df.height > 0:
-            assert set(df.columns) == {"ts_local_us", "exchange_id", "symbol_id"}
+            assert set(df.columns) == {"ts_local_us", "exchange", "symbol"}
 
 
 class TestVolumeSpineBuilder:
     """Test volume bar spine builder."""
 
-    def test_volume_spine_basic(self, sample_symbol_id):
+    def test_volume_spine_basic(self, sample_symbol):
         """Should generate spine at volume thresholds."""
         builder = get_builder("volume")
         config = VolumeBarConfig(volume_threshold=1000.0)
 
         spine = builder.build_spine(
-            symbol_id=sample_symbol_id,
+            exchange="binance-futures",
+            symbol=sample_symbol,
             start_ts_us=1714521600000000,  # 2024-05-01 00:00:00 UTC
             end_ts_us=1714522200000000,  # 2024-05-01 00:10:00 UTC
             config=config,
@@ -324,46 +336,49 @@ class TestVolumeSpineBuilder:
 
         # Should have required columns
         assert "ts_local_us" in df.columns
-        assert "exchange_id" in df.columns
-        assert "symbol_id" in df.columns
+        assert "exchange" in df.columns
+        assert "symbol" in df.columns
 
         # Should have some rows (if trades exist)
         assert df.height >= 0
 
         # Should be sorted
         if df.height > 0:
-            sorted_check = df.sort(["exchange_id", "symbol_id", "ts_local_us"])
-            assert df.select(["exchange_id", "symbol_id", "ts_local_us"]).equals(
-                sorted_check.select(["exchange_id", "symbol_id", "ts_local_us"])
+            sorted_check = df.sort(["exchange", "symbol", "ts_local_us"])
+            assert df.select(["exchange", "symbol", "ts_local_us"]).equals(
+                sorted_check.select(["exchange", "symbol", "ts_local_us"])
             )
 
-    def test_volume_spine_invalid_threshold(self, sample_symbol_id):
+    def test_volume_spine_invalid_threshold(self, sample_symbol):
         """Should reject invalid volume_threshold."""
         builder = get_builder("volume")
         config = VolumeBarConfig(volume_threshold=0)
 
         with pytest.raises(ValueError, match="volume_threshold must be positive"):
             builder.build_spine(
-                symbol_id=sample_symbol_id,
+                exchange="binance-futures",
+                symbol=sample_symbol,
                 start_ts_us=1714521600000000,
                 end_ts_us=1714522200000000,
                 config=config,
             )
 
-    def test_volume_spine_deterministic_ordering(self, sample_symbol_id):
+    def test_volume_spine_deterministic_ordering(self, sample_symbol):
         """Volume bars should be reproducible."""
         builder = get_builder("volume")
         config = VolumeBarConfig(volume_threshold=1000.0)
 
         spine1 = builder.build_spine(
-            symbol_id=sample_symbol_id,
+            exchange="binance-futures",
+            symbol=sample_symbol,
             start_ts_us=1714521600000000,
             end_ts_us=1714522200000000,
             config=config,
         )
 
         spine2 = builder.build_spine(
-            symbol_id=sample_symbol_id,
+            exchange="binance-futures",
+            symbol=sample_symbol,
             start_ts_us=1714521600000000,
             end_ts_us=1714522200000000,
             config=config,
@@ -380,13 +395,14 @@ class TestVolumeSpineBuilder:
 class TestDollarSpineBuilder:
     """Test dollar bar spine builder."""
 
-    def test_dollar_spine_basic(self, sample_symbol_id):
+    def test_dollar_spine_basic(self, sample_symbol):
         """Should generate spine at dollar thresholds."""
         builder = get_builder("dollar")
         config = DollarBarConfig(dollar_threshold=100_000.0)
 
         spine = builder.build_spine(
-            symbol_id=sample_symbol_id,
+            exchange="binance-futures",
+            symbol=sample_symbol,
             start_ts_us=1714521600000000,  # 2024-05-01 00:00:00 UTC
             end_ts_us=1714522200000000,  # 2024-05-01 00:10:00 UTC
             config=config,
@@ -396,26 +412,27 @@ class TestDollarSpineBuilder:
 
         # Should have required columns
         assert "ts_local_us" in df.columns
-        assert "exchange_id" in df.columns
-        assert "symbol_id" in df.columns
+        assert "exchange" in df.columns
+        assert "symbol" in df.columns
 
         # Should have some rows (if trades exist)
         assert df.height >= 0
 
         # Should be sorted
         if df.height > 0:
-            sorted_check = df.sort(["exchange_id", "symbol_id", "ts_local_us"])
-            assert df.select(["exchange_id", "symbol_id", "ts_local_us"]).equals(
-                sorted_check.select(["exchange_id", "symbol_id", "ts_local_us"])
+            sorted_check = df.sort(["exchange", "symbol", "ts_local_us"])
+            assert df.select(["exchange", "symbol", "ts_local_us"]).equals(
+                sorted_check.select(["exchange", "symbol", "ts_local_us"])
             )
 
-    def test_dollar_spine_notional_computation(self, sample_symbol_id):
-        """Should compute notional as px × qty."""
+    def test_dollar_spine_notional_computation(self, sample_symbol):
+        """Should compute notional as px x qty."""
         builder = get_builder("dollar")
         config = DollarBarConfig(dollar_threshold=100_000.0)
 
         spine = builder.build_spine(
-            symbol_id=sample_symbol_id,
+            exchange="binance-futures",
+            symbol=sample_symbol,
             start_ts_us=1714521600000000,
             end_ts_us=1714522200000000,
             config=config,
@@ -428,33 +445,36 @@ class TestDollarSpineBuilder:
         # But if the spine is generated without errors, the calculation is correct
         assert df.height >= 0
 
-    def test_dollar_spine_invalid_threshold(self, sample_symbol_id):
+    def test_dollar_spine_invalid_threshold(self, sample_symbol):
         """Should reject invalid dollar_threshold."""
         builder = get_builder("dollar")
         config = DollarBarConfig(dollar_threshold=0)
 
         with pytest.raises(ValueError, match="dollar_threshold must be positive"):
             builder.build_spine(
-                symbol_id=sample_symbol_id,
+                exchange="binance-futures",
+                symbol=sample_symbol,
                 start_ts_us=1714521600000000,
                 end_ts_us=1714522200000000,
                 config=config,
             )
 
-    def test_dollar_spine_deterministic_ordering(self, sample_symbol_id):
+    def test_dollar_spine_deterministic_ordering(self, sample_symbol):
         """Dollar bars should be reproducible."""
         builder = get_builder("dollar")
         config = DollarBarConfig(dollar_threshold=100_000.0)
 
         spine1 = builder.build_spine(
-            symbol_id=sample_symbol_id,
+            exchange="binance-futures",
+            symbol=sample_symbol,
             start_ts_us=1714521600000000,
             end_ts_us=1714522200000000,
             config=config,
         )
 
         spine2 = builder.build_spine(
-            symbol_id=sample_symbol_id,
+            exchange="binance-futures",
+            symbol=sample_symbol,
             start_ts_us=1714521600000000,
             end_ts_us=1714522200000000,
             config=config,
@@ -470,8 +490,8 @@ class TestDollarSpineBuilder:
 
 # Fixtures
 @pytest.fixture
-def sample_symbol_id():
-    """Sample symbol_id for testing.
+def sample_symbol():
+    """Sample symbol for testing.
 
     Uses BTCUSDT on binance-futures (commonly available).
     """
@@ -481,14 +501,14 @@ def sample_symbol_id():
     if symbols.is_empty():
         pytest.skip("BTCUSDT not found in dim_symbol")
 
-    return int(symbols["symbol_id"][0])
+    return str(symbols["symbol"][0])
 
 
 @pytest.fixture
-def sample_symbol_ids():
-    """Multiple symbol_ids for testing.
+def sample_symbols():
+    """Multiple symbols for testing.
 
-    Returns list of at least 2 symbol_ids.
+    Returns list of at least 2 symbols.
     """
     from pointline.registry import find_symbol
 
@@ -496,4 +516,4 @@ def sample_symbol_ids():
     if symbols.is_empty() or symbols.height < 2:
         pytest.skip("Need at least 2 USDT symbols for multi-symbol test")
 
-    return symbols["symbol_id"].head(2).to_list()
+    return symbols["symbol"].head(2).to_list()

@@ -19,7 +19,6 @@ from pointline.tables.quotes import (
     encode_fixed_point,
     normalize_quotes_schema,
     required_quotes_columns,
-    resolve_symbol_ids,
     validate_quotes,
 )
 from pointline.validation_utils import DataQualityWarning
@@ -160,8 +159,7 @@ def test_normalize_quotes_schema():
         {
             "date": [date(2024, 5, 1)],
             "exchange": ["binance"],
-            "exchange_id": [1],
-            "symbol_id": [100],
+            "symbol": ["BTCUSDT"],
             "ts_local_us": [1714550400000000],
             "ts_exch_us": [1714550400100000],
             "bid_px_int": [5000000],
@@ -176,8 +174,7 @@ def test_normalize_quotes_schema():
     normalized = normalize_quotes_schema(df)
 
     assert normalized["date"].dtype == pl.Date
-    assert normalized["exchange_id"].dtype == pl.Int16
-    assert normalized["symbol_id"].dtype == pl.Int64
+    assert normalized["symbol"].dtype == pl.Utf8
     assert normalized["ts_local_us"].dtype == pl.Int64
     assert normalized["bid_px_int"].dtype == pl.Int64
     assert normalized["bid_sz_int"].dtype == pl.Int64
@@ -189,7 +186,7 @@ def test_normalize_quotes_schema_missing_required():
     """Test that missing required columns raise error."""
     df = pl.DataFrame(
         {
-            "exchange_id": [1],
+            "date": [date(2024, 5, 1)],
             # Missing other required columns
         }
     )
@@ -209,8 +206,7 @@ def test_validate_quotes_basic():
             "ts_local_us": [1714550400000000, 1714550401000000, 1714550402000000],
             "ts_exch_us": [1714550400000000, 1714550401000000, 1714550402000000],
             "exchange": ["binance", "binance", "binance"],
-            "exchange_id": [1, 1, 1],
-            "symbol_id": [100, 100, 100],
+            "symbol": ["BTCUSDT", "BTCUSDT", "BTCUSDT"],
         }
     )
 
@@ -233,8 +229,7 @@ def test_validate_quotes_crossed_book():
             "ts_local_us": [1714550400000000, 1714550401000000, 1714550402000000],
             "ts_exch_us": [1714550400000000, 1714550401000000, 1714550402000000],
             "exchange": ["binance", "binance", "binance"],
-            "exchange_id": [1, 1, 1],
-            "symbol_id": [100, 100, 100],
+            "symbol": ["BTCUSDT", "BTCUSDT", "BTCUSDT"],
         }
     )
 
@@ -259,8 +254,7 @@ def test_validate_quotes_partial_quotes():
             "ts_local_us": [1714550400000000, 1714550401000000, 1714550402000000],
             "ts_exch_us": [1714550400000000, 1714550401000000, 1714550402000000],
             "exchange": ["binance", "binance", "binance"],
-            "exchange_id": [1, 1, 1],
-            "symbol_id": [100, 100, 100],
+            "symbol": ["BTCUSDT", "BTCUSDT", "BTCUSDT"],
         }
     )
 
@@ -281,8 +275,7 @@ def test_validate_quotes_both_missing():
             "ts_local_us": [1714550400000000, 1714550401000000, 1714550402000000],
             "ts_exch_us": [1714550400000000, 1714550401000000, 1714550402000000],
             "exchange": ["binance", "binance", "binance"],
-            "exchange_id": [1, 1, 1],
-            "symbol_id": [100, 100, 100],
+            "symbol": ["BTCUSDT", "BTCUSDT", "BTCUSDT"],
         }
     )
 
@@ -324,7 +317,7 @@ def test_encode_fixed_point():
 
     df = pl.DataFrame(
         {
-            "symbol_id": dim_symbol["symbol_id"].to_list() * 3,
+            "symbol": ["BTCUSDT"] * 3,
             "bid_px": [50000.0, 50001.0, 50002.0],
             "bid_sz": [0.1, 0.2, 0.15],
             "ask_px": [50000.5, 50001.5, 50002.5],
@@ -353,7 +346,7 @@ def test_encode_fixed_point_with_nulls():
 
     df = pl.DataFrame(
         {
-            "symbol_id": dim_symbol["symbol_id"].to_list() * 2,
+            "symbol": ["BTCUSDT"] * 2,
             "bid_px": [50000.0, None],
             "bid_sz": [0.1, None],
             "ask_px": [50000.5, 50001.5],
@@ -375,7 +368,7 @@ def test_encode_fixed_point_symmetric_rounding():
     """With universal scalar, bid and ask both use symmetric round()."""
     df = pl.DataFrame(
         {
-            "symbol_id": [1],
+            "symbol": ["BTCUSDT"],
             "bid_px": [50000.123],
             "bid_sz": [0.1],
             "ask_px": [50000.123],
@@ -395,7 +388,7 @@ def test_encode_fixed_point_missing_columns():
     """Test that missing float columns raise error."""
     df = pl.DataFrame(
         {
-            "symbol_id": [1],
+            "symbol": ["BTCUSDT"],
             "bid_px": [50000.0],
             # Missing bid_sz, ask_px, ask_sz
         }
@@ -429,25 +422,6 @@ def test_decode_fixed_point():
     assert decoded["ask_sz"][0] == pytest.approx(0.15)
 
 
-def test_resolve_symbol_ids():
-    """Test symbol ID resolution using as-of join."""
-    dim_symbol = _sample_dim_symbol()
-
-    # Create data with timestamps
-    data = pl.DataFrame(
-        {
-            "ts_local_us": [1714550400000000, 1714550401000000],
-            "exchange_id": [1, 1],
-            "exchange_symbol": ["BTCUSDT", "BTCUSDT"],
-        }
-    )
-
-    resolved = resolve_symbol_ids(data, dim_symbol, exchange_id=1, exchange_symbol="BTCUSDT")
-
-    assert "symbol_id" in resolved.columns
-    assert resolved.height == 2
-
-
 def test_quotes_service_validate():
     """Test QuotesIngestionService.validate() method."""
     repo = Mock(spec=BaseDeltaRepository)
@@ -467,8 +441,7 @@ def test_quotes_service_validate():
             "ts_local_us": [1714550400000000, 1714550401000000],
             "ts_exch_us": [1714550400000000, 1714550401000000],
             "exchange": ["binance", "binance"],
-            "exchange_id": [1, 1],
-            "symbol_id": [100, 100],
+            "symbol": ["BTCUSDT", "BTCUSDT"],
         }
     )
 
@@ -492,8 +465,7 @@ def test_quotes_service_compute_state():
         {
             "date": [date(2024, 5, 1)],
             "exchange": ["binance"],
-            "exchange_id": [1],
-            "symbol_id": [100],
+            "symbol": ["BTCUSDT"],
             "ts_local_us": [1714550400000000],
             "ts_exch_us": [1714550400100000],
             "bid_px_int": [5000000],
@@ -527,8 +499,7 @@ def test_quotes_service_write():
         {
             "date": [date(2024, 5, 1)],
             "exchange": ["binance"],
-            "exchange_id": [1],
-            "symbol_id": [100],
+            "symbol": ["BTCUSDT"],
             "ts_local_us": [1714550400000000],
             "ts_exch_us": [1714550400100000],
             "bid_px_int": [5000000],
@@ -676,8 +647,7 @@ def test_required_quotes_columns():
     assert len(cols) == len(QUOTES_SCHEMA)
     assert "date" in cols
     assert "exchange" in cols
-    assert "exchange_id" in cols
-    assert "symbol_id" in cols
+    assert "symbol" in cols
     assert "bid_px_int" in cols
     assert "bid_sz_int" in cols
     assert "ask_px_int" in cols

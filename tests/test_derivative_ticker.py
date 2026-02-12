@@ -74,8 +74,7 @@ def test_normalize_derivative_ticker_schema_fills_optional() -> None:
     df = parsed.with_columns(
         [
             pl.lit("binance-futures").alias("exchange"),
-            pl.lit(2, dtype=pl.Int16).alias("exchange_id"),
-            pl.lit(100, dtype=pl.Int64).alias("symbol_id"),
+            pl.lit("BTCUSDT").alias("symbol"),
             pl.lit(1, dtype=pl.Int32).alias("file_id"),
             pl.lit(1, dtype=pl.Int32).alias("file_line_number"),
             pl.lit("2024-05-01").str.strptime(pl.Date, "%Y-%m-%d").alias("date"),
@@ -90,8 +89,7 @@ def test_validate_derivative_ticker_accepts_valid() -> None:
     df = parsed.with_columns(
         [
             pl.lit("binance-futures").alias("exchange"),
-            pl.lit(2, dtype=pl.Int16).alias("exchange_id"),
-            pl.lit(100, dtype=pl.Int64).alias("symbol_id"),
+            pl.lit("BTCUSDT").alias("symbol"),
             pl.lit(1, dtype=pl.Int32).alias("file_id"),
             pl.lit(1, dtype=pl.Int32).alias("file_line_number"),
             pl.lit("2024-05-01").str.strptime(pl.Date, "%Y-%m-%d").alias("date"),

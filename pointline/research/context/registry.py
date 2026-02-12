@@ -76,7 +76,7 @@ class ContextRegistry:
                 mode_allowlist=list(mode_allowlist),
                 pit_policy=pit_policy or {"feature_direction": "backward_only"},
                 determinism_policy=determinism_policy
-                or {"required_sort": ["exchange_id", "symbol_id", "ts_local_us"]},
+                or {"required_sort": ["exchange_id", "symbol", "ts_local_us"]},
                 version="2.0",
                 impl_ref=f"{func.__module__}.{func.__name__}",
                 apply_context=func,
