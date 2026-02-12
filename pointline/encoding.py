@@ -36,6 +36,19 @@ class ScalarProfile:
     quote_vol: float
 
 
+# Temporary scalar columns used by decode paths.
+PROFILE_PRICE_COL = "__pl_profile_price"
+PROFILE_AMOUNT_COL = "__pl_profile_amount"
+PROFILE_RATE_COL = "__pl_profile_rate"
+PROFILE_QUOTE_VOL_COL = "__pl_profile_quote_vol"
+PROFILE_SCALAR_COLS: tuple[str, ...] = (
+    PROFILE_PRICE_COL,
+    PROFILE_AMOUNT_COL,
+    PROFILE_RATE_COL,
+    PROFILE_QUOTE_VOL_COL,
+)
+
+
 # ---------------------------------------------------------------------------
 # Profile definitions — immutable after first data is written
 # ---------------------------------------------------------------------------
@@ -180,3 +193,40 @@ def decode_nullable_amount(col: str, profile: ScalarProfile) -> pl.Expr:
         .then((pl.col(col) * profile.amount).cast(pl.Float64))
         .otherwise(None)
     )
+
+
+def with_profile_scalars(df: pl.DataFrame, *, exchange_col: str = "exchange") -> pl.DataFrame:
+    """Attach per-row scalar columns resolved from the exchange column.
+
+    This enables mixed-exchange decode in a single DataFrame.
+    """
+    if exchange_col not in df.columns:
+        raise ValueError(f"decode_fixed_point: no '{exchange_col}' column")
+
+    has_null_exchange = df.select(pl.col(exchange_col).is_null().any()).item()
+    if has_null_exchange:
+        raise ValueError(f"decode_fixed_point: '{exchange_col}' contains null values")
+
+    if df.is_empty():
+        return df.with_columns(
+            [
+                pl.lit(None, dtype=pl.Float64).alias(PROFILE_PRICE_COL),
+                pl.lit(None, dtype=pl.Float64).alias(PROFILE_AMOUNT_COL),
+                pl.lit(None, dtype=pl.Float64).alias(PROFILE_RATE_COL),
+                pl.lit(None, dtype=pl.Float64).alias(PROFILE_QUOTE_VOL_COL),
+            ]
+        )
+
+    exchanges = df.get_column(exchange_col).unique().to_list()
+    profiles = {exchange: get_profile(exchange) for exchange in exchanges}
+
+    profile_df = pl.DataFrame(
+        {
+            exchange_col: exchanges,
+            PROFILE_PRICE_COL: [profiles[exchange].price for exchange in exchanges],
+            PROFILE_AMOUNT_COL: [profiles[exchange].amount for exchange in exchanges],
+            PROFILE_RATE_COL: [profiles[exchange].rate for exchange in exchanges],
+            PROFILE_QUOTE_VOL_COL: [profiles[exchange].quote_vol for exchange in exchanges],
+        }
+    )
+    return df.join(profile_df, on=exchange_col, how="left")

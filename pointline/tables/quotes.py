@@ -220,58 +220,44 @@ def encode_fixed_point(
 
 def decode_fixed_point(
     df: pl.DataFrame,
-    dim_symbol: pl.DataFrame | None = None,
     *,
     keep_ints: bool = False,
-    exchange: str | None = None,
 ) -> pl.DataFrame:
-    """Decode fixed-point integers into float bid/ask columns using asset-class profile.
+    """Decode fixed-point integers into float bid/ask columns.
 
     Requires:
     - df must have 'bid_px_int', 'bid_sz_int', 'ask_px_int', 'ask_sz_int' columns
-    - df must have 'exchange' column OR exchange must be provided
+    - df must have non-null 'exchange' values
 
     Returns DataFrame with bid_px, bid_sz, ask_px, ask_sz added (Float64).
     By default, drops the *_int columns.
     """
-    from pointline.encoding import decode_nullable_amount, decode_nullable_price
+    from pointline.encoding import (
+        PROFILE_AMOUNT_COL,
+        PROFILE_PRICE_COL,
+        PROFILE_SCALAR_COLS,
+        with_profile_scalars,
+    )
 
     required_cols = ["bid_px_int", "bid_sz_int", "ask_px_int", "ask_sz_int"]
     missing = [c for c in required_cols if c not in df.columns]
     if missing:
         raise ValueError(f"decode_fixed_point: df missing columns: {missing}")
 
-    profile = _resolve_profile(df, exchange)
+    working = with_profile_scalars(df)
 
-    result = df.with_columns(
+    result = working.with_columns(
         [
-            decode_nullable_price("bid_px_int", profile).alias("bid_px"),
-            decode_nullable_amount("bid_sz_int", profile).alias("bid_sz"),
-            decode_nullable_price("ask_px_int", profile).alias("ask_px"),
-            decode_nullable_amount("ask_sz_int", profile).alias("ask_sz"),
+            (pl.col("bid_px_int") * pl.col(PROFILE_PRICE_COL)).cast(pl.Float64).alias("bid_px"),
+            (pl.col("bid_sz_int") * pl.col(PROFILE_AMOUNT_COL)).cast(pl.Float64).alias("bid_sz"),
+            (pl.col("ask_px_int") * pl.col(PROFILE_PRICE_COL)).cast(pl.Float64).alias("ask_px"),
+            (pl.col("ask_sz_int") * pl.col(PROFILE_AMOUNT_COL)).cast(pl.Float64).alias("ask_sz"),
         ]
     )
 
     if not keep_ints:
         result = result.drop(required_cols)
-    return result
-
-
-def _resolve_profile(df: pl.DataFrame, exchange: str | None = None):
-    """Resolve ScalarProfile from exchange parameter or DataFrame 'exchange' column."""
-    from pointline.encoding import get_profile
-
-    if exchange is not None:
-        return get_profile(exchange)
-    if "exchange" in df.columns:
-        exchanges = df["exchange"].unique().to_list()
-        if len(exchanges) != 1:
-            raise ValueError(
-                f"decode_fixed_point: DataFrame has {len(exchanges)} exchanges; "
-                "pass exchange= explicitly for multi-exchange DataFrames"
-            )
-        return get_profile(exchanges[0])
-    raise ValueError("decode_fixed_point: no 'exchange' column and no exchange= argument")
+    return result.drop([col for col in PROFILE_SCALAR_COLS if col in result.columns])
 
 
 def required_quotes_columns() -> Sequence[str]:

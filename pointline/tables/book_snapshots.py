@@ -223,22 +223,6 @@ def validate_book_snapshots(df: pl.DataFrame) -> pl.DataFrame:
     return valid
 
 
-def _resolve_profile(df: pl.DataFrame, exchange: str | None = None):
-    """Resolve ScalarProfile from exchange parameter or DataFrame 'exchange' column."""
-    from pointline.encoding import get_profile
-
-    if exchange is not None:
-        return get_profile(exchange)
-    if "exchange" in df.columns:
-        exchanges = df["exchange"].unique().to_list()
-        if len(exchanges) != 1:
-            raise ValueError(
-                f"decode: DataFrame has {len(exchanges)} exchanges; pass exchange= explicitly"
-            )
-        return get_profile(exchanges[0])
-    raise ValueError("No 'exchange' column and no exchange= argument")
-
-
 def encode_fixed_point(
     df: pl.DataFrame,
     dim_symbol: pl.DataFrame,
@@ -346,68 +330,55 @@ def encode_fixed_point(
 
 def decode_fixed_point(
     df: pl.DataFrame,
-    dim_symbol: pl.DataFrame | None = None,
     *,
     keep_ints: bool = False,
-    exchange: str | None = None,
 ) -> pl.DataFrame:
-    """Decode fixed-point list columns into float lists using asset-class profile.
+    """Decode fixed-point list columns into float lists.
 
     Requires:
     - df must have 'bids_px_int', 'bids_sz_int', 'asks_px_int', 'asks_sz_int' columns (lists of ints)
-    - exchange must be provided OR df must have a single-valued 'exchange' column
+    - df must have non-null 'exchange' values
 
     Args:
         df: DataFrame with encoded list columns.
-        dim_symbol: Deprecated, ignored. Kept for call-site compatibility.
         keep_ints: If True, keep the *_int columns alongside decoded floats.
-        exchange: Exchange name to resolve ScalarProfile. If None, inferred from df.
 
     Returns DataFrame with bids_px, bids_sz, asks_px, asks_sz added as Float64 lists.
     """
+    from pointline.encoding import (
+        PROFILE_AMOUNT_COL,
+        PROFILE_PRICE_COL,
+        PROFILE_SCALAR_COLS,
+        with_profile_scalars,
+    )
+
     int_cols = ["bids_px_int", "bids_sz_int", "asks_px_int", "asks_sz_int"]
     missing = [c for c in int_cols if c not in df.columns]
     if missing:
         raise ValueError(f"decode_fixed_point: df missing columns: {missing}")
 
-    profile = _resolve_profile(df, exchange)
+    working = with_profile_scalars(df)
 
-    result = df.with_columns(
+    result = working.with_columns(
         [
-            pl.col("bids_px_int")
-            .list.eval(
-                pl.when(pl.element().is_not_null())
-                .then((pl.element() * pl.lit(profile.price)).cast(pl.Float64))
-                .otherwise(None)
-            )
+            (pl.col("bids_px_int") * pl.col(PROFILE_PRICE_COL))
+            .cast(pl.List(pl.Float64))
             .alias("bids_px"),
-            pl.col("bids_sz_int")
-            .list.eval(
-                pl.when(pl.element().is_not_null())
-                .then((pl.element() * pl.lit(profile.amount)).cast(pl.Float64))
-                .otherwise(None)
-            )
+            (pl.col("bids_sz_int") * pl.col(PROFILE_AMOUNT_COL))
+            .cast(pl.List(pl.Float64))
             .alias("bids_sz"),
-            pl.col("asks_px_int")
-            .list.eval(
-                pl.when(pl.element().is_not_null())
-                .then((pl.element() * pl.lit(profile.price)).cast(pl.Float64))
-                .otherwise(None)
-            )
+            (pl.col("asks_px_int") * pl.col(PROFILE_PRICE_COL))
+            .cast(pl.List(pl.Float64))
             .alias("asks_px"),
-            pl.col("asks_sz_int")
-            .list.eval(
-                pl.when(pl.element().is_not_null())
-                .then((pl.element() * pl.lit(profile.amount)).cast(pl.Float64))
-                .otherwise(None)
-            )
+            (pl.col("asks_sz_int") * pl.col(PROFILE_AMOUNT_COL))
+            .cast(pl.List(pl.Float64))
             .alias("asks_sz"),
         ]
     )
 
     if not keep_ints:
         result = result.drop(int_cols)
-    return result
+    return result.drop([col for col in PROFILE_SCALAR_COLS if col in result.columns])
 
 
 def required_book_snapshots_columns() -> Sequence[str]:

@@ -304,6 +304,32 @@ def test_decode_fixed_point():
     assert decoded["qty"][0] == pytest.approx(0.1)
 
 
+def test_decode_fixed_point_multi_exchange():
+    """Decode mixed exchanges using row-wise profile resolution."""
+    df = pl.DataFrame(
+        {
+            "exchange": ["binance", "szse"],
+            "px_int": [50_000_000_000_000, 123_450],
+            "qty_int": [100_000_000, 300],
+        }
+    )
+
+    decoded = decode_fixed_point(df)
+
+    assert decoded["price_px"][0] == pytest.approx(50000.0)
+    assert decoded["qty"][0] == pytest.approx(0.1)
+    assert decoded["price_px"][1] == pytest.approx(12.345)
+    assert decoded["qty"][1] == pytest.approx(300.0)
+
+
+def test_decode_fixed_point_missing_exchange_column():
+    """Decode should require an exchange column."""
+    df = pl.DataFrame({"px_int": [50_000_000_000_000], "qty_int": [100_000_000]})
+
+    with pytest.raises(ValueError, match="no 'exchange' column"):
+        decode_fixed_point(df)
+
+
 def test_trades_service_validate():
     """Test TradesIngestionService.validate() method."""
     repo = Mock(spec=BaseDeltaRepository)

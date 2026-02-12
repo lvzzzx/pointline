@@ -179,70 +179,66 @@ def encode_fixed_point(
 
 def decode_fixed_point(
     df: pl.DataFrame,
-    dim_symbol: pl.DataFrame | None = None,
     *,
     keep_ints: bool = False,
-    exchange: str | None = None,
 ) -> pl.DataFrame:
     """Decode derivative ticker fixed-point integers to floats."""
-    profile = _resolve_profile(df, exchange)
+    from pointline.encoding import (
+        PROFILE_AMOUNT_COL,
+        PROFILE_PRICE_COL,
+        PROFILE_RATE_COL,
+        PROFILE_SCALAR_COLS,
+        with_profile_scalars,
+    )
 
-    result = df.with_columns(
+    int_cols = [
+        "mark_px_int",
+        "index_px_int",
+        "last_px_int",
+        "funding_rate_int",
+        "predicted_funding_rate_int",
+        "oi_int",
+    ]
+    missing = [c for c in int_cols if c not in df.columns]
+    if missing:
+        raise ValueError(f"decode_fixed_point: df missing columns: {missing}")
+
+    working = with_profile_scalars(df)
+
+    result = working.with_columns(
         [
             pl.when(pl.col("mark_px_int").is_not_null())
-            .then((pl.col("mark_px_int") * profile.price).cast(pl.Float64))
+            .then((pl.col("mark_px_int") * pl.col(PROFILE_PRICE_COL)).cast(pl.Float64))
             .otherwise(None)
             .alias("mark_px"),
             pl.when(pl.col("index_px_int").is_not_null())
-            .then((pl.col("index_px_int") * profile.price).cast(pl.Float64))
+            .then((pl.col("index_px_int") * pl.col(PROFILE_PRICE_COL)).cast(pl.Float64))
             .otherwise(None)
             .alias("index_px"),
             pl.when(pl.col("last_px_int").is_not_null())
-            .then((pl.col("last_px_int") * profile.price).cast(pl.Float64))
+            .then((pl.col("last_px_int") * pl.col(PROFILE_PRICE_COL)).cast(pl.Float64))
             .otherwise(None)
             .alias("last_px"),
             pl.when(pl.col("funding_rate_int").is_not_null())
-            .then((pl.col("funding_rate_int") * profile.rate).cast(pl.Float64))
+            .then((pl.col("funding_rate_int") * pl.col(PROFILE_RATE_COL)).cast(pl.Float64))
             .otherwise(None)
             .alias("funding_rate"),
             pl.when(pl.col("predicted_funding_rate_int").is_not_null())
-            .then((pl.col("predicted_funding_rate_int") * profile.rate).cast(pl.Float64))
+            .then(
+                (pl.col("predicted_funding_rate_int") * pl.col(PROFILE_RATE_COL)).cast(pl.Float64)
+            )
             .otherwise(None)
             .alias("predicted_funding_rate"),
             pl.when(pl.col("oi_int").is_not_null())
-            .then((pl.col("oi_int") * profile.amount).cast(pl.Float64))
+            .then((pl.col("oi_int") * pl.col(PROFILE_AMOUNT_COL)).cast(pl.Float64))
             .otherwise(None)
             .alias("open_interest"),
         ]
     )
 
     if not keep_ints:
-        int_cols = [
-            "mark_px_int",
-            "index_px_int",
-            "last_px_int",
-            "funding_rate_int",
-            "predicted_funding_rate_int",
-            "oi_int",
-        ]
         result = result.drop([c for c in int_cols if c in result.columns])
-    return result
-
-
-def _resolve_profile(df: pl.DataFrame, exchange: str | None = None):
-    """Resolve ScalarProfile from exchange parameter or DataFrame 'exchange' column."""
-    from pointline.encoding import get_profile
-
-    if exchange is not None:
-        return get_profile(exchange)
-    if "exchange" in df.columns:
-        exchanges = df["exchange"].unique().to_list()
-        if len(exchanges) != 1:
-            raise ValueError(
-                f"decode: DataFrame has {len(exchanges)} exchanges; pass exchange= explicitly"
-            )
-        return get_profile(exchanges[0])
-    raise ValueError("No 'exchange' column and no exchange= argument")
+    return result.drop([col for col in PROFILE_SCALAR_COLS if col in result.columns])
 
 
 def required_derivative_ticker_columns() -> Sequence[str]:

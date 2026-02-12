@@ -223,49 +223,40 @@ def encode_fixed_point(
 
 def decode_fixed_point(
     df: pl.DataFrame,
-    dim_symbol: pl.DataFrame | None = None,
     *,
     keep_ints: bool = False,
-    exchange: str | None = None,
 ) -> pl.DataFrame:
-    """Decode fixed-point integers into float price and int quantity using asset-class profile.
+    """Decode fixed-point integers into float price and int quantity.
 
     Returns DataFrame with price_px (Float64) and order_qty (Int64) columns added.
     By default, drops the *_int columns.
     """
+    from pointline.encoding import (
+        PROFILE_AMOUNT_COL,
+        PROFILE_PRICE_COL,
+        PROFILE_SCALAR_COLS,
+        with_profile_scalars,
+    )
+
     required_cols = ["px_int", "order_qty_int"]
     missing = [c for c in required_cols if c not in df.columns]
     if missing:
         raise ValueError(f"decode_fixed_point: df missing columns: {missing}")
 
-    profile = _resolve_profile(df, exchange)
+    working = with_profile_scalars(df)
 
-    result = df.with_columns(
+    result = working.with_columns(
         [
-            (pl.col("px_int") * profile.price).cast(pl.Float64).alias("price_px"),
-            (pl.col("order_qty_int") * profile.amount).cast(pl.Int64).alias("order_qty"),
+            (pl.col("px_int") * pl.col(PROFILE_PRICE_COL)).cast(pl.Float64).alias("price_px"),
+            (pl.col("order_qty_int") * pl.col(PROFILE_AMOUNT_COL))
+            .cast(pl.Int64)
+            .alias("order_qty"),
         ]
     )
 
     if not keep_ints:
         result = result.drop(required_cols)
-    return result
-
-
-def _resolve_profile(df: pl.DataFrame, exchange: str | None = None):
-    """Resolve ScalarProfile from exchange parameter or DataFrame 'exchange' column."""
-    from pointline.encoding import get_profile
-
-    if exchange is not None:
-        return get_profile(exchange)
-    if "exchange" in df.columns:
-        exchanges = df["exchange"].unique().to_list()
-        if len(exchanges) != 1:
-            raise ValueError(
-                f"decode: DataFrame has {len(exchanges)} exchanges; pass exchange= explicitly"
-            )
-        return get_profile(exchanges[0])
-    raise ValueError("No 'exchange' column and no exchange= argument")
+    return result.drop([col for col in PROFILE_SCALAR_COLS if col in result.columns])
 
 
 def required_l3_orders_columns() -> Sequence[str]:

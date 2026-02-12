@@ -191,62 +191,44 @@ def encode_fixed_point(
 
 def decode_fixed_point(
     df: pl.DataFrame,
-    dim_symbol: pl.DataFrame | None = None,
     *,
     price_col: str = "price_px",
     qty_col: str = "qty",
     keep_ints: bool = False,
-    exchange: str | None = None,
 ) -> pl.DataFrame:
-    """Decode fixed-point integers into float price/qty columns using asset-class profile.
+    """Decode fixed-point integers into float price/qty columns.
 
     Requires:
     - df must have 'px_int' and 'qty_int' columns
-    - df must have 'exchange' column OR exchange must be provided
+    - df must have non-null 'exchange' values
 
     Returns DataFrame with price_col and qty_col added (Float64).
     By default, drops the *_int columns.
     """
+    from pointline.encoding import (
+        PROFILE_AMOUNT_COL,
+        PROFILE_PRICE_COL,
+        PROFILE_SCALAR_COLS,
+        with_profile_scalars,
+    )
+
     required_cols = ["px_int", "qty_int"]
     missing = [c for c in required_cols if c not in df.columns]
     if missing:
         raise ValueError(f"decode_fixed_point: df missing columns: {missing}")
 
-    profile = _resolve_profile(df, exchange)
+    working = with_profile_scalars(df)
 
-    result = df.with_columns(
+    result = working.with_columns(
         [
-            pl.when(pl.col("px_int").is_not_null())
-            .then((pl.col("px_int") * profile.price).cast(pl.Float64))
-            .otherwise(None)
-            .alias(price_col),
-            pl.when(pl.col("qty_int").is_not_null())
-            .then((pl.col("qty_int") * profile.amount).cast(pl.Float64))
-            .otherwise(None)
-            .alias(qty_col),
+            (pl.col("px_int") * pl.col(PROFILE_PRICE_COL)).cast(pl.Float64).alias(price_col),
+            (pl.col("qty_int") * pl.col(PROFILE_AMOUNT_COL)).cast(pl.Float64).alias(qty_col),
         ]
     )
 
     if not keep_ints:
         result = result.drop(required_cols)
-    return result
-
-
-def _resolve_profile(df: pl.DataFrame, exchange: str | None = None):
-    """Resolve ScalarProfile from exchange parameter or DataFrame 'exchange' column."""
-    from pointline.encoding import get_profile
-
-    if exchange is not None:
-        return get_profile(exchange)
-    if "exchange" in df.columns:
-        exchanges = df["exchange"].unique().to_list()
-        if len(exchanges) != 1:
-            raise ValueError(
-                f"decode_fixed_point: DataFrame has {len(exchanges)} exchanges; "
-                "pass exchange= explicitly for multi-exchange DataFrames"
-            )
-        return get_profile(exchanges[0])
-    raise ValueError("decode_fixed_point: no 'exchange' column and no exchange= argument")
+    return result.drop([col for col in PROFILE_SCALAR_COLS if col in result.columns])
 
 
 def required_trades_columns() -> Sequence[str]:

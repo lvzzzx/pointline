@@ -368,7 +368,7 @@ def test_decode_fixed_point():
         }
     )
 
-    decoded = decode_fixed_point(df, exchange="binance-futures")
+    decoded = decode_fixed_point(df)
 
     assert decoded["bids_px"].dtype == pl.List(pl.Float64)
     assert decoded["bids_sz"].dtype == pl.List(pl.Float64)
@@ -399,12 +399,34 @@ def test_decode_fixed_point_multi_symbol():
         }
     )
 
-    decoded = decode_fixed_point(df, exchange="binance-futures")
+    decoded = decode_fixed_point(df)
 
     assert decoded["bids_px"][0][0] == pytest.approx(50000.0)
     assert decoded["asks_px"][0][0] == pytest.approx(50000.5)
     assert decoded["bids_px"][1][0] == pytest.approx(250.0)
     assert decoded["asks_px"][1][0] == pytest.approx(250.1)
+
+
+def test_decode_fixed_point_multi_exchange():
+    """Decode mixed exchanges by resolving scalar profile per row."""
+    df = pl.DataFrame(
+        {
+            "symbol": ["BTCUSDT", "000001"],
+            "exchange": ["binance-futures", "szse"],
+            "ts_local_us": [1714557600000000, 1714557600000001],
+            "bids_px_int": [[50_000_000_000_000], [123_450]],
+            "bids_sz_int": [[100_000_000], [100]],
+            "asks_px_int": [[50_000_500_000_000], [123_460]],
+            "asks_sz_int": [[150_000_000], [120]],
+        }
+    )
+
+    decoded = decode_fixed_point(df)
+
+    assert decoded["bids_px"][0][0] == pytest.approx(50000.0)
+    assert decoded["bids_sz"][0][0] == pytest.approx(0.1)
+    assert decoded["bids_px"][1][0] == pytest.approx(12.345)
+    assert decoded["bids_sz"][1][0] == pytest.approx(100.0)
 
 
 def test_required_book_snapshots_columns():

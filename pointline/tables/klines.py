@@ -118,24 +118,29 @@ def encode_fixed_point(df: pl.DataFrame, dim_symbol: pl.DataFrame, exchange: str
 
 def decode_fixed_point(
     df: pl.DataFrame,
-    dim_symbol: pl.DataFrame | None = None,
     *,
     keep_ints: bool = False,
-    exchange: str | None = None,
 ) -> pl.DataFrame:
-    """Decode fixed-point integers into float OHLC and volume columns using asset-class profile.
+    """Decode fixed-point integers into float OHLC and volume columns.
 
-    Uses profile.price for OHLC, profile.amount for base volumes,
-    and profile.quote_vol for quote volumes.
+    Uses per-row profile scalars resolved from the exchange column.
 
     Requires:
     - df must have '*_px_int' and '*_qty_int' columns
-    - df must have 'exchange' column OR exchange must be provided
+    - df must have non-null 'exchange' values
 
     Returns DataFrame with open, high, low, close, volume, quote_volume,
     taker_buy_base_volume, taker_buy_quote_volume added (Float64).
     By default, drops the *_int columns.
     """
+    from pointline.encoding import (
+        PROFILE_AMOUNT_COL,
+        PROFILE_PRICE_COL,
+        PROFILE_QUOTE_VOL_COL,
+        PROFILE_SCALAR_COLS,
+        with_profile_scalars,
+    )
+
     required_cols = [
         "open_px_int",
         "high_px_int",
@@ -150,66 +155,33 @@ def decode_fixed_point(
     if missing:
         raise ValueError(f"decode_fixed_point: df missing columns: {missing}")
 
-    profile = _resolve_profile(df, exchange)
+    working = with_profile_scalars(df)
 
     # Decode all fields
-    result = df.with_columns(
+    result = working.with_columns(
         [
-            pl.when(pl.col("open_px_int").is_not_null())
-            .then((pl.col("open_px_int") * profile.price).cast(pl.Float64))
-            .otherwise(None)
-            .alias("open_px"),
-            pl.when(pl.col("high_px_int").is_not_null())
-            .then((pl.col("high_px_int") * profile.price).cast(pl.Float64))
-            .otherwise(None)
-            .alias("high_px"),
-            pl.when(pl.col("low_px_int").is_not_null())
-            .then((pl.col("low_px_int") * profile.price).cast(pl.Float64))
-            .otherwise(None)
-            .alias("low_px"),
-            pl.when(pl.col("close_px_int").is_not_null())
-            .then((pl.col("close_px_int") * profile.price).cast(pl.Float64))
-            .otherwise(None)
-            .alias("close_px"),
-            pl.when(pl.col("volume_qty_int").is_not_null())
-            .then((pl.col("volume_qty_int") * profile.amount).cast(pl.Float64))
-            .otherwise(None)
+            (pl.col("open_px_int") * pl.col(PROFILE_PRICE_COL)).cast(pl.Float64).alias("open_px"),
+            (pl.col("high_px_int") * pl.col(PROFILE_PRICE_COL)).cast(pl.Float64).alias("high_px"),
+            (pl.col("low_px_int") * pl.col(PROFILE_PRICE_COL)).cast(pl.Float64).alias("low_px"),
+            (pl.col("close_px_int") * pl.col(PROFILE_PRICE_COL)).cast(pl.Float64).alias("close_px"),
+            (pl.col("volume_qty_int") * pl.col(PROFILE_AMOUNT_COL))
+            .cast(pl.Float64)
             .alias("volume"),
-            pl.when(pl.col("quote_volume_int").is_not_null())
-            .then((pl.col("quote_volume_int") * profile.quote_vol).cast(pl.Float64))
-            .otherwise(None)
+            (pl.col("quote_volume_int") * pl.col(PROFILE_QUOTE_VOL_COL))
+            .cast(pl.Float64)
             .alias("quote_volume"),
-            pl.when(pl.col("taker_buy_base_qty_int").is_not_null())
-            .then((pl.col("taker_buy_base_qty_int") * profile.amount).cast(pl.Float64))
-            .otherwise(None)
+            (pl.col("taker_buy_base_qty_int") * pl.col(PROFILE_AMOUNT_COL))
+            .cast(pl.Float64)
             .alias("taker_buy_base_volume"),
-            pl.when(pl.col("taker_buy_quote_qty_int").is_not_null())
-            .then((pl.col("taker_buy_quote_qty_int") * profile.quote_vol).cast(pl.Float64))
-            .otherwise(None)
+            (pl.col("taker_buy_quote_qty_int") * pl.col(PROFILE_QUOTE_VOL_COL))
+            .cast(pl.Float64)
             .alias("taker_buy_quote_volume"),
         ]
     )
 
     if not keep_ints:
         result = result.drop(required_cols)
-    return result
-
-
-def _resolve_profile(df: pl.DataFrame, exchange: str | None = None):
-    """Resolve ScalarProfile from exchange parameter or DataFrame 'exchange' column."""
-    from pointline.encoding import get_profile
-
-    if exchange is not None:
-        return get_profile(exchange)
-    if "exchange" in df.columns:
-        exchanges = df["exchange"].unique().to_list()
-        if len(exchanges) != 1:
-            raise ValueError(
-                f"decode_fixed_point: DataFrame has {len(exchanges)} exchanges; "
-                "pass exchange= explicitly for multi-exchange DataFrames"
-            )
-        return get_profile(exchanges[0])
-    raise ValueError("decode_fixed_point: no 'exchange' column and no exchange= argument")
+    return result.drop([col for col in PROFILE_SCALAR_COLS if col in result.columns])
 
 
 def normalize_klines_schema(df: pl.DataFrame) -> pl.DataFrame:

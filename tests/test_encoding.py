@@ -4,6 +4,10 @@ import polars as pl
 import pytest
 
 from pointline.encoding import (
+    PROFILE_AMOUNT_COL,
+    PROFILE_PRICE_COL,
+    PROFILE_QUOTE_VOL_COL,
+    PROFILE_RATE_COL,
     PROFILES,
     decode_amount,
     decode_price,
@@ -11,6 +15,7 @@ from pointline.encoding import (
     encode_price,
     get_profile,
     get_profile_by_asset_class,
+    with_profile_scalars,
 )
 
 
@@ -137,3 +142,26 @@ class TestScalarProfileValues:
         assert profile.amount == 1.0
         assert profile.rate == 1e-8
         assert profile.quote_vol == 1e-4
+
+
+class TestProfileScalarAttachment:
+    """Test row-wise profile scalar attachment for mixed exchanges."""
+
+    def test_with_profile_scalars_mixed_exchanges(self):
+        df = pl.DataFrame({"exchange": ["binance", "szse"]})
+        result = with_profile_scalars(df)
+
+        assert result[PROFILE_PRICE_COL].to_list() == [1e-9, 1e-4]
+        assert result[PROFILE_AMOUNT_COL].to_list() == [1e-9, 1.0]
+        assert result[PROFILE_RATE_COL].to_list() == [1e-12, 1e-8]
+        assert result[PROFILE_QUOTE_VOL_COL].to_list() == [1e-6, 1e-4]
+
+    def test_with_profile_scalars_requires_exchange_column(self):
+        df = pl.DataFrame({"symbol": ["BTCUSDT"]})
+        with pytest.raises(ValueError, match="no 'exchange' column"):
+            with_profile_scalars(df)
+
+    def test_with_profile_scalars_rejects_null_exchange(self):
+        df = pl.DataFrame({"exchange": [None]})
+        with pytest.raises(ValueError, match="contains null values"):
+            with_profile_scalars(df)
