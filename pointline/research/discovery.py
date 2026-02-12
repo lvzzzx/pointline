@@ -26,7 +26,6 @@ from typing import Any
 import polars as pl
 
 from pointline.config import (
-    TABLE_HAS_DATE,
     TABLE_PATHS,
     get_asset_class_exchanges,
     get_asset_type_name,
@@ -35,6 +34,7 @@ from pointline.config import (
     get_table_path,
     normalize_exchange,
 )
+from pointline.introspection import get_schema
 from pointline.research.core import _normalize_timestamp
 from pointline.tables.asset_class import ASSET_CLASS_TAXONOMY
 from pointline.tables.dim_symbol import read_dim_symbol_table
@@ -360,7 +360,7 @@ def list_tables(
             continue
 
         table_path = get_table_path(table_name)
-        has_date = TABLE_HAS_DATE.get(table_name, False)
+        has_date = "date" in get_schema(table_name)
 
         tables_data.append(
             {

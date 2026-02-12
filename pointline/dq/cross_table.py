@@ -10,12 +10,22 @@ import contextlib
 from dataclasses import dataclass, field
 from datetime import date
 from enum import Enum
+from functools import cache
 from typing import Any
 
 import polars as pl
 
-from pointline.config import TABLE_HAS_DATE, get_table_path
+from pointline.config import get_table_path
+from pointline.introspection import get_schema
 from pointline.tables.dq_summary import create_dq_summary_record
+
+
+@cache
+def _table_has_date(table_name: str) -> bool:
+    try:
+        return "date" in get_schema(table_name)
+    except Exception:
+        return False
 
 
 class Severity(Enum):
@@ -152,7 +162,7 @@ class BaseCrossTableCheck:
             path = get_table_path(table_name)
             lf = pl.scan_delta(str(path))
 
-            if date_partition and TABLE_HAS_DATE.get(table_name, False):
+            if date_partition and _table_has_date(table_name):
                 lf = lf.filter(pl.col("date") == pl.lit(date_partition))
 
             return lf.select(pl.len()).collect().item()
@@ -216,7 +226,7 @@ class SymbolIntegrityCheck(BaseCrossTableCheck):
         try:
             # Scan target table
             lf_target = pl.scan_delta(str(table_path))
-            if date_partition and TABLE_HAS_DATE.get(table_name, False):
+            if date_partition and _table_has_date(table_name):
                 lf_target = lf_target.filter(pl.col("date") == pl.lit(date_partition))
 
             # Get unique symbols from target event table
@@ -377,7 +387,7 @@ class ManifestConsistencyCheck(BaseCrossTableCheck):
 
             # Load actual counts from silver table
             lf_silver = pl.scan_delta(str(table_path))
-            if date_partition and TABLE_HAS_DATE.get(table_name, False):
+            if date_partition and _table_has_date(table_name):
                 lf_silver = lf_silver.filter(pl.col("date") == pl.lit(date_partition))
 
             # Count rows per file_id
@@ -721,7 +731,7 @@ class ExchangeConsistencyCheck(BaseCrossTableCheck):
         try:
             # Scan target table
             lf_target = pl.scan_delta(str(table_path))
-            if date_partition and TABLE_HAS_DATE.get(table_name, False):
+            if date_partition and _table_has_date(table_name):
                 lf_target = lf_target.filter(pl.col("date") == pl.lit(date_partition))
 
             # Get (exchange, symbol) pairs from target event table

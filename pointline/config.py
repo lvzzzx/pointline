@@ -122,37 +122,6 @@ TABLE_PATHS = {
     "l3_ticks": "silver/l3_ticks",
 }
 
-# Table registry for date column availability (used for safe filtering).
-TABLE_HAS_DATE = {
-    "dim_symbol": False,
-    "dim_exchange": False,
-    "dim_trading_calendar": True,
-    "stock_basic_cn": False,
-    "dim_asset_stats": True,
-    "ingest_manifest": True,
-    "validation_log": True,
-    "dq_summary": True,
-    "trades": True,
-    "quotes": True,
-    "book_snapshot_25": True,
-    "derivative_ticker": True,
-    "liquidations": True,
-    "options_chain": True,
-    "kline_1h": True,
-    "kline_1d": True,
-    "l3_orders": True,
-    "l3_ticks": True,
-}
-
-# Table-level exchange restrictions.
-# Tables listed here can only contain data from the specified exchanges.
-# L3 tables are structurally coupled to Chinese market microstructure
-# (channel_no, appl_seq_num sequencing, CN trading phases).
-TABLE_ALLOWED_EXCHANGES: dict[str, frozenset[str]] = {
-    "l3_orders": frozenset({"szse", "sse"}),
-    "l3_ticks": frozenset({"szse", "sse"}),
-}
-
 # Storage Settings
 STORAGE_OPTIONS = {
     "compression": "zstd",

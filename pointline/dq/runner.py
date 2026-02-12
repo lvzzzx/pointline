@@ -6,12 +6,14 @@ import json
 import os
 import time
 from datetime import date
+from functools import cache
 from pathlib import Path
 
 import polars as pl
 
-from pointline.config import TABLE_HAS_DATE, get_table_path
+from pointline.config import get_table_path
 from pointline.dq.registry import get_dq_config, list_dq_tables
+from pointline.introspection import get_schema
 from pointline.tables.dq_summary import create_dq_summary_record
 
 
@@ -21,6 +23,14 @@ def _safe_int(value: int | None) -> int | None:
 
 def _table_exists(path: str | Path) -> bool:
     return Path(path).exists()
+
+
+@cache
+def _table_has_date(table_name: str) -> bool:
+    try:
+        return "date" in get_schema(table_name)
+    except Exception:
+        return False
 
 
 def _build_profile_exprs(
@@ -140,7 +150,7 @@ def run_dq_for_table(
 
     missing_columns = [col for col in config.key_columns if col not in schema]
 
-    if date_partition and TABLE_HAS_DATE.get(table_name, False):
+    if date_partition and _table_has_date(table_name):
         lf = lf.filter(pl.col("date") == pl.lit(date_partition))
 
     agg_exprs: list[pl.Expr] = [pl.len().alias("row_count")]
@@ -192,7 +202,7 @@ def run_dq_for_table(
             "mean": summary.get(f"mean__{col}"),
         }
 
-    if date_partition and TABLE_HAS_DATE.get(table_name, False):
+    if date_partition and _table_has_date(table_name):
         file_count, total_bytes = _partition_file_stats(path, date_partition=date_partition)
         if file_count is not None:
             profile_stats["_partition"] = {
@@ -358,7 +368,7 @@ def run_dq_for_all_tables_partitioned(
     records: list[pl.DataFrame] = []
     for table_name in list_dq_tables():
         config = get_dq_config(table_name)
-        if TABLE_HAS_DATE.get(table_name, False) and config.manifest_data_type:
+        if _table_has_date(table_name) and config.manifest_data_type:
             records.append(
                 run_dq_partitioned(
                     table_name,

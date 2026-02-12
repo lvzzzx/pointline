@@ -13,7 +13,8 @@ from pointline._error_messages import (
     invalid_timestamp_range_error,
     timestamp_required_error,
 )
-from pointline.config import TABLE_HAS_DATE, TABLE_PATHS, get_table_path
+from pointline.config import TABLE_PATHS, get_table_path
+from pointline.introspection import get_schema
 from pointline.tables.domain_registry import get_event_domain
 from pointline.types import TableName, TimestampInput
 
@@ -602,17 +603,22 @@ def _apply_filters(
 
     # 3. Apply Date Filters
     if start_date is not None or end_date is not None:
-        table_has_date = TABLE_HAS_DATE.get(table_name) if table_name is not None else None
-        if table_has_date is False and not date_filter_is_implicit:
+        has_date_column: bool | None = None
+        if table_name is not None:
+            try:
+                has_date_column = "date" in get_schema(table_name)
+            except Exception:
+                has_date_column = None
+
+        if has_date_column is None:
+            has_date_column = "date" in lf.collect_schema()
+
+        if not has_date_column and not date_filter_is_implicit:
             raise ValueError(
                 "scan_table: start_date/end_date provided but table has no 'date' column"
             )
-        if table_has_date is None and "date" not in lf.schema:
-            if not date_filter_is_implicit:
-                raise ValueError(
-                    "scan_table: start_date/end_date provided but table has no 'date' column"
-                )
-        if table_has_date is not False and (table_has_date is not None or "date" in lf.schema):
+
+        if has_date_column:
             start = start_date
             end = end_date
             if start and end:
