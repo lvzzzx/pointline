@@ -1,73 +1,101 @@
-# Pointline Architecture (One-Page Design)
+# Pointline Architecture
 
-**Status:** Live
-**Scope:** Local-host offline research data lake (single machine)
+**Status:** Target
+**Scope:** Single-node offline market data lake for deterministic ingestion and research
 
-## 1) System Purpose
+## 1) Philosophy
 
-Pointline provides deterministic, point-in-time-safe ingestion and research on market data using a local Delta Lake stack.
+Keep it clean, clear, and simple:
 
-Core goals:
-- PIT correctness for replay and feature computation.
-- Deterministic reruns with stable lineage.
-- Fast local iteration with operational simplicity.
+- Schemas are code.
+- File ingestion is function-first.
+- Keep only mechanisms that protect PIT correctness and replay determinism.
 
 ## 2) Canonical Stack
 
 - Storage: Delta Lake (`delta-rs`)
-- Compute: Polars (primary), DuckDB (ad hoc SQL)
-- Runtime model: local filesystem only (no distributed/cloud backend)
+- Compute: Polars
+- Runtime: local filesystem, single machine only
+
+No cloud/distributed assumptions.
 
 ## 3) Data Lake Model
 
-- **Bronze**: Immutable raw vendor files and API captures.
-- **Silver**: Typed normalized tables with lineage (`file_id`, `file_line_number`).
-- **Gold**: Optional derived tables when justified by query demand.
+- **Bronze**: immutable raw vendor files and API captures
+- **Silver**: typed normalized event/dimension/control tables
+- **Gold**: optional derived tables
 
-Default partitioning: `exchange`, `date`.
+Lineage fields in Silver event tables:
+- `file_id`
+- `file_seq`
 
-## 4) Ingestion Contract
+## 4) Partition Contract (Timezone Aware)
 
-Pipeline stages:
-1. Discover Bronze files.
-2. Skip already successful files via `silver.ingest_manifest`.
-3. Parse/normalize to Silver schema.
-4. Resolve symbols via `dim_symbol` (SCD2, PIT validity windows).
-5. Apply validation + quarantine rules.
-6. Write Silver table (idempotent semantics).
-7. Record status in manifest and validation log.
+Event table partitions are:
 
-Identity key for file-level tracking:
-`(vendor, data_type, bronze_file_name, sha256)`.
+- `(exchange, trading_date)`
 
-## 5) Research Contract
+`trading_date` is derived from event timestamp in exchange local timezone:
 
-Canonical APIs:
-- `research.pipeline(request: QuantResearchInputV2) -> QuantResearchOutputV2`
-- `research.workflow(request: QuantResearchWorkflowInputV2) -> QuantResearchWorkflowOutputV2`
+1. `ts_event_us` is UTC microseconds.
+2. Convert using canonical `exchange -> timezone` mapping.
+3. `trading_date = local_datetime.date()`.
 
-Execution invariants:
-- Half-open windows: `[T_prev, T)`.
-- Backward-only feature direction (forward logic is label-only).
-- Deterministic sort/tie-break keys:
-  `exchange_id, symbol_id, ts_local_us, file_id, file_line_number`.
-- Registry-governed operators/rollups; fail-fast gates on PIT/determinism violations.
+Required initial mappings:
+- Crypto exchanges: UTC (unless explicitly overridden)
+- China A-share exchanges (`sse`, `szse`): `Asia/Shanghai`
 
-## 6) Layering Rules
+## 5) Ingestion Contract
 
-- **Domain (`pointline/tables/*`)**: pure schema/transform logic, no IO side effects.
-- **Services (`pointline/services/*`)**: orchestration and sequencing.
-- **IO (`pointline/io/*`)**: Delta read/write/merge, maintenance, physical layout.
+For each source file:
 
-## 7) Operational Defaults
+1. Discover candidate Bronze files.
+2. Idempotency gate using manifest success state.
+3. Parse and canonicalize rows.
+4. Derive and validate `(exchange, trading_date)` partition alignment.
+5. Resolve/check PIT symbol coverage via `dim_symbol`.
+6. Apply validation and quarantine rules.
+7. Write Silver with deterministic lineage (`file_id`, `file_seq`).
+8. Record status and diagnostics in control tables.
+
+Manifest identity key:
+`(vendor, data_type, bronze_path, file_hash)`.
+
+Status model:
+`pending | success | failed | quarantined`.
+
+## 6) Schema Contract
+
+- Event timestamps use `Int64` microseconds (`*_ts_us`).
+- Monetary/quantity fields use scaled `Int64` (no float in canonical storage).
+- `symbol_id` is deterministic and stable across reruns.
+- `dim_symbol` uses SCD2 validity windows:
+  `valid_from_ts_us <= ts < valid_until_ts_us`.
+
+Canonical schema definitions live in code under `pointline/schemas/*`.
+
+## 7) Determinism Contract
+
+Replay ordering must be explicit and stable.
+
+Default tie-break keys:
+- trades/quotes: `(exchange, symbol_id, ts_event_us, file_id, file_seq)`
+- orderbook updates: `(exchange, symbol_id, ts_event_us, book_seq, file_id, file_seq)`
+
+## 8) Operational Defaults
 
 - Correctness over throughput.
-- Explicit operator-driven maintenance (`optimize`, `vacuum`).
-- No backward compatibility guarantee for legacy contracts in this clean-break architecture.
+- Explicit maintenance (`optimize`, `vacuum`) by operator choice.
+- No backward compatibility guarantee for legacy contracts.
+- No mandatory migration path for old schema versions; rebuild/reingest is acceptable.
 
-## 8) Out of Scope
+## 9) Design References
+
+- Ingestion design: `docs/architecture/simplified-ingestion-design-v2.md`
+- Schema design: `docs/architecture/schema-design-v4.md`
+
+## 10) Out of Scope
 
 - Live execution/routing.
 - Cloud object storage.
 - Distributed compute/storage backends.
-- Automatic migration of historical legacy formats.
