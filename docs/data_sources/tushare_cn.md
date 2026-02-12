@@ -2,6 +2,30 @@
 
 This document describes the **Tushare Pro API** for Chinese A-share market data. Tushare is a Python SDK-based data platform providing reference data, market data, and fundamentals.
 
+> **Official Documentation:** https://tushare.pro/document/2
+>
+> This document is based on the official Tushare Pro documentation. For the most up-to-date information, please refer to the official source.
+
+---
+
+## Document Reference
+
+| Resource | URL |
+| :--- | :--- |
+| **Main Documentation** | https://tushare.pro/document/2 |
+| **Stock Basic** | https://tushare.pro/document/2?doc_id=25 |
+| **Trade Calendar** | https://tushare.pro/document/2?doc_id=26 |
+| **Daily Prices** | https://tushare.pro/document/2?doc_id=27 |
+| **Adj Factor** | https://tushare.pro/document/2?doc_id=28 |
+| **Daily Basic** | https://tushare.pro/document/2?doc_id=32 |
+| **Pro Bar** | https://tushare.pro/document/2?doc_id=109 |
+| **Financial Indicators** | https://tushare.pro/document/2?doc_id=79 |
+| **Income Statement** | https://tushare.pro/document/2?doc_id=33 |
+| **Balance Sheet** | https://tushare.pro/document/2?doc_id=36 |
+| **Cash Flow** | https://tushare.pro/document/2?doc_id=44 |
+| **Money Flow** | https://tushare.pro/document/2?doc_id=170 |
+| **Limit List** | https://tushare.pro/document/2?doc_id=183 |
+
 ---
 
 ## 1. Source Overview
@@ -38,6 +62,8 @@ df = pro.stock_basic(exchange='SZSE')
 ## 3. Reference Data API
 
 ### 3.1 Stock Basic Info
+
+**Reference:** https://tushare.pro/document/2?doc_id=25
 
 **API:** `stock_basic`
 
@@ -90,6 +116,8 @@ df = pro.stock_basic(exchange='SZSE', list_status='L')
 
 ### 3.2 Trade Calendar
 
+**Reference:** https://tushare.pro/document/2?doc_id=26
+
 **API:** `trade_cal`
 
 **Description:** Exchange trading calendar.
@@ -122,7 +150,9 @@ df = pro.trade_cal(exchange='SSE', start_date='20240101', end_date='20240131', i
 
 ## 4. Market Data API
 
-### 4.1 Daily Prices (Unadjusted)
+### 4.1 Daily Prices
+
+**Reference:** https://tushare.pro/document/2?doc_id=27
 
 **API:** `daily`
 
@@ -170,6 +200,8 @@ df = pro.daily(trade_date='20240102')
 
 ### 4.2 Adjustment Factor
 
+**Reference:** https://tushare.pro/document/2?doc_id=28
+
 **API:** `adj_factor`
 
 **Description:** Cumulative adjustment factors for split/dividend adjustments.
@@ -207,6 +239,8 @@ df['close_adj'] = df['close'] * df['adj_factor']
 ---
 
 ### 4.3 Daily Valuation Metrics
+
+**Reference:** https://tushare.pro/document/2?doc_id=32
 
 **API:** `daily_basic`
 
@@ -249,6 +283,8 @@ df['close_adj'] = df['close'] * df['adj_factor']
 ---
 
 ### 4.4 Pro Bar (Unified Interface)
+
+**Reference:** https://tushare.pro/document/2?doc_id=109
 
 **API:** `pro_bar`
 
@@ -301,6 +337,8 @@ df = ts.pro_bar(ts_code='000001.SZ', adj='qfq', ma=[5, 20, 50])
 ## 5. Financial Data API
 
 ### 5.1 Financial Indicators
+
+**Reference:** https://tushare.pro/document/2?doc_id=79
 
 **API:** `fina_indicator`
 
@@ -394,6 +432,11 @@ df = pro.fina_indicator(ts_code='000001.SZ', period='20231231')
 
 ### 5.2 Financial Statements (Three Reports)
 
+**References:**
+- Income: https://tushare.pro/document/2?doc_id=33
+- Balance Sheet: https://tushare.pro/document/2?doc_id=36
+- Cash Flow: https://tushare.pro/document/2?doc_id=44
+
 | API | Description | Key Fields |
 | :--- | :--- | :--- |
 | `income` | Income Statement | Revenue, COGS, operating profit, net profit |
@@ -407,6 +450,8 @@ df = pro.fina_indicator(ts_code='000001.SZ', period='20231231')
 ## 6. Market Behavior API
 
 ### 6.1 Money Flow
+
+**Reference:** https://tushare.pro/document/2?doc_id=170
 
 **API:** `moneyflow`
 
@@ -451,6 +496,8 @@ df = pro.fina_indicator(ts_code='000001.SZ', period='20231231')
 ---
 
 ### 6.2 Limit Up/Down List
+
+**Reference:** https://tushare.pro/document/2?doc_id=183
 
 **API:** `limit_list`
 
