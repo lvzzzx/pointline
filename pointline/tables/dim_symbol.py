@@ -35,6 +35,9 @@ Example:
 from __future__ import annotations
 
 import hashlib
+import logging
+import threading
+import time
 from collections.abc import Sequence
 from dataclasses import dataclass
 
@@ -87,6 +90,43 @@ TRACKED_COLUMN_TOLERANCES: dict[str, float] = {
 }
 
 FIXED_POINT_PRECISION = 10
+
+logger = logging.getLogger(__name__)
+
+_CACHE_TTL_SECONDS: float = 300.0
+_cache_lock = threading.Lock()
+_cached_lookup_df: pl.DataFrame | None = None
+_cached_lookup_at: float = 0.0
+
+_REGISTRY_COLUMNS = [
+    "symbol_id",
+    "exchange_id",
+    "exchange",
+    "exchange_symbol",
+    "base_asset",
+    "quote_asset",
+    "asset_type",
+    "tick_size",
+    "lot_size",
+    "contract_size",
+    "valid_from_ts",
+    "valid_until_ts",
+]
+
+_EMPTY_REGISTRY_SCHEMA = {
+    "symbol_id": pl.Int64,
+    "exchange_id": pl.Int16,
+    "exchange": pl.Utf8,
+    "exchange_symbol": pl.Utf8,
+    "base_asset": pl.Utf8,
+    "quote_asset": pl.Utf8,
+    "asset_type": pl.UInt8,
+    "tick_size": pl.Float64,
+    "lot_size": pl.Float64,
+    "contract_size": pl.Float64,
+    "valid_from_ts": pl.Int64,
+    "valid_until_ts": pl.Int64,
+}
 
 
 def to_fixed_int(val: float, precision: int = FIXED_POINT_PRECISION) -> int:
@@ -336,6 +376,65 @@ def read_dim_symbol_table(
     df = lf.collect()
     if unique_by:
         df = df.unique(subset=list(unique_by))
+    return df
+
+
+def _read_symbol_lookup_table() -> pl.DataFrame:
+    """Read dim_symbol registry columns with a short TTL cache."""
+    global _cached_lookup_df, _cached_lookup_at
+
+    now = time.monotonic()
+    if _cached_lookup_df is not None and (now - _cached_lookup_at) < _CACHE_TTL_SECONDS:
+        return _cached_lookup_df
+
+    with _cache_lock:
+        now = time.monotonic()
+        if _cached_lookup_df is not None and (now - _cached_lookup_at) < _CACHE_TTL_SECONDS:
+            return _cached_lookup_df
+
+        try:
+            df = read_dim_symbol_table(columns=_REGISTRY_COLUMNS, unique_by=["symbol_id"])
+        except Exception as exc:  # pragma: no cover - defensive fallback
+            logger.warning(f"Failed to load dim_symbol lookup table: {exc}")
+            df = pl.DataFrame(schema=_EMPTY_REGISTRY_SCHEMA)
+
+        _cached_lookup_df = df
+        _cached_lookup_at = time.monotonic()
+        return df
+
+
+def invalidate_symbol_lookup_cache() -> None:
+    """Force the next symbol lookup to refresh from storage."""
+    global _cached_lookup_df, _cached_lookup_at
+    with _cache_lock:
+        _cached_lookup_df = None
+        _cached_lookup_at = 0.0
+
+
+def find_symbol(
+    query: str | None = None,
+    *,
+    exchange: str | None = None,
+    base_asset: str | None = None,
+    quote_asset: str | None = None,
+) -> pl.DataFrame:
+    """Find symbols by fuzzy query and optional exchange/base/quote filters."""
+    df = _read_symbol_lookup_table()
+
+    if exchange:
+        df = df.filter(pl.col("exchange").str.to_lowercase() == exchange.lower())
+    if base_asset:
+        df = df.filter(pl.col("base_asset").str.to_lowercase() == base_asset.lower())
+    if quote_asset:
+        df = df.filter(pl.col("quote_asset").str.to_lowercase() == quote_asset.lower())
+    if query:
+        q = query.lower()
+        df = df.filter(
+            pl.col("exchange_symbol").str.to_lowercase().str.contains(q)
+            | pl.col("base_asset").str.to_lowercase().str.contains(q)
+            | pl.col("quote_asset").str.to_lowercase().str.contains(q)
+        )
+
     return df
 
 

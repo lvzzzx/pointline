@@ -413,13 +413,13 @@ def data_coverage(
         >>> print(coverage["trades"])
     """
     # Resolve symbol_id
-    from pointline import registry
+    from pointline.tables.dim_symbol import find_symbol
 
     # Normalize exchange
     normalized_exchange = normalize_exchange(exchange)
 
     # Find symbol
-    symbols_df = registry.find_symbol(symbol, exchange=normalized_exchange)
+    symbols_df = find_symbol(symbol, exchange=normalized_exchange)
 
     if symbols_df.is_empty():
         # Return empty coverage for all tables

@@ -69,7 +69,7 @@ def test_symbol_not_found_error():
     assert "not found" in error
     assert "dim_symbol" in error
     assert "Possible causes" in error
-    assert "registry.find_symbol" in error
+    assert "tables.dim_symbol.find_symbol" in error
 
 
 def test_symbol_not_found_error_no_exchange():

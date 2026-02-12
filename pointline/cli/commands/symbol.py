@@ -6,7 +6,7 @@ import argparse
 
 import polars as pl
 
-from pointline.registry import find_symbol
+from pointline.tables.dim_symbol import find_symbol
 
 
 def cmd_symbol_search(args: argparse.Namespace) -> int:

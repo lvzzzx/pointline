@@ -495,7 +495,7 @@ def sample_symbol():
 
     Uses BTCUSDT on binance-futures (commonly available).
     """
-    from pointline.registry import find_symbol
+    from pointline.tables.dim_symbol import find_symbol
 
     symbols = find_symbol("BTCUSDT", exchange="binance-futures")
     if symbols.is_empty():
@@ -510,7 +510,7 @@ def sample_symbols():
 
     Returns list of at least 2 symbols.
     """
-    from pointline.registry import find_symbol
+    from pointline.tables.dim_symbol import find_symbol
 
     symbols = find_symbol("USDT", exchange="binance-futures")
     if symbols.is_empty() or symbols.height < 2:
