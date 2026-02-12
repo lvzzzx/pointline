@@ -251,14 +251,25 @@ BidOrders:    "[300,1000,300,2000,500,500,6900,1700,30000,...]" (up to 50 elemen
 | **Trade Direction** | `TradeBSFlag` (B/S/N) | Implicit from order linkage |
 | **L2 Snapshots** | Not available in Bronze | Available (`L2_new_*`) |
 | **Timestamp Format** | Milliseconds (`YYYYMMDDHHMMSSmmm`) | Milliseconds (`YYYYMMDDHHMMSSmmm`) |
+| **Timezone** | China Standard Time (CST, UTC+8) | China Standard Time (CST, UTC+8) |
 
 ---
 
 ## 9. Timestamp Reference
 
-### 9.1 Format
+### 9.1 Timezone
 
-All timestamps use the format: `YYYYMMDDHHMMSSmmm`
+All timestamps and file dates use **China Standard Time (CST, UTC+8)**.
+
+**Evidence:**
+- Order files start at `09:15:00.000` (pre-market open in China)
+- Tick files start at `09:25:00.000` (opening auction in China)
+- Files end at `15:00:00.000` (market close in China)
+- File date `<YYYYMMDD>` corresponds to the trading date in China timezone
+
+### 9.2 Format
+
+Timestamps use the format: `YYYYMMDDHHMMSSmmm`
 - 4 digits: Year
 - 2 digits: Month
 - 2 digits: Day
@@ -269,7 +280,7 @@ All timestamps use the format: `YYYYMMDDHHMMSSmmm`
 
 Example: `20240102093000123` = 2024-01-02 09:30:00.123
 
-### 9.2 Market Hours (China Standard Time)
+### 9.3 Market Hours (China Standard Time)
 
 | Phase | Time | Description |
 | :--- | :--- | :--- |
