@@ -54,7 +54,6 @@ def create_ingestion_service(data_type: str, manifest_repo, *, interval: str | N
             encode_fixed_point=tables.trades.encode_fixed_point,
             validate=tables.trades.validate_trades,
             normalize_schema=tables.trades.normalize_trades_schema,
-            resolve_symbol_ids=tables.trades.resolve_symbol_ids,
         )
         return GenericIngestionService("trades", strategy, repo, dim_symbol_repo, manifest_repo)
 
@@ -68,7 +67,6 @@ def create_ingestion_service(data_type: str, manifest_repo, *, interval: str | N
             encode_fixed_point=tables.quotes.encode_fixed_point,
             validate=tables.quotes.validate_quotes,
             normalize_schema=tables.quotes.normalize_quotes_schema,
-            resolve_symbol_ids=tables.quotes.resolve_symbol_ids,
         )
         return GenericIngestionService("quotes", strategy, repo, dim_symbol_repo, manifest_repo)
 
@@ -82,7 +80,6 @@ def create_ingestion_service(data_type: str, manifest_repo, *, interval: str | N
             encode_fixed_point=tables.book_snapshots.encode_fixed_point,
             validate=tables.book_snapshots.validate_book_snapshots,
             normalize_schema=tables.book_snapshots.normalize_book_snapshots_schema,
-            resolve_symbol_ids=tables.book_snapshots.resolve_symbol_ids,
         )
         return GenericIngestionService(
             "book_snapshot_25", strategy, repo, dim_symbol_repo, manifest_repo
@@ -98,7 +95,6 @@ def create_ingestion_service(data_type: str, manifest_repo, *, interval: str | N
             encode_fixed_point=tables.derivative_ticker.encode_fixed_point,
             validate=tables.derivative_ticker.validate_derivative_ticker,
             normalize_schema=tables.derivative_ticker.normalize_derivative_ticker_schema,
-            resolve_symbol_ids=tables.derivative_ticker.resolve_symbol_ids,
         )
         return GenericIngestionService(
             "derivative_ticker", strategy, repo, dim_symbol_repo, manifest_repo
@@ -114,7 +110,6 @@ def create_ingestion_service(data_type: str, manifest_repo, *, interval: str | N
             encode_fixed_point=tables.options_chain.encode_fixed_point,
             validate=tables.options_chain.validate_options_chain,
             normalize_schema=tables.options_chain.normalize_options_chain_schema,
-            resolve_symbol_ids=tables.options_chain.resolve_symbol_ids,
         )
         return GenericIngestionService(
             "options_chain", strategy, repo, dim_symbol_repo, manifest_repo
@@ -130,7 +125,6 @@ def create_ingestion_service(data_type: str, manifest_repo, *, interval: str | N
             encode_fixed_point=tables.liquidations.encode_fixed_point,
             validate=tables.liquidations.validate_liquidations,
             normalize_schema=tables.liquidations.normalize_liquidations_schema,
-            resolve_symbol_ids=tables.liquidations.resolve_symbol_ids,
         )
         return GenericIngestionService(
             "liquidations", strategy, repo, dim_symbol_repo, manifest_repo
@@ -149,8 +143,6 @@ def create_ingestion_service(data_type: str, manifest_repo, *, interval: str | N
             encode_fixed_point=tables.klines.encode_fixed_point,
             validate=tables.klines.validate_klines,
             normalize_schema=tables.klines.normalize_klines_schema,
-            resolve_symbol_ids=tables.klines.resolve_symbol_ids,
-            ts_col="ts_bucket_start_us",  # Klines use bucket timestamps, not event timestamps
         )
         return GenericIngestionService(table_name, strategy, repo, dim_symbol_repo, manifest_repo)
 
@@ -164,7 +156,6 @@ def create_ingestion_service(data_type: str, manifest_repo, *, interval: str | N
             encode_fixed_point=tables.l3_orders.encode_fixed_point,
             validate=tables.l3_orders.validate_l3_orders,
             normalize_schema=tables.l3_orders.normalize_l3_orders_schema,
-            resolve_symbol_ids=tables.l3_orders.resolve_symbol_ids,
         )
         return GenericIngestionService("l3_orders", strategy, repo, dim_symbol_repo, manifest_repo)
 
@@ -178,7 +169,6 @@ def create_ingestion_service(data_type: str, manifest_repo, *, interval: str | N
             encode_fixed_point=tables.l3_ticks.encode_fixed_point,
             validate=tables.l3_ticks.validate_l3_ticks,
             normalize_schema=tables.l3_ticks.normalize_l3_ticks_schema,
-            resolve_symbol_ids=tables.l3_ticks.resolve_symbol_ids,
         )
         return GenericIngestionService("l3_ticks", strategy, repo, dim_symbol_repo, manifest_repo)
 

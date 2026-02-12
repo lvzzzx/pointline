@@ -40,8 +40,6 @@ import polars as pl
 
 # Import parsers from new location for backward compatibility
 from pointline.tables._base import (
-    exchange_id_validation_expr,
-    generic_resolve_symbol_ids,
     generic_validate,
     required_columns_validation_expr,
     timestamp_validation_expr,
@@ -53,7 +51,6 @@ from pointline.tables.cn_trading_phase import (
     TRADING_PHASE_UNKNOWN,
     derive_cn_trading_phase_expr,
 )
-from pointline.validation_utils import with_expected_exchange_id
 
 # L3 tables are exclusive to Chinese stock exchanges (SZSE, SSE).
 # These tables use channel_no, appl_seq_num sequencing, and CN trading phases
@@ -67,15 +64,13 @@ REQUIRED_METADATA_FIELDS: set[str] = set()
 #
 # Delta Lake Integer Type Limitations:
 # - Delta Lake (via Parquet) does not support unsigned integer types UInt16 and UInt32
-# - Use Int16 for exchange_id
 # - Use Int32 for file_id, file_line_number, channel_no
 # - Use Int64 for symbol_id, appl_seq_num, bid_appl_seq_num, offer_appl_seq_num, px_int, qty_int
 # - UInt8 is supported (used for exec_type)
 L3_TICKS_SCHEMA: dict[str, pl.DataType] = {
     "date": pl.Date,
     "exchange": pl.Utf8,
-    "exchange_id": pl.Int16,
-    "symbol_id": pl.Int64,
+    "symbol": pl.Utf8,
     "ts_local_us": pl.Int64,  # Arrival time in UTC (converted from Asia/Shanghai TransactTime)
     "appl_seq_num": pl.Int64,  # Tick ID (unique per channel per day, starts at 1)
     "bid_appl_seq_num": pl.Int64,  # Buy order ID (0 if N/A)
@@ -115,7 +110,6 @@ def validate_l3_ticks(df: pl.DataFrame) -> pl.DataFrame:
     - Valid timestamp ranges
     - Valid exec_type codes (0-1)
     - Non-null required fields
-    - exchange_id matches normalized exchange
     - Cancellations: px_int = 0, exactly one of {bid_appl_seq_num, offer_appl_seq_num} > 0
     - Executions: px_int > 0, both bid_appl_seq_num and offer_appl_seq_num > 0
 
@@ -133,8 +127,7 @@ def validate_l3_ticks(df: pl.DataFrame) -> pl.DataFrame:
         "offer_appl_seq_num",
         "exec_type",
         "exchange",
-        "exchange_id",
-        "symbol_id",
+        "symbol",
         "trading_phase",
     ]
     missing = [c for c in required if c not in df.columns]
@@ -148,8 +141,6 @@ def validate_l3_ticks(df: pl.DataFrame) -> pl.DataFrame:
             f"validate_l3_ticks: exchange(s) {sorted(bad_exchanges)} not allowed. "
             f"l3_ticks is restricted to {sorted(ALLOWED_EXCHANGES)}"
         )
-
-    df_with_expected = with_expected_exchange_id(df)
 
     # Helper expressions for tick semantics
     is_fill = pl.col("exec_type") == EXEC_TYPE_FILL
@@ -178,8 +169,7 @@ def validate_l3_ticks(df: pl.DataFrame) -> pl.DataFrame:
                 TRADING_PHASE_CLOSING_CALL,
             ]
         )
-        & required_columns_validation_expr(["exchange", "exchange_id", "symbol_id"])
-        & exchange_id_validation_expr()
+        & required_columns_validation_expr(["exchange", "symbol"])
         & valid_tick_semantics
     )
 
@@ -199,8 +189,7 @@ def validate_l3_ticks(df: pl.DataFrame) -> pl.DataFrame:
             | pl.col("exec_type").is_null(),
         ),
         ("exchange", pl.col("exchange").is_null()),
-        ("exchange_id", pl.col("exchange_id").is_null()),
-        ("symbol_id", pl.col("symbol_id").is_null()),
+        ("symbol", pl.col("symbol").is_null()),
         (
             "trading_phase",
             ~pl.col("trading_phase").is_in(
@@ -214,17 +203,12 @@ def validate_l3_ticks(df: pl.DataFrame) -> pl.DataFrame:
             | pl.col("trading_phase").is_null(),
         ),
         (
-            "exchange_id_mismatch",
-            pl.col("expected_exchange_id").is_null()
-            | (pl.col("exchange_id") != pl.col("expected_exchange_id")),
-        ),
-        (
             "tick_semantics",
             ~valid_tick_semantics,
         ),
     ]
 
-    valid = generic_validate(df_with_expected, combined_filter, rules, "l3_ticks")
+    valid = generic_validate(df, combined_filter, rules, "l3_ticks")
     return valid.select(df.columns)
 
 
@@ -301,31 +285,6 @@ def _resolve_profile(df: pl.DataFrame, exchange: str | None = None):
             )
         return get_profile(exchanges[0])
     raise ValueError("No 'exchange' column and no exchange= argument")
-
-
-def resolve_symbol_ids(
-    data: pl.DataFrame,
-    dim_symbol: pl.DataFrame,
-    exchange_id: int | None,
-    exchange_symbol: str | None,
-    *,
-    ts_col: str = "ts_local_us",
-) -> pl.DataFrame:
-    """Resolve symbol_ids for CN L3 tick data using as-of join with dim_symbol.
-
-    This is a wrapper around the generic symbol resolution function.
-
-    Args:
-        data: DataFrame with ts_local_us (or ts_col) column
-        dim_symbol: dim_symbol table in canonical schema
-        exchange_id: Exchange ID to use for all rows
-        exchange_symbol: Exchange symbol to use for all rows
-        ts_col: Timestamp column name (default: ts_local_us)
-
-    Returns:
-        DataFrame with symbol_id column added
-    """
-    return generic_resolve_symbol_ids(data, dim_symbol, exchange_id, exchange_symbol, ts_col=ts_col)
 
 
 def required_l3_ticks_columns() -> Sequence[str]:

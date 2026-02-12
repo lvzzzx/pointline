@@ -6,7 +6,8 @@ the TableName Literal in types.py is also updated.
 
 from typing import get_args
 
-from pointline.config import TABLE_PATHS
+from pointline.config import TABLE_HAS_DATE, TABLE_PATHS
+from pointline.introspection import get_schema
 from pointline.types import TableName
 
 
@@ -33,3 +34,16 @@ def test_table_name_literal_matches_table_paths():
         f"{sorted(extra_in_literal)}\n"
         f"Remove these from pointline/types.py or add to TABLE_PATHS."
     )
+
+
+def test_table_has_date_matches_schema_columns():
+    """Ensure TABLE_HAS_DATE is consistent with canonical schema columns."""
+    for table_name in TABLE_PATHS:
+        schema = get_schema(table_name)
+        has_date_column = "date" in schema
+        declared_has_date = TABLE_HAS_DATE.get(table_name)
+        assert declared_has_date is not None, f"Missing TABLE_HAS_DATE entry for {table_name}"
+        assert declared_has_date == has_date_column, (
+            f"TABLE_HAS_DATE mismatch for {table_name}: "
+            f"declared={declared_has_date}, schema_has_date={has_date_column}"
+        )

@@ -7,13 +7,10 @@ from collections.abc import Sequence
 import polars as pl
 
 from pointline.tables._base import (
-    exchange_id_validation_expr,
-    generic_resolve_symbol_ids,
     generic_validate,
     required_columns_validation_expr,
     timestamp_validation_expr,
 )
-from pointline.validation_utils import with_expected_exchange_id
 
 # Required metadata fields for ingestion
 REQUIRED_METADATA_FIELDS: set[str] = set()
@@ -24,8 +21,7 @@ SIDE_SELL = 1
 LIQUIDATIONS_SCHEMA: dict[str, pl.DataType] = {
     "date": pl.Date,
     "exchange": pl.Utf8,
-    "exchange_id": pl.Int16,
-    "symbol_id": pl.Int64,
+    "symbol": pl.Utf8,
     "ts_local_us": pl.Int64,
     "ts_exch_us": pl.Int64,
     "liq_id": pl.Utf8,
@@ -70,18 +66,6 @@ def normalize_liquidations_schema(df: pl.DataFrame) -> pl.DataFrame:
     return df.with_columns(casts).select(list(LIQUIDATIONS_SCHEMA.keys()))
 
 
-def resolve_symbol_ids(
-    data: pl.DataFrame,
-    dim_symbol: pl.DataFrame,
-    exchange_id: int | None,
-    exchange_symbol: str | None,
-    *,
-    ts_col: str = "ts_local_us",
-) -> pl.DataFrame:
-    """Resolve symbol_ids for liquidations rows using as-of dim_symbol join."""
-    return generic_resolve_symbol_ids(data, dim_symbol, exchange_id, exchange_symbol, ts_col=ts_col)
-
-
 def encode_fixed_point(df: pl.DataFrame, dim_symbol: pl.DataFrame, exchange: str) -> pl.DataFrame:
     """Encode liquidation price and quantity fields to fixed-point integers."""
     from pointline.encoding import get_profile
@@ -108,8 +92,7 @@ def validate_liquidations(df: pl.DataFrame) -> pl.DataFrame:
 
     required = [
         "exchange",
-        "exchange_id",
-        "symbol_id",
+        "symbol",
         "ts_local_us",
         "ts_exch_us",
         "side",
@@ -120,8 +103,6 @@ def validate_liquidations(df: pl.DataFrame) -> pl.DataFrame:
     if missing:
         raise ValueError(f"validate_liquidations: missing required columns: {missing}")
 
-    df_with_expected = with_expected_exchange_id(df)
-
     combined_filter = (
         timestamp_validation_expr("ts_local_us")
         & timestamp_validation_expr("ts_exch_us")
@@ -129,26 +110,19 @@ def validate_liquidations(df: pl.DataFrame) -> pl.DataFrame:
         & pl.col("side").is_in([SIDE_BUY, SIDE_SELL])
         & (pl.col("px_int") > 0)
         & (pl.col("qty_int") > 0)
-        & exchange_id_validation_expr()
     )
 
     rules = [
         ("exchange", pl.col("exchange").is_null()),
-        ("exchange_id", pl.col("exchange_id").is_null()),
-        ("symbol_id", pl.col("symbol_id").is_null()),
+        ("symbol", pl.col("symbol").is_null()),
         ("ts_local_us", pl.col("ts_local_us").is_null() | (pl.col("ts_local_us") <= 0)),
         ("ts_exch_us", pl.col("ts_exch_us").is_null() | (pl.col("ts_exch_us") <= 0)),
         ("side", pl.col("side").is_null() | ~pl.col("side").is_in([SIDE_BUY, SIDE_SELL])),
         ("px_int", pl.col("px_int").is_null() | (pl.col("px_int") <= 0)),
         ("qty_int", pl.col("qty_int").is_null() | (pl.col("qty_int") <= 0)),
-        (
-            "exchange_id_mismatch",
-            pl.col("expected_exchange_id").is_null()
-            | (pl.col("exchange_id") != pl.col("expected_exchange_id")),
-        ),
     ]
 
-    valid = generic_validate(df_with_expected, combined_filter, rules, "liquidations")
+    valid = generic_validate(df, combined_filter, rules, "liquidations")
     return valid.select(df.columns)
 
 

@@ -7,7 +7,6 @@ from dataclasses import dataclass
 
 import polars as pl
 
-from pointline.dim_symbol import resolve_exchange_ids
 from pointline.research import core as research_core
 from pointline.research.spines import get_builder_by_config
 from pointline.research.spines.base import SpineBuilderConfig
@@ -31,10 +30,10 @@ class EventSpineConfig:
     builder_config: SpineBuilderConfig
 
 
-def _ensure_symbol_ids(symbol_id: int | Iterable[int]) -> list[int]:
-    if isinstance(symbol_id, int):
-        return [symbol_id]
-    return list(symbol_id)
+def _ensure_symbols(symbol: str | Iterable[str]) -> list[str]:
+    if isinstance(symbol, str):
+        return [symbol]
+    return list(symbol)
 
 
 def _normalize_ts_inputs(start_ts_us: TimestampInput, end_ts_us: TimestampInput) -> tuple[int, int]:
@@ -48,25 +47,25 @@ def _normalize_ts_inputs(start_ts_us: TimestampInput, end_ts_us: TimestampInput)
 
 def build_clock_spine(
     *,
-    symbol_id: int | Iterable[int],
+    exchange: str,
+    symbol: str | Iterable[str],
     start_ts_us: TimestampInput,
     end_ts_us: TimestampInput,
     step_ms: int = 1000,
-    exchange_id: int | Iterable[int] | None = None,
     max_rows: int = 5_000_000,
 ) -> pl.LazyFrame:
     """Create a deterministic clock spine for PIT feature computation."""
     if step_ms <= 0:
         raise ValueError("step_ms must be positive")
 
-    symbol_ids = _ensure_symbol_ids(symbol_id)
+    symbols = _ensure_symbols(symbol)
     start_us, end_us = _normalize_ts_inputs(start_ts_us, end_ts_us)
     step_us = step_ms * 1_000
 
     # Generate bar-end timestamps aligned to grid
     timestamps = generate_bar_end_timestamps(start_us, end_us, step_us)
 
-    total_rows = len(timestamps) * len(symbol_ids)
+    total_rows = len(timestamps) * len(symbols)
     if total_rows > max_rows:
         raise ValueError(
             "Clock spine would generate too many rows. "
@@ -76,44 +75,39 @@ def build_clock_spine(
 
     time_df = pl.DataFrame({"ts_local_us": timestamps})
 
-    if exchange_id is None:
-        exchange_ids = resolve_exchange_ids(symbol_ids)
-    else:
-        exchange_ids = _ensure_symbol_ids(exchange_id)
-
-    if len(exchange_ids) != len(symbol_ids):
-        raise ValueError("exchange_id length must match symbol_id length")
-
-    symbols_df = pl.DataFrame({"symbol_id": symbol_ids, "exchange_id": exchange_ids})
+    symbols_df = pl.DataFrame({"symbol": symbols, "exchange": [exchange] * len(symbols)})
     return symbols_df.lazy().join(time_df.lazy(), how="cross")
 
 
 def build_trades_spine(
     *,
-    symbol_id: int | Iterable[int],
+    exchange: str,
+    symbol: str | Iterable[str],
     start_ts_us: TimestampInput,
     end_ts_us: TimestampInput,
 ) -> pl.LazyFrame:
     """Create an event spine from the trades stream."""
     lf = research_core.scan_table(
         "trades",
-        symbol_id=symbol_id,
+        exchange=exchange,
+        symbol=symbol,
         start_ts_us=start_ts_us,
         end_ts_us=end_ts_us,
         columns=[
             "ts_local_us",
-            "exchange_id",
-            "symbol_id",
+            "exchange",
+            "symbol",
             "file_id",
             "file_line_number",
         ],
     )
-    return lf.sort(["exchange_id", "symbol_id", "ts_local_us", "file_id", "file_line_number"])
+    return lf.sort(["exchange", "symbol", "ts_local_us", "file_id", "file_line_number"])
 
 
 def build_event_spine(
     *,
-    symbol_id: int | Iterable[int],
+    exchange: str,
+    symbol: str | Iterable[str],
     start_ts_us: TimestampInput,
     end_ts_us: TimestampInput,
     config: EventSpineConfig,
@@ -124,7 +118,8 @@ def build_event_spine(
     This function delegates to registered spine builders for extensibility.
 
     Args:
-        symbol_id: Single symbol_id or list of symbol_ids
+        exchange: Exchange name (e.g., "binance-futures")
+        symbol: Single symbol or list of symbols
         start_ts_us: Start timestamp (microseconds, UTC, or TimestampInput)
         end_ts_us: End timestamp (microseconds, UTC, or TimestampInput)
         config: EventSpineConfig with builder_config
@@ -133,8 +128,8 @@ def build_event_spine(
             subsequent calls with identical inputs.
 
     Returns:
-        LazyFrame with (ts_local_us, exchange_id, symbol_id)
-        sorted by (exchange_id, symbol_id, ts_local_us)
+        LazyFrame with (ts_local_us, exchange, symbol)
+        sorted by (exchange, symbol, ts_local_us)
 
     Example:
         from pointline.research.features import EventSpineConfig, build_event_spine
@@ -144,7 +139,8 @@ def build_event_spine(
             builder_config=VolumeBarConfig(volume_threshold=1000.0)
         )
         spine = build_event_spine(
-            symbol_id=12345,
+            exchange="binance-futures",
+            symbol="BTCUSDT",
             start_ts_us="2024-05-01",
             end_ts_us="2024-05-02",
             config=config,
@@ -158,10 +154,10 @@ def build_event_spine(
 
     # Delegate through cache if provided
     if cache is not None:
-        return cache.get_or_build(builder, symbol_id, start_us, end_us, config.builder_config)
+        return cache.get_or_build(builder, symbol, start_us, end_us, config.builder_config)
 
     return builder.build_spine(
-        symbol_id=symbol_id,
+        symbol=symbol,
         start_ts_us=start_us,
         end_ts_us=end_us,
         config=config.builder_config,
@@ -173,7 +169,7 @@ def pit_align(
     tables: dict[str, pl.LazyFrame],
     *,
     on: str = "ts_local_us",
-    by: tuple[str, str] = ("exchange_id", "symbol_id"),
+    by: tuple[str, str] = ("exchange", "symbol"),
 ) -> pl.LazyFrame:
     """As-of join multiple tables onto a spine with deterministic ordering."""
     base = spine.sort(_event_sort_columns(spine, on=on, by=by))

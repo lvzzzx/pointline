@@ -76,6 +76,47 @@ def test_get_schema_l3_ticks():
     assert "trading_phase" in schema
 
 
+def test_get_schema_dim_asset_stats():
+    """Test schema retrieval for dim_asset_stats table."""
+    schema = get_schema("dim_asset_stats")
+
+    assert isinstance(schema, dict)
+    assert "base_asset" in schema
+    assert "date" in schema
+    assert "circulating_supply" in schema
+
+
+def test_get_schema_stock_basic_cn():
+    """Test schema retrieval for stock_basic_cn table."""
+    schema = get_schema("stock_basic_cn")
+
+    assert isinstance(schema, dict)
+    assert "ts_code" in schema
+    assert "exchange_symbol" in schema
+    assert "as_of_date" in schema
+
+
+def test_get_schema_ingest_manifest():
+    """Test schema retrieval for ingest_manifest table."""
+    schema = get_schema("ingest_manifest")
+
+    assert isinstance(schema, dict)
+    assert "file_id" in schema
+    assert "vendor" in schema
+    assert "status" in schema
+    assert "date" in schema
+
+
+def test_get_schema_kline_1d():
+    """Test schema retrieval for kline_1d table."""
+    schema = get_schema("kline_1d")
+
+    assert isinstance(schema, dict)
+    assert "ts_bucket_start_us" in schema
+    assert "ts_bucket_end_us" in schema
+    assert "open_px_int" in schema
+
+
 def test_get_schema_invalid_table():
     """Test error handling for invalid table name."""
     with pytest.raises(ValueError, match="not found in TABLE_PATHS"):
@@ -167,20 +208,10 @@ def test_all_registered_tables_have_schemas():
     """Test that all tables in TABLE_PATHS have loadable schemas."""
     from pointline.config import TABLE_PATHS
 
-    # These tables might not have schema modules yet
-    skip_tables = {"ingest_manifest"}  # May not have schema constant
-
     for table_name in TABLE_PATHS:
-        if table_name in skip_tables:
-            continue
-
-        try:
-            schema = get_schema(table_name)
-            assert isinstance(schema, dict)
-            assert len(schema) > 0, f"Table {table_name} has empty schema"
-        except ImportError:
-            # Some tables may not have schema modules yet - that's okay
-            pass
+        schema = get_schema(table_name)
+        assert isinstance(schema, dict)
+        assert len(schema) > 0, f"Table {table_name} has empty schema"
 
 
 def test_schema_consistency_across_functions():

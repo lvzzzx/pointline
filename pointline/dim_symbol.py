@@ -679,70 +679,6 @@ def check_coverage(
     return not (prev_ends != next_starts).any()
 
 
-def resolve_symbol_ids(
-    data: pl.DataFrame,
-    dim_symbol: pl.DataFrame,
-    *,
-    ts_col: str = "ts_local_us",
-    tie_breaker_cols: Sequence[str] | None = None,
-) -> pl.DataFrame:
-    """Resolve symbol_ids for a data DataFrame using as-of join.
-
-    The join is performed on natural keys and the provided timestamp column.
-    It expects dim_symbol to be in the canonical schema.
-    """
-    # Ensure join columns match dim_symbol schema
-    # Schema is single source of truth - cast both data and dim_symbol to SCHEMA
-    for col in NATURAL_KEY_COLS:
-        if col in data.columns:
-            data = data.with_columns(pl.col(col).cast(SCHEMA[col]))
-        if col in dim_symbol.columns:
-            dim_symbol = dim_symbol.with_columns(pl.col(col).cast(SCHEMA[col]))
-
-    sort_cols = [ts_col]
-    if tie_breaker_cols:
-        for col in tie_breaker_cols:
-            if col in data.columns and col not in sort_cols:
-                sort_cols.append(col)
-
-    sort_cols = [*NATURAL_KEY_COLS, *sort_cols]
-    join_kwargs: dict[str, object] = {}
-    if "check_sortedness" in pl.DataFrame.join_asof.__code__.co_varnames:
-        join_kwargs["check_sortedness"] = False
-
-    resolved = data.sort(sort_cols).join_asof(
-        dim_symbol.sort([*NATURAL_KEY_COLS, "valid_from_ts"]),
-        left_on=ts_col,
-        right_on="valid_from_ts",
-        by=list(NATURAL_KEY_COLS),
-        strategy="backward",
-        **join_kwargs,
-    )
-
-    # Guard against matching rows that are outside the SCD2 validity window.
-    # join_asof only enforces valid_from_ts <= ts, so we additionally require
-    # ts < valid_until_ts for matched rows.
-    if "valid_until_ts" in resolved.columns:
-        stale_match = pl.col("symbol_id").is_not_null() & (
-            pl.col(ts_col) >= pl.col("valid_until_ts")
-        )
-        right_side_cols = [col for col in resolved.columns if col not in data.columns]
-        if "symbol_id" in resolved.columns and "symbol_id" not in right_side_cols:
-            right_side_cols.append("symbol_id")
-        if right_side_cols:
-            resolved = resolved.with_columns(
-                [
-                    pl.when(stale_match)
-                    .then(pl.lit(None, dtype=resolved.schema[col]))
-                    .otherwise(pl.col(col))
-                    .alias(col)
-                    for col in right_side_cols
-                ]
-            )
-
-    return resolved
-
-
 def required_update_columns() -> Sequence[str]:
     """Columns required for an updates DataFrame (excludes optional multi-asset cols)."""
     return tuple(
@@ -763,37 +699,3 @@ def required_dim_symbol_columns() -> Sequence[str]:
 from pointline.schema_registry import register_schema as _register_schema  # noqa: E402
 
 _register_schema("dim_symbol", SCHEMA)
-
-
-def resolve_exchange_ids(symbol_ids: list[int]) -> list[int]:
-    """Resolve exchange_ids from symbol_ids via dim_symbol.
-
-    Args:
-        symbol_ids: List of symbol_ids to resolve.
-
-    Returns:
-        List of exchange_ids in the same order as symbol_ids.
-
-    Raises:
-        ValueError: If no matching symbol_ids found or some are missing.
-    """
-    dim = read_dim_symbol_table(columns=["symbol_id", "exchange_id"]).unique()
-    lookup = dim.filter(pl.col("symbol_id").is_in(symbol_ids))
-
-    if lookup.is_empty():
-        raise ValueError("No matching symbol_ids found in dim_symbol.")
-
-    exchange_ids: list[int] = []
-    missing: list[int] = []
-
-    for symbol in symbol_ids:
-        rows = lookup.filter(pl.col("symbol_id") == symbol)
-        if rows.is_empty():
-            missing.append(symbol)
-            continue
-        exchange_ids.append(int(rows["exchange_id"][0]))
-
-    if missing:
-        raise ValueError(f"Missing exchange_id for symbol_id(s): {missing}")
-
-    return exchange_ids

@@ -129,8 +129,9 @@ def _load_schema_from_module(table_name: str) -> dict[str, pl.DataType] | None:
 
     Some tables have special mappings:
     - book_snapshot_25 → book_snapshots.BOOK_SNAPSHOTS_SCHEMA
-    - kline_1h → klines.KLINES_SCHEMA
+    - kline_1h/kline_1d → klines.KLINE_SCHEMA
     - dim_symbol → dim_symbol.SCHEMA (not in tables/)
+    - ingest_manifest → io.delta_manifest_repo.MANIFEST_SCHEMA
 
     Args:
         table_name: Table name (e.g., "trades", "book_snapshot_25")
@@ -145,11 +146,18 @@ def _load_schema_from_module(table_name: str) -> dict[str, pl.DataType] | None:
             return getattr(module, "SCHEMA", None)
         except (ImportError, AttributeError):
             return None
+    if table_name == "ingest_manifest":
+        try:
+            module = importlib.import_module("pointline.io.delta_manifest_repo")
+            return getattr(module, "MANIFEST_SCHEMA", None)
+        except (ImportError, AttributeError):
+            return None
 
     # Map table names to module names (most are 1:1)
     module_name_map = {
         "book_snapshot_25": "book_snapshots",
         "kline_1h": "klines",
+        "kline_1d": "klines",
         "l3_orders": "l3_orders",
         "l3_ticks": "l3_ticks",
         "dim_asset_stats": "dim_asset_stats",
@@ -163,14 +171,14 @@ def _load_schema_from_module(table_name: str) -> dict[str, pl.DataType] | None:
     # Map table names to schema constant names
     schema_constant_map = {
         "book_snapshot_25": "BOOK_SNAPSHOTS_SCHEMA",
-        "kline_1h": "KLINES_SCHEMA",
+        "kline_1h": "KLINE_SCHEMA",
+        "kline_1d": "KLINE_SCHEMA",
         "l3_orders": "L3_ORDERS_SCHEMA",
         "l3_ticks": "L3_TICKS_SCHEMA",
-        "dim_asset_stats": "DIM_ASSET_STATS_SCHEMA",
-        "stock_basic_cn": "STOCK_BASIC_CN_SCHEMA",
+        "dim_asset_stats": "SCHEMA",
+        "stock_basic_cn": "SCHEMA",
         "validation_log": "VALIDATION_LOG_SCHEMA",
         "dq_summary": "DQ_SUMMARY_SCHEMA",
-        "ingest_manifest": "INGEST_MANIFEST_SCHEMA",
     }
 
     schema_constant = schema_constant_map.get(table_name, f"{table_name.upper()}_SCHEMA")

@@ -1,676 +1,464 @@
 # Data Lake Schema Reference
 
-This document is the **single source of truth** for all table schemas in the Pointline data lake. It provides complete column definitions, partitioning information, and data semantics for researchers and LLM agents.
-
-**Organization:**
-- **Reference Tables**: Metadata and tracking tables (`dim_symbol`, `ingest_manifest`)
-- **Silver Tables**: Canonical research foundation tables (normalized, typed Parquet)
-- **Gold Tables**: Derived tables optimized for specific research workflows
-- **Common Patterns**: Shared conventions (fixed-point encoding, common columns, partitioning)
-
-For design rationale and architecture decisions, see [Architecture Design](architecture/design.md).
-
----
-
-## 1. Reference Tables
-
-### 1.1 `silver.dim_symbol`
-
-Slowly Changing Dimension (SCD) Type 2 table tracking instrument metadata over time. Symbols may change (renames, delistings, tick size changes), so this table maintains a validity window for each version.
-
-**Storage:** Single unpartitioned Delta table (small size).
-
-**Surrogate Key:** `symbol_id` (i64)
-**Natural Key:** `(exchange_id, exchange_symbol)`
-
-| Column | Type | Description |
-|---|---|---|
-| **symbol_id** | i64 | Surrogate Key (Primary Key) |
-| **exchange_id** | i16 | Dictionary ID (e.g., 1=binance, 2=binance-futures) |
-| **exchange** | string | Normalized exchange name (e.g., `binance-futures`) for consistency with silver tables |
-| **exchange_symbol** | string | Raw vendor ticker (e.g., `BTC-PERPETUAL`) |
-| **base_asset** | string | e.g., `BTC` |
-| **quote_asset** | string | e.g., `USD` or `USDT` |
-| **asset_type** | u8 | 0=spot, 1=perp, 2=future, 3=option |
-| **tick_size** | f64 | Minimum price step allowed by the exchange (order validation, not encoding) |
-| **lot_size** | f64 | Minimum tradable quantity allowed by the exchange (order validation, not encoding) |
-| **contract_size** | f64 | Value of 1 contract in base/quote units |
-| **valid_from_ts** | i64 | Inclusive µs timestamp |
-| **valid_until_ts** | i64 | Exclusive µs timestamp (default: `2^63 - 1`) |
-| **is_current** | bool | Helper for latest version queries |
-
-**Notes:**
-- `tick_size` and `lot_size` are exchange rules for order validation, NOT used for fixed-point encoding.
-- Fixed-point encoding uses per-asset-class scalar profiles defined in `pointline/encoding.py`. See [Section 4.1](#41-fixed-point-encoding).
-
-**Update Logic:**
-1. If a symbol's metadata (e.g., `tick_size`) changes:
-   - Update the existing record: set `valid_until_ts = change_ts` and `is_current = false`.
-   - Insert a new record: set `valid_from_ts = change_ts`, `valid_until_ts = infinity`, and `is_current = true`.
-2. This ensures that Silver data ingested on `date=X` joins against the metadata that was **active on `date=X`**, preserving historical accuracy.
-
-**Join Pattern:**
-```sql
-SELECT
-    b.*,
-    s.symbol_id
-FROM bronze_data b
-JOIN silver.dim_symbol s
-  ON  b.exchange_id = s.exchange_id
-  AND b.exchange_symbol = s.exchange_symbol
-  AND b.ts_local_us >= s.valid_from_ts
-  AND b.ts_local_us <  s.valid_until_ts
-```
-
----
-
-### 1.2 `silver.dim_asset_stats`
-
-Daily dimension table tracking asset-level statistics, primarily `circulating_supply`, updated via CoinGecko API. Enables market cap calculations, supply analysis, and other asset-level research queries.
-
-**Storage:** Single unpartitioned Delta table (small size, similar to `dim_symbol`).
-
-**Natural Key:** `(base_asset, date)`
-
-| Column | Type | Description |
-|--------|------|-------------|
-| **base_asset** | string | Asset ticker (e.g., `BTC`, `ETH`) - matches `dim_symbol.base_asset` |
-| **date** | date | UTC date (partition column) |
-| **coingecko_coin_id** | string | CoinGecko API coin identifier (e.g., `bitcoin`, `ethereum`) |
-| **circulating_supply** | f64 | Circulating supply in native units (e.g., BTC, ETH) |
-| **total_supply** | f64 | Total supply (if available from CoinGecko, nullable) |
-| **max_supply** | f64 | Maximum supply (if available, null for uncapped assets) |
-| **market_cap_usd** | f64 | Market cap in USD (optional, for convenience, nullable) |
-| **fully_diluted_valuation_usd** | f64 | FDV in USD (optional, nullable) |
-| **updated_at_ts** | i64 | Timestamp when CoinGecko last updated this data (µs) |
-| **fetched_at_ts** | i64 | Timestamp when we fetched from CoinGecko API (µs) |
-| **source** | string | Data source identifier (e.g., `coingecko`) |
-
-**Notes:**
-- Daily snapshot model: one row per asset per date
-- Unpartitioned (small dimension table, similar to `dim_symbol`)
-- Updated once per 24h via CoinGecko API sync job
-- `max_supply` is `null` for uncapped assets (e.g., ETH)
-- `fetched_at_ts` tracks when we pulled data; `updated_at_ts` tracks CoinGecko's last update
-- Date filtering uses column pruning (Delta Lake) - no physical partitioning needed
-
-**Join Pattern:**
-```sql
-SELECT
-    s.*,
-    a.circulating_supply,
-    a.market_cap_usd
-FROM silver.dim_symbol s
-JOIN silver.dim_asset_stats a
-  ON s.base_asset = a.base_asset
-  AND DATE(FROM_UNIXTIME(s.valid_from_ts / 1_000_000)) = a.date
-WHERE s.is_current = true
-```
-
-**Update Logic:**
-- Daily sync job fetches data from CoinGecko API
-- Uses `MERGE` operation on `(base_asset, date)` key for idempotency
-- Re-running same date updates if CoinGecko data changed
-
----
-
-### 1.3 `silver.ingest_manifest`
-
-Tracks ingestion status per Bronze file. Enables idempotent re-runs, provides auditability, and enables fast skip logic.
-
-**Storage:** Small unpartitioned Delta table.
-
-**Primary Key (logical):** `(vendor, data_type, bronze_file_name, sha256)`
-**Surrogate Key:** `file_id` (i32) - used for joins from Silver tables
-
-| Column | Type | Description |
-|---|---|---|
-| **file_id** | i32 | Surrogate Key (Primary Key) |
-| **vendor** | string | raw data source (e.g., `tardis`, `binance_vision`) |
-| **data_type** | string | e.g., `trades`, `quotes` |
-| **date** | date | Trading date from file metadata (nullable) |
-| **bronze_file_name** | string | full relative path to the CSV.GZ |
-| **file_size_bytes** | i64 | size at ingest time |
-| **last_modified_ts** | i64 | mtime in µs (UTC) |
-| **sha256** | string | content hash for idempotency |
-| **created_at_us** | i64 | discovery timestamp in µs |
-| **processed_at_us** | i64 | ingest completion timestamp in µs (nullable) |
-| **row_count** | i64 | number of rows ingested (nullable) |
-| **ts_local_min_us** | i64 | min `ts_local_us` in file (nullable) |
-| **ts_local_max_us** | i64 | max `ts_local_us` in file (nullable) |
-| **status** | string | `success`, `failed`, `pending`, `quarantined` |
-| **error_message** | string | error text for failed ingests (nullable) |
-
-**Ingestion Decision (Skip Logic):**
-1. For each Bronze file, compute `file_size_bytes` and `last_modified_ts`.
-2. Lookup by `(vendor, data_type, bronze_file_name, sha256)`.
-3. If a row exists with `status=success`, **skip** ingestion.
-4. Otherwise, ingest and write/overwrite a manifest row with updated stats.
-
-**Lineage Guarantees:**
-- Silver tables **must** include `file_id` and `file_line_number`.
-- `file_line_number` provides deterministic ordering within each source file.
-- Full lineage (source file path) is retrieved by joining Silver tables with `silver.ingest_manifest` on `file_id`.
-
----
-
-### 1.4 `silver.stock_basic_cn`
-
-China-only reference metadata sourced from Tushare `stock_basic`. This table is a **full snapshot**
-and is overwritten on each sync (API is source of truth).
-
-**Storage:** Single unpartitioned Delta table (small size).
-
-| Column | Type | Description |
-|---|---|---|
-| **ts_code** | string | Tushare code (e.g., `000001.SZ`) |
-| **symbol** | string | Exchange symbol without suffix (e.g., `000001`) |
-| **name** | string | Security name |
-| **area** | string | Region/area (nullable) |
-| **industry** | string | Industry category (nullable) |
-| **fullname** | string | Full name (nullable) |
-| **enname** | string | English name (nullable) |
-| **cnspell** | string | Chinese spelling (nullable) |
-| **market** | string | Market segment (nullable) |
-| **exchange** | string | Normalized exchange (`szse`/`sse`) |
-| **curr_type** | string | Currency type (nullable) |
-| **list_status** | string | Listing status (`L`, `D`, `P`) |
-| **list_date** | date | Listing date (nullable) |
-| **delist_date** | date | Delisting date (nullable) |
-| **is_hs** | string | HS/HK connect flag (nullable) |
-| **act_name** | string | Actual controller name (nullable) |
-| **act_ent_type** | string | Actual controller type (nullable) |
-| **exchange_id** | i16 | Internal exchange ID (for joins with `dim_symbol`) |
-| **exchange_symbol** | string | Canonical exchange symbol (matches `dim_symbol.exchange_symbol`) |
-| **as_of_date** | date | Snapshot date (UTC) |
-| **ingest_ts_us** | i64 | Ingest timestamp in microseconds (UTC) |
-
-**Notes:**
-- `exchange_id` and `exchange_symbol` provide direct joins to `silver.dim_symbol`.
-- This table is **not** SCD2; historical changes should be derived from snapshots if needed.
-
----
-
-## 2. Silver Tables
-
-Silver tables are the canonical research foundation. They are normalized, typed Parquet files with fixed-point integer encoding for prices and quantities.
-
-**Common Partitioning:** All Silver tables (except reference tables) are partitioned by `["exchange", "date"]`.
-
-**Common Columns:** Most Silver tables include:
-- `date` (date): Partition key, derived from `ts_local_us` in **exchange-local timezone**:
-  - Crypto exchanges (binance-futures, etc.): UTC date
-  - Regional exchanges (szse, sse): Local timezone date (Asia/Shanghai for China)
-  - **Critical:** This ensures one trading day maps to exactly one partition
-- `exchange` (string): Partition key (not stored in Parquet, reconstructed from directory)
-- `exchange_id` (i16): For joins and compression
-- `symbol_id` (i64): Stable identifier from `dim_symbol`
-- `ts_local_us` (i64): Primary replay timeline (arrival time)
-- `ts_exch_us` (i64): Exchange time if available
-- `file_id` (i32): Lineage tracking (join with `ingest_manifest`)
-- `file_line_number` (i32): Lineage tracking (deterministic ordering)
-
-**Note:** Time-bucketed bars (e.g., `silver.kline_1h`) use
-`ts_bucket_start_us`/`ts_bucket_end_us` instead of `ts_local_us`.
-
----
-
-### 2.1 `silver.book_snapshot_25`
-
-Full top-25 order book snapshots from Tardis `book_snapshot_25`.
-
-**Source:** Tardis `book_snapshot_25`
-**Partitioned by:** `["exchange", "date"]`
-
-| Column | Type | Notes |
-|---|---:|---|
-| date | date | partitioned by (derived from `ts_local_us` in UTC) |
-| exchange | string | partitioned by (not stored in Parquet files, reconstructed from directory) |
-| exchange_id | i16 | for joins and compression |
-| symbol_id | i64 | match dim_symbol type |
-| ts_local_us | i64 | primary replay timeline |
-| ts_exch_us | i64 | exchange time if available |
-| bids_px_int | list<i64> | length 25 (nulls for missing levels) |
-| bids_sz_int | list<i64> | length 25 (nulls for missing levels) |
-| asks_px_int | list<i64> | length 25 (nulls for missing levels) |
-| asks_sz_int | list<i64> | length 25 (nulls for missing levels) |
-| file_id | i32 | lineage tracking (join with `silver.ingest_manifest`) |
-| file_line_number | i32 | lineage tracking (deterministic ordering within file) |
-
-**Source Schema (Tardis):**
-- `exchange` (string), `symbol` (string, uppercase)
-- `timestamp` (exchange timestamp in µs; falls back to `local_timestamp` if exchange does not provide)
-- `local_timestamp` (arrival timestamp in µs, UTC)
-- `asks[0..24].price`, `asks[0..24].amount` (ascending by price)
-- `bids[0..24].price`, `bids[0..24].amount` (descending by price)
-- Missing levels may be empty if fewer than 25 price levels exist.
-
-**Normalization:**
-- `exchange` is normalized (lowercase, trimmed) and used for partitioning.
-- `exchange_id` is derived via `EXCHANGE_MAP` and stored for joins.
-- `symbol` is mapped to `symbol_id` via `dim_symbol`.
-- `ts_exch_us` maps from `timestamp`; `ts_local_us` maps from `local_timestamp`.
-- `date` is derived from `ts_local_us` in UTC.
-
-**List Encoding:**
-- Convert `asks[0..24].price/amount` and `bids[0..24].price/amount` into lists of length 25.
-- Use nulls for missing levels (retain list length for positional consistency).
-- Convert prices/sizes into fixed-point `i64` using the asset-class scalar profile (see [Section 4.1](#41-fixed-point-encoding)).
-
-**Storage:** Uses `list<i64>` columns. DuckDB/Polars handle lists natively and efficiently.
-
----
-
-### 2.3 `silver.trades`
-
-Trade executions from Tardis `trades` dataset.
-
-**Source:** Tardis `trades`
-**Partitioned by:** `["exchange", "date"]`
-
-| Column | Type | Notes |
-|---|---:|---|
-| date | date | |
-| exchange | string | partitioned by (not stored in Parquet files) |
-| exchange_id | i16 | |
-| symbol_id | i64 | |
-| ts_local_us | i64 | |
-| ts_exch_us | i64 | |
-| trade_id | string | optional depending on venue |
-| side | u8 | 0=buy,1=sell,2=unknown |
-| px_int | i64 | fixed-point |
-| qty_int | i64 | fixed-point |
-| flags | i32 | optional packed conditions |
-| file_id | i32 | lineage tracking |
-| file_line_number | i32 | lineage tracking |
-
----
-
-### 2.4 `silver.quotes`
-
-Top-of-book quotes from Tardis `quotes` dataset or derived from L2.
-
-**Source:** Tardis `quotes` or derived from L2
-**Partitioned by:** `["exchange", "date"]`
-
-| Column | Type | Notes |
-|---|---:|---|
-| date | date | |
-| exchange | string | partitioned by (not stored in Parquet files) |
-| exchange_id | i16 | |
-| symbol_id | i64 | |
-| ts_local_us | i64 | |
-| ts_exch_us | i64 | |
-| bid_px_int | i64 | fixed-point |
-| bid_sz_int | i64 | fixed-point |
-| ask_px_int | i64 | fixed-point |
-| ask_sz_int | i64 | fixed-point |
-| file_id | i32 | lineage tracking |
-| file_line_number | i32 | lineage tracking |
-
-**Note:** This table may also be implemented as `gold.tob_quotes` if treated as a fast path derived table.
-
----
-
-### 2.5 `silver.book_ticker`
-
-Exchange-native `bookTicker` messages (if subscribed directly).
-
-**Source:** Exchange-native `bookTicker`
-**Partitioned by:** `["exchange", "date"]`
-
-Same schema as top-of-book quotes (`silver.quotes`), plus any venue-specific fields (update ids, etc.).
-
----
-
-### 2.6 `silver.derivative_ticker`
-
-Derivative market data including mark/index, funding, open interest, etc.
-
-**Source:** Tardis `derivative_ticker`
-**Partitioned by:** `["exchange", "date"]`
-
-| Column | Type | Notes |
-|---|---:|---|
-| date | date | |
-| exchange | string | partitioned by (not stored in Parquet files) |
-| exchange_id | i16 | |
-| symbol_id | i64 | |
-| ts_local_us | i64 | |
-| ts_exch_us | i64 | |
-| mark_px_int | i64 | fixed-point price (encoded with profile.price) |
-| index_px_int | i64 | fixed-point price (encoded with profile.price) |
-| last_px_int | i64 | fixed-point price (encoded with profile.price) |
-| funding_rate_int | i64 | fixed-point rate (encoded with profile.rate) |
-| predicted_funding_rate_int | i64 | fixed-point rate (encoded with profile.rate) |
-| funding_ts_us | i64 | next funding event timestamp |
-| oi_int | i64 | Open interest in fixed-point (encoded with profile.amount) |
-| file_id | i32 | lineage tracking |
-| file_line_number | i32 | lineage tracking |
-
-**Note:** All numeric fields use fixed-point integer encoding via per-asset-class scalar profiles.
-Use `decoded=True` in the query API or `decode_fixed_point()` to get float values.
-
----
-
-### 2.7 `silver.liquidations`
-
-Liquidation events from Tardis `liquidations` dataset.
-
-**Source:** Tardis `liquidations`
-**Partitioned by:** `["exchange", "date"]`
-
-| Column | Type | Notes |
-|---|---:|---|
-| date | date | |
-| exchange | string | partitioned by (not stored in Parquet files) |
-| exchange_id | i16 | |
-| symbol_id | i64 | |
-| ts_local_us | i64 | |
-| ts_exch_us | i64 | |
-| liq_id | string | |
-| side | u8 | |
-| px_int | i64 | fixed-point |
-| qty_int | i64 | fixed-point |
-| file_id | i32 | lineage tracking |
-| file_line_number | i32 | lineage tracking |
-
----
-
-### 2.8 `silver.options_chain`
-
-Options chain data, typically cross-sectional and heavy. Store updates per contract.
-
-**Source:** Tardis `options_chain`
-**Partitioned by:** `["exchange", "date"]`
-
-| Column | Type | Notes |
-|---|---:|---|
-| date | date | |
-| exchange | string | partitioned by (not stored in Parquet files) |
-| exchange_id | i16 | |
-| underlying_symbol_id | i64 | underlying |
-| option_symbol_id | i64 | contract |
-| underlying_index | string | raw underlying index from vendor |
-| ts_local_us | i64 | |
-| ts_exch_us | i64 | |
-| option_type | u8 | call/put |
-| strike_int | i64 | fixed-point |
-| expiry_ts_us | i64 | |
-| bid_px_int | i64 | fixed-point |
-| ask_px_int | i64 | fixed-point |
-| bid_sz_int | i64 | fixed-point |
-| ask_sz_int | i64 | fixed-point |
-| mark_px_int | i64 | fixed-point (nullable) |
-| underlying_px_int | i64 | fixed-point (nullable) |
-| iv | f64 | implied volatility |
-| mark_iv | f64 | mark implied volatility (nullable) |
-| delta | f64 | Greeks |
-| gamma | f64 | Greeks |
-| vega | f64 | Greeks |
-| theta | f64 | Greeks |
-| rho | f64 | Greeks (nullable) |
-| open_interest | f64 | nullable |
-| file_id | i32 | lineage tracking |
-| file_line_number | i32 | lineage tracking |
-
----
-
-### 2.9 `silver.kline_1h`
-
-Vendor-provided 1h OHLCV bars from Binance public data (Spot + USD-M futures).
-
-**Source:** Binance public data `klines`
-**Partitioned by:** `["exchange", "date"]`
-
-| Column | Type | Notes |
-|---|---:|---|
-| date | date | derived from `ts_bucket_start_us` in UTC |
-| exchange | string | partitioned by (not stored in Parquet files) |
-| exchange_id | i16 | |
-| symbol_id | i64 | |
-| ts_bucket_start_us | i64 | bar open time (µs since epoch) |
-| ts_bucket_end_us | i64 | bar close time (µs since epoch) |
-| open_px_int | i64 | fixed-point (encoded with `profile.price`) |
-| high_px_int | i64 | fixed-point (encoded with `profile.price`) |
-| low_px_int | i64 | fixed-point (encoded with `profile.price`) |
-| close_px_int | i64 | fixed-point (encoded with `profile.price`) |
-| volume_qty_int | i64 | base asset volume (fixed-point, encoded with `profile.amount`) |
-| quote_volume_int | i64 | quote asset volume (fixed-point, encoded with `profile.quote_vol`) |
-| trade_count | i64 | number of trades in bar |
-| taker_buy_base_qty_int | i64 | taker buy base volume (fixed-point, encoded with `profile.amount`) |
-| taker_buy_quote_qty_int | i64 | taker buy quote volume (fixed-point, encoded with `profile.quote_vol`) |
-| file_id | i32 | lineage tracking |
-| file_line_number | i32 | lineage tracking |
-
-**Fixed-Point Encoding:**
-- **Price fields** (`open_px_int`, `high_px_int`, `low_px_int`, `close_px_int`): Encoded as `round(price / profile.price)`
-- **Base quantity fields** (`volume_qty_int`, `taker_buy_base_qty_int`): Encoded as `round(quantity / profile.amount)`
-- **Quote volume fields** (`quote_volume_int`, `taker_buy_quote_qty_int`): Encoded with `profile.quote_vol` — a dedicated scalar for quote volumes
-  - Example (crypto profile): `price=1e-9`, `amount=1e-9`, `quote_vol=1e-6`
-- **Decoding:** Resolve the exchange's scalar profile, then multiply: `price_px = px_int × profile.price`
-- No `dim_symbol` join needed for encoding/decoding — profiles are resolved by exchange name
-
-**Notes:**
-- Interval-specific tables are used (e.g., `silver.kline_1h`); additional intervals
-  should be added as separate tables (e.g., `silver.kline_4h`).
-- Binance Spot timestamps switch to microseconds on 2025-01-01; ingestion normalizes
-  all timestamps to microseconds.
-- **Schema Version:** All numeric fields now use fixed-point integer encoding for complete determinism and storage efficiency (~20-30% better compression vs Float64).
-
----
-
-## 3. Gold Tables
-
-Gold tables are derived from Silver tables and optimized for specific research workflows. They are reproducible from Silver and versioned.
-
-### 3.2 `gold.tob_quotes`
-
-Top-of-book quotes fast path (if treated as derived table).
-
-**Source:** Derived from `silver.quotes`
-**Partitioned by:** `["exchange", "date"]`
-
-Same schema as `silver.quotes`.
-
----
-
-### 3.4 `gold.reflexivity_bars`
-
-Dollar-Volume bars (Notional Bars) optimized for Regime Detection. These bars align the "Driver" (Perpetual Trades) with the "Truth Serum" (Spot Trades) and "Market State" (OI, Funding) into a single statistically synchronized timeline.
-
-**Source:** Derived from `silver.trades` (Perp & Spot) and `silver.derivative_ticker`.
-**Partitioned by:** `["exchange", "date"]` (Partitioned by the Perpetual's exchange)
-
-| Column | Type | Notes |
-|---|---:|---|
-| date | date | |
-| exchange | string | |
-| exchange_id | i16 | |
-| symbol_id | i64 | Perpetual Symbol ID |
-| spot_symbol_id | i64 | Associated Spot Symbol ID used for validation |
-| open_ts | i64 | Bar start timestamp (µs) |
-| close_ts | i64 | Bar end timestamp (µs) |
-| open | f64 | Perpetual Price |
-| high | f64 | Perpetual Price |
-| low | f64 | Perpetual Price |
-| close | f64 | Perpetual Price |
-| perp_volume | f64 | Total Notional USD traded on Perp |
-| spot_volume | f64 | Total Notional USD traded on Spot (during same interval) |
-| speculation_ratio | f64 | `perp_volume / (spot_volume + 1.0)` |
-| duration_sec | f64 | Bar duration in seconds |
-| oi_close | f64 | Open Interest at `close_ts` (from `derivative_ticker`) |
-| funding_rate | f64 | Funding Rate at `close_ts` (from `derivative_ticker`) |
-| bar_id | i64 | Cumulative Bar Index |
-| tick_count | i32 | Number of perp trades in bar |
-
-**Logic:**
-- Bars are generated based on **Perpetual Volume Threshold** (e.g., every $10M traded).
-- **Spot Volume** is aggregated via a "sidecar join" over the exact time window of the bar.
-- **State Variables** (OI, Funding) are as-of joined from `silver.derivative_ticker` at `close_ts`.
-
----
-
-### 3.6 `gold.options_surface_grid`
-
-Options surface snapshots on a time grid for efficient "entire surface at time t" queries.
-
-**Source:** Derived from `silver.options_chain`
-**Partitioned by:** `["exchange", "date"]`
-
-**Time Grid:** Choose a time grid (e.g., 1s or 100ms). For each grid timestamp, take last-known as-of values per option contract.
-
-This makes "entire surface at time t" queries cheap and deterministic.
-
----
-
-## 4. Common Patterns
-
-### 4.0 Naming Conventions
-
-We use consistent suffixes to make storage vs decoded columns obvious:
-
-- `*_px_int`: fixed-point **price** stored as `i64` (use `px_int` for single-price tables)
-- `*_px`: decoded **price** as `f64` (not stored; produced by decode helpers)
-- `*_qty_int` / `*_qty`: fixed-point **quantity** (where applicable)
-- `*_sz_int` / `*_sz`: fixed-point **size** for quotes/book snapshots
-
-Examples:
-- Trades: `px_int` + `qty_int` → decoded to `price_px` + `qty`
-- Quotes: `bid_px_int`/`ask_px_int` + `bid_sz_int`/`ask_sz_int` → decoded to `bid_px`/`ask_px` + `bid_sz`/`ask_sz`
-- Book snapshots: `bids_px_int`/`asks_px_int` + `bids_sz_int`/`asks_sz_int` → decoded to `bids_px`/`asks_px` + `bids_sz`/`asks_sz`
-
-### 4.1 Fixed-Point Encoding
-
-Prices and quantities are stored as integers (`i64`) for compression and exact precision.
-Encoding uses **per-asset-class scalar profiles** defined in `pointline/encoding.py`.
-
-**Scalar Profiles:**
-
-| Profile | price | amount | rate | quote_vol |
-|---------|-------|--------|------|-----------|
-| `crypto` | 1e-9 | 1e-9 | 1e-12 | 1e-6 |
-| `cn-equity` | 1e-4 | 1.0 | 1e-8 | 1e-4 |
-
-**Resolution:** `exchange` → `config.get_exchange_metadata()` → `asset_class` → profile
-
-**Encoding Formula:**
-- `px_int = round(price / profile.price)`
-- `qty_int = round(qty / profile.amount)`
-
-**Decoding Formula:**
-- `price = px_int * profile.price`
-- `qty = qty_int * profile.amount`
-
-**Key Properties:**
-- Scalars are a property of the **asset class**, not the instrument — immutable once data is written
-- No `dim_symbol` join needed for encoding or decoding — only the exchange name is required
-- `tick_size` and `lot_size` in `dim_symbol` are exchange order-validation rules, NOT encoding scalars
-- Log returns and ratio-based features (spread_bps, realized_volatility) are scale-invariant and can operate directly on integer columns
-
-**Storage:**
-- `px_int`, `qty_int` (required, stored as `i64`)
-- Decoded floats use `price_px`, `qty` (derived, not stored)
-
-**Python API:**
-```python
-from pointline.encoding import get_profile, encode_price, decode_price
-
-profile = get_profile("binance-futures")  # → crypto profile
-# Encode: df.select(encode_price("price_px", profile).alias("px_int"))
-# Decode: df.select(decode_price("px_int", profile).alias("price_px"))
-```
-
----
-
-### 4.2 Common Columns
-
-Most Silver tables include these standard columns:
-
-| Column | Type | Description |
-|---|---|---|
-| `date` | date | Partition key, derived from `ts_local_us` in UTC |
-| `exchange` | string | Partition key (not stored in Parquet, reconstructed from directory) |
-| `exchange_id` | i16 | Dictionary-encoded exchange ID for joins |
-| `symbol_id` | i64 | Stable identifier from `dim_symbol` |
-| `ts_local_us` | i64 | Primary replay timeline (arrival time) |
-| `ts_exch_us` | i64 | Exchange time if available |
-| `file_id` | i32 | Lineage tracking (join with `ingest_manifest`) |
-| `file_line_number` | i32 | Lineage tracking (deterministic ordering) |
-
-**Stable Ordering Key:** `(exchange_id, symbol_id, date, ts_local_us, file_id, file_line_number)`
-
----
-
-### 4.3 Partitioning Strategy
-
-**Primary Partitioning:**
-- `exchange` (string)
-- `date` (date, daily partitions, derived from `ts_local_us` in UTC)
-
-**Path Structure:**
-```
-/lake/silver/<table_name>/exchange=<exchange>/date=<date>/part-*.parquet
-```
-
-**Do NOT partition by `symbol`:**
-- High-cardinality partitioning creates too many tiny files and metadata overhead in Delta Lake.
-- Instead, rely on **Z-Ordering** (or local sorting) within the daily partition to cluster data by `symbol_id`.
-
-**Data Organization inside partitions:**
-- **Z-Order / Cluster by:** `(symbol_id, ts_local_us)`
-- or **Sort by:** `(symbol_id, ts_local_us, file_id, file_line_number)`
-
-This boosts pruning for specific symbols without creating thousands of tiny partition directories.
-
-**Handling Massive Universes (e.g., Options):**
-For datasets like `options_chain` where a single day is massive:
-- The `exchange/date` strategy still holds.
-- Delta Lake will automatically split the data into multiple files (e.g., 1GB each) within that folder.
-- **Critical:** Run `OPTIMIZE ... ZORDER BY (symbol_id)` (or underlying/strike) after writing. This ensures that all rows for a specific contract are co-located in the same file(s), allowing the reader to skip 99% of the data.
-
----
-
-### 4.4 Type Conventions
-
-**Integer Type Limitations:**
-Delta Lake (via Parquet) does not support unsigned integer types `UInt16` and `UInt32`. These are automatically converted to signed types (`Int16` and `Int32`) when written.
-
-- Use `Int16` instead of `UInt16` for `exchange_id`
-- Use `Int32` instead of `UInt32` for `file_id`, `file_line_number`, `flags`
-- Use `Int64` for `symbol_id` to match `dim_symbol`
-- `UInt8` is supported and maps to TINYINT (use for `side`, `asset_type`)
-
-**Timestamp Units:**
-- Store `*_us` (microseconds) as `i64` consistently
-- Convert to ns only if you truly need it (crypto feeds are often µs anyway)
-
-**ID Dictionaries:**
-- `exchange_id`: i16
-- `symbol_id`: i64
-
----
-
-## 5. Quick Reference
-
-### Table Catalog
-
-| Table | Layer | Partitions | Key Columns |
-|---|---|---|---|
-| `dim_symbol` | Silver (Reference) | none | `symbol_id`, `exchange_id`, `exchange_symbol`, validity range |
-| `ingest_manifest` | Silver (Reference) | none | `vendor`, `data_type`, `date`, `status`, `bronze_file_name` |
-| `book_snapshot_25` | Silver | `exchange`, `date` | `ts_local_us`, `symbol_id`, `bids_px_int`, `asks_px_int` |
-| `trades` | Silver | `exchange`, `date` | `ts_local_us`, `symbol_id`, `px_int`, `qty_int` |
-| `quotes` | Silver | `exchange`, `date` | `ts_local_us`, `symbol_id`, `bid_px_int`, `ask_px_int` |
-| `book_ticker` | Silver | `exchange`, `date` | `ts_local_us`, `symbol_id`, `bid_px_int`, `ask_px_int` |
-| `derivative_ticker` | Silver | `exchange`, `date` | `ts_local_us`, `symbol_id`, `mark_px_int`, `funding_rate_int` |
-| `liquidations` | Silver | `exchange`, `date` | `ts_local_us`, `symbol_id`, `px_int`, `qty_int` |
-| `options_chain` | Silver | `exchange`, `date` | `ts_local_us`, `underlying_symbol_id`, `option_symbol_id` |
-| `kline_1h` | Silver | `exchange`, `date` | `ts_bucket_start_us`, `symbol_id`, OHLCV |
-| `tob_quotes` | Gold | `exchange`, `date` | Fast path for top-of-book |
-| `reflexivity_bars` | Gold | `exchange`, `date` | Dollar-bars with Spot/OI/Funding context |
-| `options_surface_grid` | Gold | `exchange`, `date` | Time-gridded options surface |
-
----
-
-For design rationale, ETL pipeline details, and architecture decisions, see [Architecture Design](architecture/design.md).
+This document is synchronized with the live code schema registry.
+
+Authoritative schema definitions live in:
+- `pointline/schema_registry.py`
+- table modules in `pointline/tables/`, `pointline/dim_symbol.py`, and `pointline/io/delta_manifest_repo.py`
+
+## Table Registry
+
+| Table | Lake Path | Partitioned By | has_date (registry) | has_date (config) | Columns |
+|---|---|---|---:|---:|---:|
+| `dim_symbol` | `silver/dim_symbol` | `` | False | False | 17 |
+| `stock_basic_cn` | `silver/stock_basic_cn` | `` | False | False | 21 |
+| `dim_asset_stats` | `silver/dim_asset_stats` | `` | True | True | 11 |
+| `ingest_manifest` | `silver/ingest_manifest` | `` | True | True | 19 |
+| `validation_log` | `silver/validation_log` | `` | True | True | 19 |
+| `dim_exchange` | `silver/dim_exchange` | `` | False | False | 6 |
+| `dim_trading_calendar` | `silver/dim_trading_calendar` | `` | True | True | 6 |
+| `dq_summary` | `silver/dq_summary` | `` | True | True | 14 |
+| `trades` | `silver/trades` | `exchange, date` | True | True | 15 |
+| `quotes` | `silver/quotes` | `exchange, date` | True | True | 13 |
+| `book_snapshot_25` | `silver/book_snapshot_25` | `exchange, date` | True | True | 11 |
+| `derivative_ticker` | `silver/derivative_ticker` | `exchange, date` | True | True | 14 |
+| `liquidations` | `silver/liquidations` | `exchange, date` | True | True | 11 |
+| `options_chain` | `silver/options_chain` | `exchange, date` | True | True | 26 |
+| `kline_1h` | `silver/kline_1h` | `exchange, date` | True | True | 16 |
+| `kline_1d` | `silver/kline_1d` | `exchange, date` | True | True | 16 |
+| `l3_orders` | `silver/l3_orders` | `exchange, date` | True | True | 13 |
+| `l3_ticks` | `silver/l3_ticks` | `exchange, date` | True | True | 14 |
+
+## Reference And Metadata Tables
+
+### `dim_symbol`
+
+- Storage path: `silver/dim_symbol`
+- Partition columns: `[]`
+- Has date column: `False`
+
+| Column | Type |
+|---|---|
+| `symbol_id` | `Int64` |
+| `exchange_id` | `Int16` |
+| `exchange` | `String` |
+| `exchange_symbol` | `String` |
+| `base_asset` | `String` |
+| `quote_asset` | `String` |
+| `asset_type` | `UInt8` |
+| `tick_size` | `Float64` |
+| `lot_size` | `Float64` |
+| `contract_size` | `Float64` |
+| `expiry_ts_us` | `Int64` |
+| `underlying_symbol_id` | `Int64` |
+| `strike` | `Float64` |
+| `put_call` | `String` |
+| `valid_from_ts` | `Int64` |
+| `valid_until_ts` | `Int64` |
+| `is_current` | `Boolean` |
+
+### `stock_basic_cn`
+
+- Storage path: `silver/stock_basic_cn`
+- Partition columns: `[]`
+- Has date column: `False`
+
+| Column | Type |
+|---|---|
+| `ts_code` | `String` |
+| `symbol` | `String` |
+| `name` | `String` |
+| `area` | `String` |
+| `industry` | `String` |
+| `fullname` | `String` |
+| `enname` | `String` |
+| `cnspell` | `String` |
+| `market` | `String` |
+| `exchange` | `String` |
+| `curr_type` | `String` |
+| `list_status` | `String` |
+| `list_date` | `Date` |
+| `delist_date` | `Date` |
+| `is_hs` | `String` |
+| `act_name` | `String` |
+| `act_ent_type` | `String` |
+| `exchange_id` | `Int16` |
+| `exchange_symbol` | `String` |
+| `as_of_date` | `Date` |
+| `ingest_ts_us` | `Int64` |
+
+### `dim_asset_stats`
+
+- Storage path: `silver/dim_asset_stats`
+- Partition columns: `[]`
+- Has date column: `True`
+
+| Column | Type |
+|---|---|
+| `base_asset` | `String` |
+| `date` | `Date` |
+| `coingecko_coin_id` | `String` |
+| `circulating_supply` | `Float64` |
+| `total_supply` | `Float64` |
+| `max_supply` | `Float64` |
+| `market_cap_usd` | `Float64` |
+| `fully_diluted_valuation_usd` | `Float64` |
+| `updated_at_ts` | `Int64` |
+| `fetched_at_ts` | `Int64` |
+| `source` | `String` |
+
+### `ingest_manifest`
+
+- Storage path: `silver/ingest_manifest`
+- Partition columns: `[]`
+- Has date column: `True`
+
+| Column | Type |
+|---|---|
+| `file_id` | `Int32` |
+| `vendor` | `String` |
+| `data_type` | `String` |
+| `bronze_file_name` | `String` |
+| `sha256` | `String` |
+| `file_size_bytes` | `Int64` |
+| `last_modified_ts` | `Int64` |
+| `date` | `Date` |
+| `status` | `String` |
+| `created_at_us` | `Int64` |
+| `processed_at_us` | `Int64` |
+| `row_count` | `Int64` |
+| `ts_local_min_us` | `Int64` |
+| `ts_local_max_us` | `Int64` |
+| `error_message` | `String` |
+| `scd2_new` | `Int32` |
+| `scd2_modified` | `Int32` |
+| `scd2_delisted` | `Int32` |
+| `scd2_unchanged` | `Int32` |
+
+### `validation_log`
+
+- Storage path: `silver/validation_log`
+- Partition columns: `[]`
+- Has date column: `True`
+
+| Column | Type |
+|---|---|
+| `validation_id` | `Int64` |
+| `file_id` | `Int32` |
+| `table_name` | `String` |
+| `validated_at` | `Int64` |
+| `validation_status` | `String` |
+| `expected_rows` | `Int64` |
+| `ingested_rows` | `Int64` |
+| `missing_rows` | `Int64` |
+| `extra_rows` | `Int64` |
+| `mismatched_rows` | `Int64` |
+| `mismatch_sample` | `String` |
+| `validation_duration_ms` | `Int64` |
+| `vendor` | `String` |
+| `data_type` | `String` |
+| `exchange` | `String` |
+| `date` | `Date` |
+| `filtered_row_count` | `Int64` |
+| `filtered_symbol_count` | `Int64` |
+| `error_message` | `String` |
+
+### `dim_exchange`
+
+- Storage path: `silver/dim_exchange`
+- Partition columns: `[]`
+- Has date column: `False`
+
+| Column | Type |
+|---|---|
+| `exchange` | `String` |
+| `exchange_id` | `Int16` |
+| `asset_class` | `String` |
+| `timezone` | `String` |
+| `description` | `String` |
+| `is_active` | `Boolean` |
+
+### `dim_trading_calendar`
+
+- Storage path: `silver/dim_trading_calendar`
+- Partition columns: `[]`
+- Has date column: `True`
+
+| Column | Type |
+|---|---|
+| `exchange` | `String` |
+| `date` | `Date` |
+| `is_trading_day` | `Boolean` |
+| `session_type` | `String` |
+| `open_time_us` | `Int64` |
+| `close_time_us` | `Int64` |
+
+### `dq_summary`
+
+- Storage path: `silver/dq_summary`
+- Partition columns: `[]`
+- Has date column: `True`
+
+| Column | Type |
+|---|---|
+| `run_id` | `Int64` |
+| `table_name` | `String` |
+| `date` | `Date` |
+| `row_count` | `Int64` |
+| `null_counts` | `String` |
+| `duplicate_rows` | `Int64` |
+| `min_ts_us` | `Int64` |
+| `max_ts_us` | `Int64` |
+| `freshness_lag_sec` | `Int64` |
+| `status` | `String` |
+| `issue_counts` | `String` |
+| `profile_stats` | `String` |
+| `validated_at` | `Int64` |
+| `validation_duration_ms` | `Int64` |
+
+## Silver Market Data Tables
+
+### `trades`
+
+- Storage path: `silver/trades`
+- Partition columns: `['exchange', 'date']`
+- Has date column: `True`
+
+| Column | Type |
+|---|---|
+| `date` | `Date` |
+| `exchange` | `String` |
+| `symbol` | `String` |
+| `ts_local_us` | `Int64` |
+| `ts_exch_us` | `Int64` |
+| `trade_id` | `String` |
+| `side` | `UInt8` |
+| `px_int` | `Int64` |
+| `qty_int` | `Int64` |
+| `flags` | `Int32` |
+| `conditions` | `Int32` |
+| `venue_id` | `Int16` |
+| `sequence_number` | `Int64` |
+| `file_id` | `Int32` |
+| `file_line_number` | `Int32` |
+
+### `quotes`
+
+- Storage path: `silver/quotes`
+- Partition columns: `['exchange', 'date']`
+- Has date column: `True`
+
+| Column | Type |
+|---|---|
+| `date` | `Date` |
+| `exchange` | `String` |
+| `symbol` | `String` |
+| `ts_local_us` | `Int64` |
+| `ts_exch_us` | `Int64` |
+| `bid_px_int` | `Int64` |
+| `bid_sz_int` | `Int64` |
+| `ask_px_int` | `Int64` |
+| `ask_sz_int` | `Int64` |
+| `conditions` | `Int32` |
+| `venue_id` | `Int16` |
+| `file_id` | `Int32` |
+| `file_line_number` | `Int32` |
+
+### `book_snapshot_25`
+
+- Storage path: `silver/book_snapshot_25`
+- Partition columns: `['exchange', 'date']`
+- Has date column: `True`
+
+| Column | Type |
+|---|---|
+| `date` | `Date` |
+| `exchange` | `String` |
+| `symbol` | `String` |
+| `ts_local_us` | `Int64` |
+| `ts_exch_us` | `Int64` |
+| `bids_px_int` | `List(Int64)` |
+| `bids_sz_int` | `List(Int64)` |
+| `asks_px_int` | `List(Int64)` |
+| `asks_sz_int` | `List(Int64)` |
+| `file_id` | `Int32` |
+| `file_line_number` | `Int32` |
+
+### `derivative_ticker`
+
+- Storage path: `silver/derivative_ticker`
+- Partition columns: `['exchange', 'date']`
+- Has date column: `True`
+
+| Column | Type |
+|---|---|
+| `date` | `Date` |
+| `exchange` | `String` |
+| `symbol` | `String` |
+| `ts_local_us` | `Int64` |
+| `ts_exch_us` | `Int64` |
+| `mark_px_int` | `Int64` |
+| `index_px_int` | `Int64` |
+| `last_px_int` | `Int64` |
+| `funding_rate_int` | `Int64` |
+| `predicted_funding_rate_int` | `Int64` |
+| `funding_ts_us` | `Int64` |
+| `oi_int` | `Int64` |
+| `file_id` | `Int32` |
+| `file_line_number` | `Int32` |
+
+### `liquidations`
+
+- Storage path: `silver/liquidations`
+- Partition columns: `['exchange', 'date']`
+- Has date column: `True`
+
+| Column | Type |
+|---|---|
+| `date` | `Date` |
+| `exchange` | `String` |
+| `symbol` | `String` |
+| `ts_local_us` | `Int64` |
+| `ts_exch_us` | `Int64` |
+| `liq_id` | `String` |
+| `side` | `UInt8` |
+| `px_int` | `Int64` |
+| `qty_int` | `Int64` |
+| `file_id` | `Int32` |
+| `file_line_number` | `Int32` |
+
+### `options_chain`
+
+- Storage path: `silver/options_chain`
+- Partition columns: `['exchange', 'date']`
+- Has date column: `True`
+
+| Column | Type |
+|---|---|
+| `date` | `Date` |
+| `exchange` | `String` |
+| `underlying_symbol` | `String` |
+| `symbol` | `String` |
+| `underlying_index` | `String` |
+| `ts_local_us` | `Int64` |
+| `ts_exch_us` | `Int64` |
+| `option_type` | `UInt8` |
+| `strike_int` | `Int64` |
+| `expiry_ts_us` | `Int64` |
+| `bid_px_int` | `Int64` |
+| `ask_px_int` | `Int64` |
+| `bid_sz_int` | `Int64` |
+| `ask_sz_int` | `Int64` |
+| `mark_px_int` | `Int64` |
+| `underlying_px_int` | `Int64` |
+| `iv` | `Float64` |
+| `mark_iv` | `Float64` |
+| `delta` | `Float64` |
+| `gamma` | `Float64` |
+| `vega` | `Float64` |
+| `theta` | `Float64` |
+| `rho` | `Float64` |
+| `open_interest` | `Float64` |
+| `file_id` | `Int32` |
+| `file_line_number` | `Int32` |
+
+### `kline_1h`
+
+- Storage path: `silver/kline_1h`
+- Partition columns: `['exchange', 'date']`
+- Has date column: `True`
+
+| Column | Type |
+|---|---|
+| `date` | `Date` |
+| `exchange` | `String` |
+| `symbol` | `String` |
+| `ts_bucket_start_us` | `Int64` |
+| `ts_bucket_end_us` | `Int64` |
+| `open_px_int` | `Int64` |
+| `high_px_int` | `Int64` |
+| `low_px_int` | `Int64` |
+| `close_px_int` | `Int64` |
+| `volume_qty_int` | `Int64` |
+| `quote_volume_int` | `Int64` |
+| `trade_count` | `Int64` |
+| `taker_buy_base_qty_int` | `Int64` |
+| `taker_buy_quote_qty_int` | `Int64` |
+| `file_id` | `Int32` |
+| `file_line_number` | `Int32` |
+
+### `kline_1d`
+
+- Storage path: `silver/kline_1d`
+- Partition columns: `['exchange', 'date']`
+- Has date column: `True`
+
+| Column | Type |
+|---|---|
+| `date` | `Date` |
+| `exchange` | `String` |
+| `symbol` | `String` |
+| `ts_bucket_start_us` | `Int64` |
+| `ts_bucket_end_us` | `Int64` |
+| `open_px_int` | `Int64` |
+| `high_px_int` | `Int64` |
+| `low_px_int` | `Int64` |
+| `close_px_int` | `Int64` |
+| `volume_qty_int` | `Int64` |
+| `quote_volume_int` | `Int64` |
+| `trade_count` | `Int64` |
+| `taker_buy_base_qty_int` | `Int64` |
+| `taker_buy_quote_qty_int` | `Int64` |
+| `file_id` | `Int32` |
+| `file_line_number` | `Int32` |
+
+### `l3_orders`
+
+- Storage path: `silver/l3_orders`
+- Partition columns: `['exchange', 'date']`
+- Has date column: `True`
+
+| Column | Type |
+|---|---|
+| `date` | `Date` |
+| `exchange` | `String` |
+| `symbol` | `String` |
+| `ts_local_us` | `Int64` |
+| `appl_seq_num` | `Int64` |
+| `side` | `UInt8` |
+| `ord_type` | `UInt8` |
+| `px_int` | `Int64` |
+| `order_qty_int` | `Int64` |
+| `channel_no` | `Int32` |
+| `trading_phase` | `UInt8` |
+| `file_id` | `Int32` |
+| `file_line_number` | `Int32` |
+
+### `l3_ticks`
+
+- Storage path: `silver/l3_ticks`
+- Partition columns: `['exchange', 'date']`
+- Has date column: `True`
+
+| Column | Type |
+|---|---|
+| `date` | `Date` |
+| `exchange` | `String` |
+| `symbol` | `String` |
+| `ts_local_us` | `Int64` |
+| `appl_seq_num` | `Int64` |
+| `bid_appl_seq_num` | `Int64` |
+| `offer_appl_seq_num` | `Int64` |
+| `exec_type` | `UInt8` |
+| `px_int` | `Int64` |
+| `qty_int` | `Int64` |
+| `channel_no` | `Int32` |
+| `trading_phase` | `UInt8` |
+| `file_id` | `Int32` |
+| `file_line_number` | `Int32` |
+
+## Notes
+
+- Market-data tables currently use `symbol` (string) in live schemas.
+- `ingest_manifest` includes SCD2 audit fields: `scd2_new`, `scd2_modified`, `scd2_delisted`, `scd2_unchanged`.
+- Time columns with `_us` suffix are microseconds.

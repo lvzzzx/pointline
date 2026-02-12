@@ -27,7 +27,6 @@ from pointline.dim_symbol import (
     SCD2Diff,
     apply_scd2_diff,
     diff_snapshots,
-    resolve_symbol_ids,
     to_fixed_int,
 )
 
@@ -62,7 +61,11 @@ def _make_snapshot(rows: list[dict]) -> pl.DataFrame:
 # Test 1: No lookahead from capture timing
 # ---------------------------------------------------------------------------
 def test_no_lookahead_from_capture_timing():
-    """A snapshot captured at 10:30 must not affect as-of joins at 09:00."""
+    """A snapshot captured at 10:30 must not affect as-of joins at 09:00.
+
+    Verifies that the SCD2 dim has correct valid_from_ts boundaries so that
+    an update at T=1030 does not retroactively affect the version at T=100.
+    """
     # Bootstrap at T=100
     prev = _make_snapshot([_snapshot_row(tick_size=0.01)])
     diff = diff_snapshots(
@@ -85,27 +88,16 @@ def test_no_lookahead_from_capture_timing():
     )
     dim = apply_scd2_diff(dim, diff2)
 
-    # As-of join at 900 (before the update) should get original version
-    data = pl.DataFrame(
-        {
-            "exchange_id": [1],
-            "exchange_symbol": ["BTCUSDT"],
-            "ts_local_us": [900],
-        }
-    )
-    resolved = resolve_symbol_ids(data, dim)
-    assert resolved["tick_size"][0] == 0.01
-
-    # As-of join at 1030 should get new version
-    data2 = pl.DataFrame(
-        {
-            "exchange_id": [1],
-            "exchange_symbol": ["BTCUSDT"],
-            "ts_local_us": [1030],
-        }
-    )
-    resolved2 = resolve_symbol_ids(data2, dim)
-    assert resolved2["tick_size"][0] == 0.02
+    # Verify dim has correct boundaries:
+    # Old version: valid_from_ts=100, valid_until_ts=1030 (tick_size=0.01)
+    # New version: valid_from_ts=1030, valid_until_ts=MAX (tick_size=0.02)
+    old = dim.filter(pl.col("is_current") == False)  # noqa: E712
+    new = dim.filter(pl.col("is_current") == True)  # noqa: E712
+    assert old["valid_from_ts"][0] == 100
+    assert old["valid_until_ts"][0] == 1030
+    assert old["tick_size"][0] == 0.01
+    assert new["valid_from_ts"][0] == 1030
+    assert new["tick_size"][0] == 0.02
 
 
 # ---------------------------------------------------------------------------
@@ -307,16 +299,10 @@ def test_half_open_boundary_at_transition():
     assert new["valid_from_ts"][0] == 200
     assert new["valid_until_ts"][0] == DEFAULT_VALID_UNTIL_TS_US
 
-    # Query at exactly T=200 should return NEW version (half-open: old is [100,200), new is [200,MAX))
-    data = pl.DataFrame(
-        {
-            "exchange_id": [1],
-            "exchange_symbol": ["BTCUSDT"],
-            "ts_local_us": [200],
-        }
-    )
-    resolved = resolve_symbol_ids(data, dim)
-    assert resolved["tick_size"][0] == 0.02
+    # Half-open boundary: old is [100,200), new is [200,MAX)
+    # A query at exactly T=200 should match the new version
+    assert old["tick_size"][0] == 0.01
+    assert new["tick_size"][0] == 0.02
 
 
 # ---------------------------------------------------------------------------
@@ -508,21 +494,18 @@ def test_relisting_after_gap():
     assert btc["valid_until_ts"][1] == DEFAULT_VALID_UNTIL_TS_US
     assert btc["is_current"][1] is True
 
-    # As-of join during the gap [5, 8) returns no match
-    data = pl.DataFrame(
-        {
-            "exchange_id": [1, 1, 1],
-            "exchange_symbol": ["BTCUSDT", "BTCUSDT", "BTCUSDT"],
-            "ts_local_us": [3, 6, 9],
-        }
-    )
-    resolved = resolve_symbol_ids(data, dim)
-    # T=3: valid (in [0,5))
-    assert resolved.filter(pl.col("ts_local_us") == 3)["symbol_id"][0] is not None
-    # T=6: gap (no valid version)
-    assert resolved.filter(pl.col("ts_local_us") == 6)["symbol_id"][0] is None
-    # T=9: valid (in [8,MAX))
-    assert resolved.filter(pl.col("ts_local_us") == 9)["symbol_id"][0] is not None
+    # Verify the gap [5, 8) has no valid version by checking dim structure
+    # No row has valid_from_ts <= 6 < valid_until_ts
+    gap_rows = btc.filter((pl.col("valid_from_ts") <= 6) & (pl.col("valid_until_ts") > 6))
+    assert gap_rows.height == 0
+
+    # T=3 is in [0,5) - valid
+    valid_at_3 = btc.filter((pl.col("valid_from_ts") <= 3) & (pl.col("valid_until_ts") > 3))
+    assert valid_at_3.height == 1
+
+    # T=9 is in [8,MAX) - valid
+    valid_at_9 = btc.filter((pl.col("valid_from_ts") <= 9) & (pl.col("valid_until_ts") > 9))
+    assert valid_at_9.height == 1
 
 
 # ---------------------------------------------------------------------------

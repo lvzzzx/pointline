@@ -258,4 +258,4 @@ def required_validation_log_columns() -> tuple[str, ...]:
 # ---------------------------------------------------------------------------
 from pointline.schema_registry import register_schema as _register_schema  # noqa: E402
 
-_register_schema("validation_log", VALIDATION_LOG_SCHEMA)
+_register_schema("validation_log", VALIDATION_LOG_SCHEMA, has_date=True)

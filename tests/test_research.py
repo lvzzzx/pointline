@@ -13,22 +13,19 @@ from pointline.research import (
 )
 
 
-@patch("pointline.research.core.resolve_symbols")
 @patch("pointline.research.core.pl.scan_delta")
 @patch("pointline.research.core.get_table_path")
-def test_scan_table_filters(mock_get_path, mock_scan_delta, mock_resolve_symbols):
+def test_scan_table_filters(mock_get_path, mock_scan_delta):
     # Setup mocks
     mock_get_path.return_value = "/fake/path"
     mock_lf = MagicMock(spec=pl.LazyFrame)
     mock_scan_delta.return_value = mock_lf
 
-    mock_resolve_symbols.return_value = ["binance"]
-
     # Configure mock_lf to return itself on filter/select for chaining
     mock_lf.filter.return_value = mock_lf
     mock_lf.select.return_value = mock_lf
     mock_lf.schema = {
-        "symbol_id": pl.Int64,
+        "symbol": pl.Utf8,
         "exchange": pl.Utf8,
         "date": pl.Date,
         "ts_local_us": pl.Int64,
@@ -37,7 +34,8 @@ def test_scan_table_filters(mock_get_path, mock_scan_delta, mock_resolve_symbols
     # Call scan_table
     scan_table(
         "trades",
-        symbol_id=[100, 200],
+        exchange="binance-futures",
+        symbol=["BTCUSDT", "ETHUSDT"],
         start_ts_us=1_700_000_000_000_000,
         end_ts_us=1_700_000_100_000_000,
         columns=["ts_local_us", "px_int"],
@@ -45,25 +43,23 @@ def test_scan_table_filters(mock_get_path, mock_scan_delta, mock_resolve_symbols
 
     # Verify pl.scan_delta was called with the path from get_table_path
     mock_scan_delta.assert_called_once_with("/fake/path")
-    mock_resolve_symbols.assert_called_once_with([100, 200])
 
     # Verify filters were applied
     # Note: The order of filters depends on the implementation of _apply_filters
-    assert mock_lf.filter.call_count == 4  # exchange, symbol_id, date range, time range
+    assert mock_lf.filter.call_count == 4  # exchange, symbol, date range, time range
     mock_lf.select.assert_called_once_with(["ts_local_us", "px_int"])
 
 
-@patch("pointline.research.core.resolve_symbols")
 @patch("pointline.research.core.pl.scan_delta")
 @patch("pointline.research.core.get_table_path")
-def test_scan_table_time_range_prunes_date(mock_get_path, mock_scan_delta, mock_resolve_symbols):
+def test_scan_table_time_range_prunes_date(mock_get_path, mock_scan_delta):
     mock_get_path.return_value = "/fake/path"
     mock_lf = MagicMock(spec=pl.LazyFrame)
     mock_scan_delta.return_value = mock_lf
     mock_lf.filter.return_value = mock_lf
     mock_lf.select.return_value = mock_lf
     mock_lf.schema = {
-        "symbol_id": pl.Int64,
+        "symbol": pl.Utf8,
         "exchange": pl.Utf8,
         "date": pl.Date,
         "ts_local_us": pl.Int64,
@@ -71,14 +67,14 @@ def test_scan_table_time_range_prunes_date(mock_get_path, mock_scan_delta, mock_
 
     scan_table(
         "trades",
-        symbol_id=[100],
+        exchange="binance-futures",
+        symbol="BTCUSDT",
         start_ts_us=1_700_000_000_000_000,
         end_ts_us=1_700_000_100_000_000,
         columns=["ts_local_us", "px_int"],
     )
 
     mock_scan_delta.assert_called_once_with("/fake/path")
-    mock_resolve_symbols.assert_called_once_with([100])
     filter_args = [str(call.args[0]) for call in mock_lf.filter.call_args_list]
     assert any("date" in expr for expr in filter_args)
     assert any("ts_local_us" in expr for expr in filter_args)
@@ -87,10 +83,9 @@ def test_scan_table_time_range_prunes_date(mock_get_path, mock_scan_delta, mock_
 
 def test_list_tables():
     tables = list_tables()
-    table_names = tables["table_name"].to_list()
-    assert "trades" in table_names
-    assert "quotes" in table_names
-    assert "book_snapshot_25" in table_names
+    assert "trades" in tables
+    assert "quotes" in tables
+    assert "book_snapshot_25" in tables
 
 
 @patch("pointline.research.core.scan_table")
@@ -99,7 +94,8 @@ def test_load_trades_lazy(mock_scan_table):
     mock_scan_table.return_value = mock_lf
 
     result = load_trades(
-        symbol_id=[100],
+        exchange="binance-futures",
+        symbol="BTCUSDT",
         start_ts_us=1_700_000_000_000_000,
         end_ts_us=1_700_000_100_000_000,
         lazy=True,
@@ -108,7 +104,8 @@ def test_load_trades_lazy(mock_scan_table):
     assert result == mock_lf
     mock_scan_table.assert_called_once_with(
         "trades",
-        symbol_id=[100],
+        exchange="binance-futures",
+        symbol="BTCUSDT",
         start_ts_us=1_700_000_000_000_000,
         end_ts_us=1_700_000_100_000_000,
         ts_col="ts_local_us",
@@ -119,10 +116,12 @@ def test_load_trades_lazy(mock_scan_table):
 @patch("pointline.research.core.decode_trades")
 @patch("pointline.research.core.read_table")
 def test_load_trades_decoded_keeps_ints_for_requested_columns(mock_read_table, mock_decode_trades):
-    mock_read_table.return_value = pl.DataFrame({"symbol_id": [1], "px_int": [10], "qty_int": [5]})
+    mock_read_table.return_value = pl.DataFrame(
+        {"symbol": ["BTCUSDT"], "px_int": [10], "qty_int": [5]}
+    )
     mock_decode_trades.return_value = pl.DataFrame(
         {
-            "symbol_id": [1],
+            "symbol": ["BTCUSDT"],
             "px_int": [10],
             "qty_int": [5],
             "price_px": [1.0],
@@ -131,10 +130,11 @@ def test_load_trades_decoded_keeps_ints_for_requested_columns(mock_read_table, m
     )
 
     result = load_trades_decoded(
-        symbol_id=1,
+        exchange="binance-futures",
+        symbol="BTCUSDT",
         start_ts_us=1,
         end_ts_us=2,
-        columns=["symbol_id", "px_int"],
+        columns=["symbol", "px_int"],
     )
 
     assert result.shape[0] == 1
@@ -143,13 +143,16 @@ def test_load_trades_decoded_keeps_ints_for_requested_columns(mock_read_table, m
 
 
 def test_load_trades_decoded_lazy_returns_lazyframe():
-    df = pl.DataFrame({"symbol_id": [1], "px_int": [10], "qty_int": [5], "exchange": ["binance"]})
+    df = pl.DataFrame(
+        {"symbol": ["BTCUSDT"], "px_int": [10], "qty_int": [5], "exchange": ["binance"]}
+    )
 
     with patch("pointline.research.core.scan_table") as mock_scan:
         mock_scan.return_value = df.lazy()
 
         result = load_trades_decoded(
-            symbol_id=1,
+            exchange="binance-futures",
+            symbol="BTCUSDT",
             start_ts_us=1,
             end_ts_us=2,
             lazy=True,
@@ -162,8 +165,8 @@ def test_load_trades_decoded_lazy_returns_lazyframe():
         assert collected["qty"][0] == 5 * 1e-9
 
 
-def test_scan_table_requires_symbol_id():
-    with pytest.raises(ValueError, match="symbol_id is required"):
+def test_scan_table_requires_exchange():
+    with pytest.raises(ValueError, match="exchange is required"):
         scan_table(
             "trades",
             start_ts_us=1_700_000_000_000_000,
@@ -173,7 +176,7 @@ def test_scan_table_requires_symbol_id():
 
 def test_scan_table_requires_time_range():
     with pytest.raises(ValueError, match="start_ts_us and end_ts_us are required"):
-        scan_table("trades", symbol_id=[100])
+        scan_table("trades", exchange="binance-futures")
 
 
 # ============================================================================
@@ -266,10 +269,9 @@ def test_normalize_timestamp_with_invalid_type():
         _normalize_timestamp([], "start_ts_us")
 
 
-@patch("pointline.research.core.resolve_symbols")
 @patch("pointline.research.core.pl.scan_delta")
 @patch("pointline.research.core.get_table_path")
-def test_scan_table_accepts_datetime(mock_get_path, mock_scan_delta, mock_resolve_symbols):
+def test_scan_table_accepts_datetime(mock_get_path, mock_scan_delta):
     """Test that scan_table accepts datetime objects."""
     start = datetime(2023, 11, 14, 12, 0, 0, tzinfo=timezone.utc)
     end = datetime(2023, 11, 14, 13, 0, 0, tzinfo=timezone.utc)
@@ -278,10 +280,9 @@ def test_scan_table_accepts_datetime(mock_get_path, mock_scan_delta, mock_resolv
     mock_get_path.return_value = "/fake/path"
     mock_lf = MagicMock(spec=pl.LazyFrame)
     mock_scan_delta.return_value = mock_lf
-    mock_resolve_symbols.return_value = ["binance"]
     mock_lf.filter.return_value = mock_lf
     mock_lf.schema = {
-        "symbol_id": pl.Int64,
+        "symbol": pl.Utf8,
         "exchange": pl.Utf8,
         "date": pl.Date,
         "ts_local_us": pl.Int64,
@@ -290,7 +291,8 @@ def test_scan_table_accepts_datetime(mock_get_path, mock_scan_delta, mock_resolv
     # Should not raise TypeError
     scan_table(
         "trades",
-        symbol_id=101,
+        exchange="binance-futures",
+        symbol="BTCUSDT",
         start_ts_us=start,
         end_ts_us=end,
     )
@@ -299,10 +301,9 @@ def test_scan_table_accepts_datetime(mock_get_path, mock_scan_delta, mock_resolv
     mock_scan_delta.assert_called_once()
 
 
-@patch("pointline.research.core.resolve_symbols")
 @patch("pointline.research.core.pl.scan_delta")
 @patch("pointline.research.core.get_table_path")
-def test_load_trades_with_datetime(mock_get_path, mock_scan_delta, mock_resolve_symbols):
+def test_load_trades_with_datetime(mock_get_path, mock_scan_delta):
     """Test that load_trades works with datetime objects."""
     start = datetime(2023, 11, 14, 12, 0, 0, tzinfo=timezone.utc)
     end = datetime(2023, 11, 14, 13, 0, 0, tzinfo=timezone.utc)
@@ -312,11 +313,10 @@ def test_load_trades_with_datetime(mock_get_path, mock_scan_delta, mock_resolve_
     mock_lf = MagicMock(spec=pl.LazyFrame)
     mock_df = MagicMock(spec=pl.DataFrame)
     mock_scan_delta.return_value = mock_lf
-    mock_resolve_symbols.return_value = ["binance"]
     mock_lf.filter.return_value = mock_lf
     mock_lf.collect.return_value = mock_df
     mock_lf.schema = {
-        "symbol_id": pl.Int64,
+        "symbol": pl.Utf8,
         "exchange": pl.Utf8,
         "date": pl.Date,
         "ts_local_us": pl.Int64,
@@ -324,7 +324,8 @@ def test_load_trades_with_datetime(mock_get_path, mock_scan_delta, mock_resolve_
 
     # Should not raise TypeError
     result = load_trades(
-        symbol_id=101,
+        exchange="binance-futures",
+        symbol="BTCUSDT",
         start_ts_us=start,
         end_ts_us=end,
     )
@@ -332,8 +333,8 @@ def test_load_trades_with_datetime(mock_get_path, mock_scan_delta, mock_resolve_
     assert result == mock_df
 
 
-def test_scan_table_enhanced_error_message_symbol_id():
-    """Test enhanced error message when symbol_id is missing."""
+def test_scan_table_enhanced_error_message_exchange():
+    """Test enhanced error message when exchange is missing."""
     with pytest.raises(ValueError) as exc_info:
         scan_table(
             "trades",
@@ -342,15 +343,13 @@ def test_scan_table_enhanced_error_message_symbol_id():
         )
 
     error_msg = str(exc_info.value)
-    assert "symbol_id is required for partition pruning" in error_msg
-    assert "registry.find_symbol" in error_msg
-    assert "symbol_ids = symbols['symbol_id'].to_list()" in error_msg
+    assert "exchange is required" in error_msg
 
 
 def test_scan_table_enhanced_error_message_timestamps():
     """Test enhanced error message when timestamps are missing."""
     with pytest.raises(ValueError) as exc_info:
-        scan_table("trades", symbol_id=101)
+        scan_table("trades", exchange="binance-futures")
 
     error_msg = str(exc_info.value)
     assert "start_ts_us and end_ts_us are required" in error_msg
@@ -364,7 +363,8 @@ def test_scan_table_enhanced_error_message_invalid_range():
     with pytest.raises(ValueError) as exc_info:
         scan_table(
             "trades",
-            symbol_id=101,
+            exchange="binance-futures",
+            symbol="BTCUSDT",
             start_ts_us=1700003600000000,
             end_ts_us=1700000000000000,  # Earlier than start
         )
@@ -377,16 +377,15 @@ def test_scan_table_enhanced_error_message_invalid_range():
 
 def test_datetime_backwards_compatibility():
     """Test that existing int-based code still works."""
-    # This test verifies backward compatibility
     with (
-        patch("pointline.research.core.resolve_symbols"),
         patch("pointline.research.core.pl.scan_delta"),
         patch("pointline.research.core.get_table_path"),
     ):
         # Old-style API call with ints should still work
         scan_table(
             "trades",
-            symbol_id=101,
+            exchange="binance-futures",
+            symbol="BTCUSDT",
             start_ts_us=1700000000000000,
             end_ts_us=1700003600000000,
         )

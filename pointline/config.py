@@ -130,7 +130,7 @@ TABLE_HAS_DATE = {
     "stock_basic_cn": False,
     "dim_asset_stats": True,
     "ingest_manifest": True,
-    "validation_log": False,
+    "validation_log": True,
     "dq_summary": True,
     "trades": True,
     "quotes": True,

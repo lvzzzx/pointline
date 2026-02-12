@@ -122,7 +122,7 @@ def test_encode_quote_volume_with_profile():
     profile = get_profile(EXCHANGE)
     df = pl.DataFrame(
         {
-            "symbol_id": [101],
+            "symbol": ["BTCUSDT"],
             "open_px": [29000.00],
             "high_px": [29100.00],
             "low_px": [28900.00],
@@ -153,7 +153,7 @@ def test_encode_fixed_point_multi_symbol():
     profile = get_profile(EXCHANGE)
     df = pl.DataFrame(
         {
-            "symbol_id": [101, 102, 103],
+            "symbol": ["BTCUSDT", "ETHUSDT", "SOLUSDT"],
             "open_px": [29000.0, 1800.0, 100.5],
             "high_px": [29100.0, 1850.0, 102.0],
             "low_px": [28900.0, 1750.0, 99.0],
@@ -188,7 +188,7 @@ def test_encode_fixed_point_unknown_exchange():
     """Test encoding raises error for unknown exchange."""
     df = pl.DataFrame(
         {
-            "symbol_id": [101],
+            "symbol": ["BTCUSDT"],
             "open_px": [100.0],
             "high_px": [101.0],
             "low_px": [99.0],
@@ -214,7 +214,7 @@ def test_decode_quote_volume_roundtrip():
     """Verify encode -> decode produces original values (within floating-point precision)."""
     original = pl.DataFrame(
         {
-            "symbol_id": [101, 102],
+            "symbol": ["BTCUSDT", "ETHUSDT"],
             "open_px": [29000.50, 1800.25],
             "high_px": [29100.75, 1850.50],
             "low_px": [28900.25, 1750.10],
@@ -248,7 +248,7 @@ def test_decode_fixed_point_keep_ints():
     """Test decoding with keep_ints=True preserves integer columns."""
     encoded = pl.DataFrame(
         {
-            "symbol_id": [101],
+            "symbol": ["BTCUSDT"],
             "exchange": [EXCHANGE],
             "open_px_int": [2900000],
             "high_px_int": [2910000],
@@ -276,7 +276,7 @@ def test_decode_fixed_point_keep_ints():
 def test_decode_fixed_point_missing_columns():
     """Test decoding raises error when required columns are missing."""
     df = pl.DataFrame(
-        {"symbol_id": [101], "exchange": [EXCHANGE], "open_px_int": [2900000]}
+        {"symbol": ["BTCUSDT"], "exchange": [EXCHANGE], "open_px_int": [2900000]}
     )  # Missing other *_int columns
 
     with pytest.raises(ValueError, match="missing columns"):
@@ -288,7 +288,7 @@ def test_quote_vol_scalar_in_encode_decode():
     profile = get_profile(EXCHANGE)
     df = pl.DataFrame(
         {
-            "symbol_id": [101],
+            "symbol": ["BTCUSDT"],
             "exchange": [EXCHANGE],
             "open_px": [29000.0],
             "high_px": [29000.0],
@@ -325,8 +325,7 @@ def test_validate_klines_basic():
         {
             "date": [date(2021, 1, 1)],
             "exchange": ["binance-futures"],
-            "exchange_id": [2],  # binance-futures = 2
-            "symbol_id": [101],
+            "symbol": ["BTCUSDT"],
             "ts_bucket_start_us": [1609459200000000],
             "ts_bucket_end_us": [1609462799999000],
             "open_px_int": [2900000],
@@ -353,8 +352,7 @@ def test_validate_klines_filters_invalid():
         {
             "date": [date(2021, 1, 1), date(2021, 1, 1)],
             "exchange": ["binance-futures", "binance-futures"],
-            "exchange_id": [2, 2],  # binance-futures = 2
-            "symbol_id": [101, 101],
+            "symbol": ["BTCUSDT", "BTCUSDT"],
             "ts_bucket_start_us": [1609459200000000, 1609462800000000],
             "ts_bucket_end_us": [1609462799999000, 1609462799999000],  # Second: end < start!
             "open_px_int": [2900000, -100],  # Second: negative price!
@@ -382,8 +380,7 @@ def test_validate_klines_high_lt_low():
         {
             "date": [date(2021, 1, 1)],
             "exchange": ["binance-futures"],
-            "exchange_id": [1],
-            "symbol_id": [101],
+            "symbol": ["BTCUSDT"],
             "ts_bucket_start_us": [1609459200000000],
             "ts_bucket_end_us": [1609462799999000],
             "open_px_int": [2900000],
@@ -413,7 +410,7 @@ def test_kline_completeness_full_day():
     df = pl.DataFrame(
         {
             "date": [date(2021, 1, 1)] * 24,
-            "symbol_id": [101] * 24,
+            "symbol": ["BTCUSDT"] * 24,
             "ts_bucket_start_us": list(range(1609459200000000, 1609545600000000, 3600000000)),
         }
     )
@@ -433,7 +430,7 @@ def test_kline_completeness_partial_day():
     df = pl.DataFrame(
         {
             "date": [date(2021, 1, 1)] * 20,
-            "symbol_id": [101] * 20,
+            "symbol": ["BTCUSDT"] * 20,
             "ts_bucket_start_us": list(range(1609459200000000, 1609531200000000, 3600000000)),
         }
     )
@@ -451,7 +448,7 @@ def test_kline_completeness_multiple_symbols():
     df = pl.DataFrame(
         {
             "date": [date(2021, 1, 1)] * 24 + [date(2021, 1, 1)] * 20,
-            "symbol_id": [101] * 24 + [102] * 20,  # symbol 101: complete, 102: incomplete
+            "symbol": ["BTCUSDT"] * 24 + ["ETHUSDT"] * 20,  # BTCUSDT: complete, ETHUSDT: incomplete
             "ts_bucket_start_us": list(range(1609459200000000, 1609545600000000, 3600000000))
             + list(range(1609459200000000, 1609531200000000, 3600000000)),
         }
@@ -461,10 +458,10 @@ def test_kline_completeness_multiple_symbols():
 
     assert result.height == 2
     # Symbol 101 should be complete
-    complete_row = result.filter(pl.col("symbol_id") == 101)
+    complete_row = result.filter(pl.col("symbol") == "BTCUSDT")
     assert complete_row["is_complete"][0]
-    # Symbol 102 should be incomplete
-    incomplete_row = result.filter(pl.col("symbol_id") == 102)
+    # ETHUSDT should be incomplete
+    incomplete_row = result.filter(pl.col("symbol") == "ETHUSDT")
     assert not incomplete_row["is_complete"][0]
 
 
@@ -474,7 +471,7 @@ def test_kline_completeness_different_intervals():
     df_4h = pl.DataFrame(
         {
             "date": [date(2021, 1, 1)] * 6,
-            "symbol_id": [101] * 6,
+            "symbol": ["BTCUSDT"] * 6,
             "ts_bucket_start_us": list(range(1609459200000000, 1609545600000000, 14400000000)),
         }
     )
@@ -485,7 +482,11 @@ def test_kline_completeness_different_intervals():
 
     # 1d interval should have 1 row per day
     df_1d = pl.DataFrame(
-        {"date": [date(2021, 1, 1)], "symbol_id": [101], "ts_bucket_start_us": [1609459200000000]}
+        {
+            "date": [date(2021, 1, 1)],
+            "symbol": ["BTCUSDT"],
+            "ts_bucket_start_us": [1609459200000000],
+        }
     )
 
     result = check_kline_completeness(df_1d, interval="1d", warn_on_gaps=False)
@@ -496,7 +497,11 @@ def test_kline_completeness_different_intervals():
 def test_kline_completeness_invalid_interval():
     """Test completeness check raises error for unknown interval."""
     df = pl.DataFrame(
-        {"date": [date(2021, 1, 1)], "symbol_id": [101], "ts_bucket_start_us": [1609459200000000]}
+        {
+            "date": [date(2021, 1, 1)],
+            "symbol": ["BTCUSDT"],
+            "ts_bucket_start_us": [1609459200000000],
+        }
     )
 
     with pytest.raises(ValueError, match="unknown interval"):
@@ -506,13 +511,13 @@ def test_kline_completeness_invalid_interval():
 def test_kline_completeness_empty():
     """Test completeness check with empty DataFrame."""
     result = check_kline_completeness(
-        pl.DataFrame(schema={"date": pl.Date, "symbol_id": pl.Int64}),
+        pl.DataFrame(schema={"date": pl.Date, "symbol": pl.Utf8}),
         interval="1h",
         warn_on_gaps=False,
     )
 
     assert result.is_empty()
-    assert result.columns == ["date", "symbol_id", "row_count", "expected_count", "is_complete"]
+    assert result.columns == ["date", "symbol", "row_count", "expected_count", "is_complete"]
 
 
 # --- Schema Normalization Tests ---
@@ -524,7 +529,7 @@ def test_normalize_klines_schema():
         {
             "date": ["2021-01-01"],  # String instead of Date
             "exchange": ["binance-futures"],
-            "symbol_id": [101],
+            "symbol": ["BTCUSDT"],
         }
     )
 
@@ -535,7 +540,7 @@ def test_normalize_klines_schema():
 
     # Should cast types correctly
     assert result.schema["date"] == pl.Date
-    assert result.schema["symbol_id"] == pl.Int64
+    assert result.schema["symbol"] == pl.Utf8
 
     # Missing columns should be null
     assert result["open_px_int"][0] is None
@@ -550,10 +555,10 @@ def test_full_pipeline_parse_encode_decode(raw_kline_data: pl.DataFrame):
     parsed = parse_binance_klines_csv(raw_kline_data)
     assert parsed.height == 2
 
-    # Add symbol_id and exchange for encoding
+    # Add symbol and exchange for encoding
     with_meta = parsed.with_columns(
         [
-            pl.lit(101, dtype=pl.Int64).alias("symbol_id"),
+            pl.lit("BTCUSDT").alias("symbol"),
             pl.lit(EXCHANGE).alias("exchange"),
         ]
     )
