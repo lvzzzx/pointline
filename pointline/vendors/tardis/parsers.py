@@ -7,20 +7,6 @@ import polars as pl
 from pointline.schemas.types import PRICE_SCALE, QTY_SCALE
 
 
-def _normalize_exchange(exchange: str) -> str:
-    normalized = exchange.strip().lower()
-    if not normalized:
-        raise ValueError("Exchange cannot be empty")
-    return normalized
-
-
-def _normalize_symbol(symbol: str) -> str:
-    normalized = symbol.strip()
-    if not normalized:
-        raise ValueError("Symbol cannot be empty")
-    return normalized
-
-
 def _require_columns(df: pl.DataFrame, required: list[str], *, context: str) -> None:
     missing = [col for col in required if col not in df.columns]
     if missing:
@@ -70,41 +56,6 @@ def _first_present_int64(df: pl.DataFrame, *, candidates: tuple[str, ...]) -> pl
     return pl.lit(None, dtype=pl.Int64)
 
 
-def _check_exchange_symbol_match(
-    df: pl.DataFrame, *, exchange: str, symbol: str, context: str
-) -> None:
-    if "exchange" in df.columns:
-        observed_exchanges = (
-            df.select(pl.col("exchange").cast(pl.Utf8).str.strip_chars().str.to_lowercase())
-            .to_series()
-            .drop_nulls()
-            .unique()
-            .to_list()
-        )
-        mismatched_exchanges = [value for value in observed_exchanges if value != exchange]
-        if mismatched_exchanges:
-            raise ValueError(
-                f"{context}: Exchange mismatch. path exchange={exchange}, "
-                f"payload values={sorted(set(mismatched_exchanges))}"
-            )
-
-    if "symbol" in df.columns:
-        expected_symbol = symbol.upper()
-        observed_symbols = (
-            df.select(pl.col("symbol").cast(pl.Utf8).str.strip_chars().str.to_uppercase())
-            .to_series()
-            .drop_nulls()
-            .unique()
-            .to_list()
-        )
-        mismatched_symbols = [value for value in observed_symbols if value != expected_symbol]
-        if mismatched_symbols:
-            raise ValueError(
-                f"{context}: Symbol mismatch. path symbol={symbol}, "
-                f"payload values={sorted(set(mismatched_symbols))}"
-            )
-
-
 def _require_non_null_ts_event(df: pl.DataFrame, *, context: str) -> None:
     if "ts_event_us" not in df.columns:
         raise ValueError(f"{context}: ts_event_us missing after parsing")
@@ -112,19 +63,20 @@ def _require_non_null_ts_event(df: pl.DataFrame, *, context: str) -> None:
         raise ValueError(f"{context}: ts_event_us cannot be null")
 
 
-def parse_tardis_trades(df: pl.DataFrame, *, exchange: str, symbol: str) -> pl.DataFrame:
-    """Parse Tardis trades CSV rows into canonical `trades` columns."""
+def parse_tardis_trades(df: pl.DataFrame) -> pl.DataFrame:
+    """Parse Tardis trades CSV rows into canonical `trades` columns.
 
-    exchange = _normalize_exchange(exchange)
-    symbol = _normalize_symbol(symbol)
+    Exchange and symbol are read from CSV row data (self-contained).
+    Supports grouped-symbol files containing multiple instruments.
+    """
+
     context = "parse_tardis_trades"
-    _require_columns(df, ["side", "price", "amount"], context=context)
-    _check_exchange_symbol_match(df, exchange=exchange, symbol=symbol, context=context)
+    _require_columns(df, ["exchange", "symbol", "side", "price", "amount"], context=context)
 
     parsed = df.with_columns(
         [
-            pl.lit(exchange).alias("exchange"),
-            pl.lit(symbol).alias("symbol"),
+            pl.col("exchange").cast(pl.Utf8).str.strip_chars().str.to_lowercase().alias("exchange"),
+            pl.col("symbol").cast(pl.Utf8).str.strip_chars().alias("symbol"),
             _resolve_ts_event_expr(df, context=context).alias("ts_event_us"),
             _resolve_ts_local_expr(df).alias("ts_local_us"),
             _optional_utf8(df, column="id").alias("trade_id"),
@@ -151,19 +103,20 @@ def parse_tardis_trades(df: pl.DataFrame, *, exchange: str, symbol: str) -> pl.D
     return parsed
 
 
-def parse_tardis_quotes(df: pl.DataFrame, *, exchange: str, symbol: str) -> pl.DataFrame:
+def parse_tardis_quotes(df: pl.DataFrame) -> pl.DataFrame:
     """Parse Tardis quotes CSV rows into canonical `quotes` columns."""
 
-    exchange = _normalize_exchange(exchange)
-    symbol = _normalize_symbol(symbol)
     context = "parse_tardis_quotes"
-    _require_columns(df, ["bid_price", "bid_amount", "ask_price", "ask_amount"], context=context)
-    _check_exchange_symbol_match(df, exchange=exchange, symbol=symbol, context=context)
+    _require_columns(
+        df,
+        ["exchange", "symbol", "bid_price", "bid_amount", "ask_price", "ask_amount"],
+        context=context,
+    )
 
     parsed = df.with_columns(
         [
-            pl.lit(exchange).alias("exchange"),
-            pl.lit(symbol).alias("symbol"),
+            pl.col("exchange").cast(pl.Utf8).str.strip_chars().str.to_lowercase().alias("exchange"),
+            pl.col("symbol").cast(pl.Utf8).str.strip_chars().alias("symbol"),
             _resolve_ts_event_expr(df, context=context).alias("ts_event_us"),
             _resolve_ts_local_expr(df).alias("ts_local_us"),
             _scaled_expr("bid_price", scale=PRICE_SCALE).alias("bid_price"),
@@ -193,19 +146,22 @@ def parse_tardis_quotes(df: pl.DataFrame, *, exchange: str, symbol: str) -> pl.D
     return parsed
 
 
-def parse_tardis_incremental_l2(df: pl.DataFrame, *, exchange: str, symbol: str) -> pl.DataFrame:
-    """Parse Tardis incremental book rows into canonical `orderbook_updates` columns."""
+def parse_tardis_incremental_l2(df: pl.DataFrame) -> pl.DataFrame:
+    """Parse Tardis incremental book rows into canonical `orderbook_updates` columns.
 
-    exchange = _normalize_exchange(exchange)
-    symbol = _normalize_symbol(symbol)
+    Exchange and symbol are read from CSV row data (self-contained).
+    Supports grouped-symbol files containing multiple instruments.
+    """
+
     context = "parse_tardis_incremental_l2"
-    _require_columns(df, ["is_snapshot", "side", "price", "amount"], context=context)
-    _check_exchange_symbol_match(df, exchange=exchange, symbol=symbol, context=context)
+    _require_columns(
+        df, ["exchange", "symbol", "is_snapshot", "side", "price", "amount"], context=context
+    )
 
     parsed = df.with_columns(
         [
-            pl.lit(exchange).alias("exchange"),
-            pl.lit(symbol).alias("symbol"),
+            pl.col("exchange").cast(pl.Utf8).str.strip_chars().str.to_lowercase().alias("exchange"),
+            pl.col("symbol").cast(pl.Utf8).str.strip_chars().alias("symbol"),
             _resolve_ts_event_expr(df, context=context).alias("ts_event_us"),
             _resolve_ts_local_expr(df).alias("ts_local_us"),
             _first_present_int64(

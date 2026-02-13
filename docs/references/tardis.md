@@ -141,6 +141,31 @@ Available grouped symbols for each exchange are listed in the `/exchanges/:excha
 - The `symbol` field in the downloaded CSV still contains the individual instrument symbol per row, not the grouped symbol name.
 - Symbol must be uppercase in the URL. Replace `/` and `:` characters with `-` for URL safety.
 
+### Pointline Bronze Layout Convention
+
+Pointline uses grouped-symbol files as the Tardis bronze unit. The bronze path uses a Hive-style `symbol=` partition where the value is the **grouped symbol name** (e.g. `SPOT`, `PERPETUALS`), not an individual instrument:
+
+```
+exchange={exchange}/type={data_type}/date={YYYY-MM-DD}/symbol={grouped_symbol}/{exchange}_{data_type}_{YYYY-MM-DD}_{grouped_symbol}.csv.gz
+```
+
+The filename uses the Tardis-native naming convention (`<exchange>_<data_type>_<date>_<symbol>.csv.gz`), which is what the SDK/HTTP download produces. The path partitions duplicate some filename fields — this is intentional (Hive discovery + unmodified vendor file).
+
+**Examples:**
+
+```
+exchange=binance/type=trades/date=2024-01-01/symbol=SPOT/binance_trades_2024-01-01_SPOT.csv.gz
+exchange=binance-futures/type=trades/date=2024-01-01/symbol=PERPETUALS/binance-futures_trades_2024-01-01_PERPETUALS.csv.gz
+exchange=deribit/type=options_chain/date=2024-01-01/symbol=OPTIONS/deribit_options_chain_2024-01-01_OPTIONS.csv.gz
+```
+
+**Key rules:**
+
+- The `symbol=` partition is a **placeholder** — it does not imply per-instrument or per-exchange granularity.
+- The CSV is **self-contained**: `exchange` and `symbol` are read from each row, not derived from the path.
+- Parsers accept a single `pl.DataFrame` argument with no path-level metadata kwargs.
+- One bronze file maps to one `file_id` in the manifest; `file_seq` provides row-level lineage within the grouped file.
+
 ---
 
 ## 5. Common Fields

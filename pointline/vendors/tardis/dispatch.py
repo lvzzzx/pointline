@@ -1,4 +1,9 @@
-"""Parser dispatch mapping for Tardis stream data types."""
+"""Parser dispatch mapping for Tardis stream data types.
+
+All Tardis parsers accept a single DataFrame argument. Exchange and symbol
+are read from CSV row data — the file is self-contained and may hold
+multiple instruments (grouped-symbol bronze files).
+"""
 
 from __future__ import annotations
 
@@ -12,7 +17,7 @@ from pointline.vendors.tardis.parsers import (
     parse_tardis_trades,
 )
 
-TardisParser = Callable[[pl.DataFrame, str, str], pl.DataFrame]
+TardisParser = Callable[[pl.DataFrame], pl.DataFrame]
 
 _PARSER_BY_DATA_TYPE: dict[str, TardisParser] = {
     "trades": parse_tardis_trades,

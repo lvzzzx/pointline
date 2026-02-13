@@ -55,15 +55,24 @@ class CapturingWriter:
         self.calls.append((table_name, df))
 
 
-def _meta(data_type: str) -> BronzeFileMetadata:
+def _meta(data_type: str, grouped_symbol: str = "PERPETUALS") -> BronzeFileMetadata:
+    """Bronze metadata for a grouped-symbol file.
+
+    The symbol= partition is a placeholder (e.g. PERPETUALS, SPOT);
+    the CSV is self-contained with per-row exchange/symbol fields.
+    """
     return BronzeFileMetadata(
         vendor="tardis",
         data_type=data_type,
-        bronze_file_path=f"exchange=binance-futures/type={data_type}/date=2024-01-01/BTCUSDT.csv.gz",
+        bronze_file_path=(
+            f"exchange=binance-futures/type={data_type}"
+            f"/date=2024-01-01/symbol={grouped_symbol}/{grouped_symbol}.csv.gz"
+        ),
         file_size_bytes=123,
         last_modified_ts=1,
         sha256=f"{data_type:0<64}"[:64],
         date=date(2024, 1, 1),
+        extra={"grouped_symbol": grouped_symbol},
     )
 
 
@@ -87,6 +96,8 @@ def test_ingest_tardis_trades_via_dispatch_succeeds() -> None:
         stream_parser = get_tardis_parser(meta.data_type)
         raw = pl.DataFrame(
             {
+                "exchange": ["binance-futures"],
+                "symbol": ["BTCUSDT"],
                 "timestamp": [1_700_000_000_000_100],
                 "local_timestamp": [1_700_000_000_000_200],
                 "id": ["t-1"],
@@ -95,7 +106,7 @@ def test_ingest_tardis_trades_via_dispatch_succeeds() -> None:
                 "amount": [0.25],
             }
         )
-        return stream_parser(raw, exchange="binance-futures", symbol="BTCUSDT")
+        return stream_parser(raw)
 
     result = ingest_file(
         _meta("trades"),
@@ -122,6 +133,8 @@ def test_ingest_tardis_quotes_via_dispatch_succeeds() -> None:
         stream_parser = get_tardis_parser(meta.data_type)
         raw = pl.DataFrame(
             {
+                "exchange": ["binance-futures"],
+                "symbol": ["BTCUSDT"],
                 "timestamp": [1_700_000_000_010_100],
                 "bid_price": [99.9],
                 "bid_amount": [4.0],
@@ -130,7 +143,7 @@ def test_ingest_tardis_quotes_via_dispatch_succeeds() -> None:
                 "sequence_number": [1001],
             }
         )
-        return stream_parser(raw, exchange="binance-futures", symbol="BTCUSDT")
+        return stream_parser(raw)
 
     result = ingest_file(
         _meta("quotes"),
@@ -157,6 +170,8 @@ def test_ingest_tardis_incremental_l2_alias_routes_to_orderbook_updates() -> Non
         stream_parser = get_tardis_parser(meta.data_type)
         raw = pl.DataFrame(
             {
+                "exchange": ["binance-futures"],
+                "symbol": ["BTCUSDT"],
                 "timestamp": [1_700_000_000_020_100],
                 "local_timestamp": [1_700_000_000_020_200],
                 "is_snapshot": [False],
@@ -166,7 +181,7 @@ def test_ingest_tardis_incremental_l2_alias_routes_to_orderbook_updates() -> Non
                 "update_id": [555],
             }
         )
-        return stream_parser(raw, exchange="binance-futures", symbol="BTCUSDT")
+        return stream_parser(raw)
 
     result = ingest_file(
         _meta("incremental_book_L2"),
