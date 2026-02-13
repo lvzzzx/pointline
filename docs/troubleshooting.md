@@ -12,6 +12,7 @@ Common errors and how to fix them when using Pointline.
 - [Symbol Resolution](#symbol-resolution)
 - [CLI Errors](#cli-errors)
 - [Performance Issues](#performance-issues)
+- [Expected Quarantine Behavior (By Design)](#expected-quarantine-behavior-by-design)
 - [Advanced Debugging](#advanced-debugging)
 
 ---
@@ -531,6 +532,145 @@ pointline manifest show
 
 # Look for duplicate entries with same (vendor, exchange, data_type, date, symbol)
 ```
+
+---
+
+## Expected Quarantine Behavior (By Design)
+
+### B-Shares Exclusion from Chinese Market Data
+
+**Observation:**
+```
+validation_log shows 57,885 events with:
+- rule_name: missing_pit_symbol_coverage
+- symbol: 900xxx (e.g., 900934, 900948, 900936)
+```
+
+**This is EXPECTED and CORRECT behavior.**
+
+#### What Are B-Shares?
+
+Chinese stock markets have two classes of shares:
+
+| Class | Code Pattern | Exchange | Denomination | Purpose |
+|-------|--------------|----------|--------------|---------|
+| **A-Shares** | 600xxx, 601xxx, 603xxx (SSE)<br>000xxx, 001xxx, 300xxx (SZSE) | SSE / SZSE | CNY | Domestic investors |
+| **B-Shares** | **900xxx** (SSE)<br>**200xxx** (SZSE) | SSE / SZSE | USD/HKD | Foreign investors (legacy) |
+
+#### Design Decision
+
+**B-shares are intentionally excluded from `dim_symbol` and the research dataset.**
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                      DESIGN PHILOSOPHY                          │
+├─────────────────────────────────────────────────────────────────┤
+│  A-Shares: Primary market → Included ✅                         │
+│  B-Shares: Legacy/illiquid market → Excluded ❌                 │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**Rationale:**
+1. **Low liquidity**: B-shares have minimal trading volume compared to A-shares
+2. **Legacy market**: B-share market is being phased out (QFIIs can now trade A-shares)
+3. **Research focus**: Most quantitative research targets A-shares
+4. **PIT correctness**: Excluding B-shares prevents symbol_id pollution
+
+#### What Happens to B-Share Data?
+
+```
+┌────────────────────┐      ┌────────────────────┐      ┌─────────────────┐
+│  Bronze Layer      │      │  Symbol Lookup     │      │  Result         │
+│  (cn_order_events) │      │  (dim_symbol)      │      │                 │
+├────────────────────┤      ├────────────────────┤      ├─────────────────┤
+│ 900934 events      │─────→│ 900934 NOT found   │─────→│ Quarantined     │
+│ (raw market data)  │ join │ (excluded by       │      │ (validation_log)│
+│                    │ fails│ design)            │      │                 │
+└────────────────────┘      └────────────────────┘      └─────────────────┘
+```
+
+**Validation Log Entry:**
+```python
+{
+    "rule_name": "missing_pit_symbol_coverage",
+    "severity": "error",
+    "symbol": "900934",
+    "message": "quarantined:cn_order_events"
+}
+```
+
+#### Verification
+
+**Check B-shares are being quarantined:**
+```bash
+# Query validation log for B-shares
+cd ~/data/lake/silver/validation_log
+
+python3 -c "
+import pyarrow.parquet as pq
+df = pq.read_table('.').to_pandas()
+
+# Filter SSE B-shares (900xxx)
+b_shares = df[df['symbol'].str.match(r'^900', na=False)]
+print(f'B-share quarantine events: {len(b_shares):,}')
+print(f'Unique B-share symbols: {b_shares[\"symbol\"].nunique()}')
+print()
+print('Top quarantined B-shares:')
+print(b_shares['symbol'].value_counts().head(10))
+"
+```
+
+**Expected output:**
+```
+B-share quarantine events: 57,885
+Unique B-share symbols: 44
+
+Top quarantined B-shares:
+900948    9720
+900936    5058
+900926    4452
+900932    3729
+900934    3411
+...
+```
+
+**Check B-shares are NOT in dim_symbol:**
+```bash
+# Verify 900934 is not in symbol master
+python3 -c "
+import pyarrow.parquet as pq
+df = pq.read_table('~/data/lake/silver/dim_symbol/').to_pandas()
+
+matches = df[df['exchange_symbol'] == '900934']
+print(f'900934 in dim_symbol: {len(matches)}')  # Should be 0
+
+# Check what IS in dim_symbol
+sse_symbols = df[df['exchange'] == 'sse']
+print(f'SSE symbols range: {sse_symbols[\"exchange_symbol\"].min()} - {sse_symbols[\"exchange_symbol\"].max()}')
+# Output: SSE symbols range: 600000 - 689xxx (A-shares only)
+"
+```
+
+#### If You Need B-Share Data
+
+B-shares are **not supported** in the current data model. To add them:
+
+1. **Add B-share symbols to bronze layer:**
+   ```bash
+   # Ingest B-share symbol metadata from vendor
+   pointline bronze ingest --vendor quant360 --data-type symbols --include-b-shares
+   ```
+
+2. **Update dim_symbol ETL to include B-shares:**
+   - Modify the symbol sync pipeline
+   - Add B-share market type (`market_type = 'b_share'`)
+
+3. **Re-run ingestion for quarantined events:**
+   ```bash
+   pointline ingest run --retry-quarantined --symbol-pattern '900*'
+   ```
+
+**Note:** This requires code changes and is not supported out-of-the-box.
 
 ---
 
