@@ -11,6 +11,8 @@ import polars as pl
 CN_TICK_SIZE: int = 10_000_000
 # 100 shares × QTY_SCALE (1e9)
 CN_LOT_SIZE: int = 100_000_000_000
+# 200 shares × QTY_SCALE (1e9) - STAR Market (科创板)
+STAR_MARKET_LOT_SIZE: int = 200_000_000_000
 
 
 # ---------------------------------------------------------------------------
@@ -57,6 +59,17 @@ def stock_basic_to_snapshot(raw: pl.DataFrame) -> pl.DataFrame:
     df = df.with_columns(_normalize_exchange(pl.col("exchange")).alias("exchange"))
     df = df.filter(pl.col("exchange").is_not_null())
 
+    # STAR Market (688xxx/689xxx on SSE) uses 200-share lots
+    lot_size_expr = (
+        pl.when(
+            (pl.col("exchange") == "sse")
+            & (pl.col("symbol").str.starts_with("688") | pl.col("symbol").str.starts_with("689"))
+        )
+        .then(pl.lit(STAR_MARKET_LOT_SIZE))
+        .otherwise(pl.lit(CN_LOT_SIZE))
+        .cast(pl.Int64)
+    )
+
     return df.select(
         pl.col("exchange"),
         pl.col("symbol").alias("exchange_symbol"),
@@ -65,7 +78,7 @@ def stock_basic_to_snapshot(raw: pl.DataFrame) -> pl.DataFrame:
         pl.coalesce([pl.col("name"), pl.col("symbol")]).alias("base_asset"),
         pl.lit("CNY").alias("quote_asset"),
         pl.lit(CN_TICK_SIZE).cast(pl.Int64).alias("tick_size"),
-        pl.lit(CN_LOT_SIZE).cast(pl.Int64).alias("lot_size"),
+        lot_size_expr.alias("lot_size"),
         pl.lit(None, dtype=pl.Int64).alias("contract_size"),
     )
 

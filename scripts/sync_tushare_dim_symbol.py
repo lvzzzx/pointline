@@ -18,9 +18,6 @@ from pointline.v2.vendors.tushare.symbols import (
     stock_basic_to_snapshot,
 )
 
-# STAR Market uses lot_size=200 instead of 100
-STAR_MARKET_LOT_SIZE = 200_000_000_000  # 200 × QTY_SCALE (1e9)
-
 
 def configure_tushare(token: str, http_url: str = "http://lianghua.nanyangqiankun.top"):
     """Configure Tushare with custom API endpoint."""
@@ -34,19 +31,6 @@ def configure_tushare(token: str, http_url: str = "http://lianghua.nanyangqianku
     pro._DataApi__token = token
     pro._DataApi__http_url = http_url
     return pro
-
-
-def adjust_star_market_lot_size(df: pl.DataFrame) -> pl.DataFrame:
-    """Adjust lot_size for STAR Market (688xxx/689xxx on SSE).
-
-    Tushare symbols module uses uniform lot_size=100. STAR Market requires 200.
-    """
-    return df.with_columns(
-        pl.when((pl.col("exchange") == "sse") & pl.col("exchange_symbol").str.starts_with("688"))
-        .then(pl.lit(STAR_MARKET_LOT_SIZE))
-        .otherwise(pl.col("lot_size"))
-        .alias("lot_size")
-    )
 
 
 def fetch_stock_basic(
@@ -106,9 +90,8 @@ def main():
     listed_raw = fetch_stock_basic(pro, exchange=args.exchange, list_status="L")
     print(f"  Listed stocks: {len(listed_raw)}")
 
-    # Transform using vendor module, then adjust STAR Market
+    # Transform using vendor module (handles STAR Market lot_size)
     snapshot = stock_basic_to_snapshot(listed_raw)
-    snapshot = adjust_star_market_lot_size(snapshot)
     print(f"  Snapshot rows: {len(snapshot)}")
 
     # Fetch delistings
