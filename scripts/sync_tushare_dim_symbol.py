@@ -13,10 +13,8 @@ from typing import Literal
 
 import polars as pl
 
-from pointline.v2.vendors.tushare.symbols import (
-    stock_basic_to_delistings,
-    stock_basic_to_snapshot,
-)
+from pointline.v2.dim_symbol import assign_symbol_ids, validate
+from pointline.v2.vendors.tushare.symbols import stock_basic_to_snapshot
 
 
 def configure_tushare(token: str, http_url: str = "http://lianghua.nanyangqiankun.top"):
@@ -92,39 +90,25 @@ def main():
     listed_raw = fetch_stock_basic(pro, exchange=args.exchange, list_status="L")
     print(f"  Listed stocks: {len(listed_raw)}")
 
-    # Fetch delisted (for both snapshot AND delistings)
+    # Fetch delisted for historical PIT
     delisted_raw = fetch_stock_basic(pro, exchange=args.exchange, list_status="D")
     print(f"  Delisted stocks: {len(delisted_raw)}")
 
-    # Combine for snapshot (includes delisted for historical PIT)
+    # Combine for historical load
     all_raw = pl.concat([listed_raw, delisted_raw], how="diagonal")
     print(f"  Total for snapshot: {len(all_raw)}")
 
-    # Transform using vendor module (handles STAR Market lot_size)
-    snapshot = stock_basic_to_snapshot(all_raw)
+    # Transform with SCD2 metadata (valid_from = list_date, valid_until = delist_date for D)
+    effective_ts_us = int(datetime.now().timestamp() * 1_000_000)
+    snapshot = stock_basic_to_snapshot(all_raw, effective_ts_us=effective_ts_us)
     print(f"  Snapshot rows: {len(snapshot)}")
 
-    # Delistings for SCD2 close logic
-    delistings = stock_basic_to_delistings(delisted_raw)
-    if delistings is not None and len(delistings) > 0:
-        print(f"  Delistings for SCD2: {len(delistings)}")
-    else:
-        delistings = None
-        print("  No delistings")
+    # Assign deterministic symbol_ids
+    print("Assigning symbol_ids")
+    result = assign_symbol_ids(snapshot)
 
-    # Perform SCD2 upsert
-    print("Performing SCD2 upsert")
-    from pointline.v2.dim_symbol import bootstrap, upsert, validate
-
-    effective_ts_us = int(datetime.now().timestamp() * 1_000_000)
-
-    if dim.is_empty():
-        print("  Bootstrapping new dim_symbol table")
-        result = bootstrap(snapshot, effective_ts_us)
-    else:
-        print("  Upserting into existing dim_symbol table")
-        result = upsert(dim, snapshot, effective_ts_us, delistings=delistings)
-
+    # Validate
+    print("Validating")
     validate(result)
     print(f"  Result: {result.height} rows")
 

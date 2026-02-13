@@ -47,19 +47,37 @@ def _parse_yyyymmdd_us(expr: pl.Expr) -> pl.Expr:
 # ---------------------------------------------------------------------------
 
 
-def stock_basic_to_snapshot(raw: pl.DataFrame) -> pl.DataFrame:
-    """Convert Tushare stock_basic to a v2 dim_symbol snapshot.
+def stock_basic_to_snapshot(
+    raw: pl.DataFrame,
+    *,
+    effective_ts_us: int | None = None,
+) -> pl.DataFrame:
+    """Convert Tushare stock_basic to a v2 dim_symbol snapshot with SCD2 metadata.
 
-    Includes listed (L), paused (P), and delisted (D) stocks.
-    Delisted stocks are included for historical PIT correctness.
+    Includes listed (L), paused (P), and delisted (D) stocks with proper
+    validity windows for PIT correctness.
+
+    Args:
+        raw: Raw DataFrame from Tushare stock_basic API
+        effective_ts_us: Effective timestamp for new records (defaults to now)
+
+    Returns:
+        DataFrame with snapshot columns plus SCD2 metadata (valid_from_ts_us,
+        valid_until_ts_us, is_current) ready for direct storage.
     """
+    from datetime import datetime
+
+    if effective_ts_us is None:
+        effective_ts_us = int(datetime.now().timestamp() * 1_000_000)
+
+    max_valid_until = 2**63 - 1
+
     df = raw.filter(pl.col("list_status").is_in(["L", "P", "D"]))
 
     df = df.with_columns(_normalize_exchange(pl.col("exchange")).alias("exchange"))
     df = df.filter(pl.col("exchange").is_not_null())
 
     # STAR Market (科创板) uses 200-share lots; all others use 100
-    # Tushare market field: 主板/创业板/科创板/CDR
     lot_size_expr = (
         pl.when(pl.col("market") == "科创板")
         .then(pl.lit(STAR_MARKET_LOT_SIZE))
@@ -67,6 +85,13 @@ def stock_basic_to_snapshot(raw: pl.DataFrame) -> pl.DataFrame:
         .cast(pl.Int64)
     )
 
+    # Parse dates for SCD2 validity windows
+    list_date_us = _parse_yyyymmdd_us(pl.col("list_date"))
+    delist_date_us = _parse_yyyymmdd_us(pl.col("delist_date"))
+
+    # For PIT correctness:
+    # - Listed (L,P): valid_from = list_date, valid_until = MAX, is_current = True
+    # - Delisted (D): valid_from = list_date, valid_until = delist_date, is_current = False
     return df.select(
         pl.col("exchange"),
         pl.col("symbol").alias("exchange_symbol"),
@@ -77,6 +102,17 @@ def stock_basic_to_snapshot(raw: pl.DataFrame) -> pl.DataFrame:
         pl.lit(CN_TICK_SIZE).cast(pl.Int64).alias("tick_size"),
         lot_size_expr.alias("lot_size"),
         pl.lit(None, dtype=pl.Int64).alias("contract_size"),
+        # SCD2 metadata
+        list_date_us.alias("valid_from_ts_us"),
+        pl.when(pl.col("list_status") == "D")
+        .then(delist_date_us)
+        .otherwise(pl.lit(max_valid_until))
+        .alias("valid_until_ts_us"),
+        pl.when(pl.col("list_status") == "D")
+        .then(pl.lit(False))
+        .otherwise(pl.lit(True))
+        .alias("is_current"),
+        pl.lit(effective_ts_us).alias("updated_at_ts_us"),
     )
 
 
