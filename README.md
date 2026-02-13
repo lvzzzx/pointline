@@ -83,9 +83,9 @@ ln -s $(pwd)/pointline-research ~/.claude/skills/pointline-research
 You: "Load BTC trades on Binance Futures for May 1, 2024 and calculate VWAP"
 
 Claude: [Uses the skill to automatically]
-1. Check data coverage (research.data_coverage)
-2. Load with Query API (query.trades with decoded=True)
-3. Apply PIT-correct VWAP calculation (cumulative, ts_local_us ordering)
+1. Discover available symbols (discover_symbols)
+2. Load trades with load_events(TRADES, exchange, symbol, start, end)
+3. Apply PIT-correct VWAP calculation (cumulative, ts_event_us ordering)
 4. Ensure reproducibility (deterministic ordering)
 ```
 
@@ -93,56 +93,55 @@ Claude: [Uses the skill to automatically]
 - [Skills Integration Guide](docs/skills-integration.md) - Setup and usage
 - [Shipping Guide](docs/shipping-guide.md) - Distribution strategies
 
-## CLI
-```bash
-# Discover available data
-pointline data list-exchanges --asset-class crypto-derivatives
-pointline data list-symbols --exchange binance-futures --base-asset BTC
-pointline data coverage --exchange binance-futures --symbol BTCUSDT
-
-# Show pending bronze files
-pointline ingest discover --pending-only
-
-# Show manifest status counts
-pointline manifest show
-
-# Apply dim_symbol updates from a CSV or Parquet file
-pointline dim-symbol upsert --file ./symbols.csv
-```
-
 ## Quick Example: Data Discovery
 
 ```python
-from pointline import research
+from pathlib import Path
+from pointline.research import discover_symbols, load_events
+from pointline import TRADES
 
-# Step 1: What exchanges have data?
-exchanges = research.list_exchanges(asset_class="crypto-derivatives")
-print(exchanges)
+silver_root = Path("./data/silver")
 
-# Step 2: What symbols are available?
-symbols = research.list_symbols(exchange="binance-futures", base_asset="BTC")
-print(f"Found {symbols.height} BTC symbols")
+# Step 1: Discover available symbols
+symbols = discover_symbols(
+    silver_root=silver_root,
+    exchange="binance-futures",
+    q="BTC",  # search filter
+    limit=10,
+)
+print(f"Found symbols: {symbols['exchange_symbol'].to_list()}")
 
-# Step 3: Check data coverage
-coverage = research.data_coverage("binance-futures", "BTCUSDT")
-print(f"Trades: {coverage['trades']['available']}")
-
-# Step 4: Load data
-from pointline.research import query
-
-trades = query.trades(
+# Step 2: Load trades for a symbol
+trades = load_events(
+    silver_root=silver_root,
+    table_spec=TRADES,
     exchange="binance-futures",
     symbol="BTCUSDT",
     start="2024-05-01",
     end="2024-05-02",
-    decoded=True,
 )
-print(f"Loaded {trades.height:,} trades")
+print(f"Loaded {len(trades):,} trades")
 ```
 
-See [examples/discovery_example.py](examples/discovery_example.py) for a complete walkthrough.
+See [examples/](examples/) for more complete walkthroughs.
 
-**For production research:** Need explicit symbol_id control or performance tuning? See [Advanced Topics](docs/guides/researcher_guide.md#7-researcher-interface-conventions) for the core API.
+**API Structure:**
+```python
+# Core schemas
+from pointline import TRADES, QUOTES, ORDERBOOK_UPDATES, get_table_spec
+
+# Research API
+from pointline.research import (
+    discover_symbols,      # Symbol discovery
+    load_events,           # Load trades/quotes/orderbook
+    build_spine,           # Build research spines
+    load_symbol_meta,      # Symbol metadata
+)
+
+# Ingestion (for ETL pipelines)
+from pointline.ingestion.pipeline import ingest_file
+from pointline.protocols import BronzeFileMetadata
+```
 
 ## Contributing
 Please review our [Collaboration Playbook](./docs/development/collaboration-playbook.md) before contributing.
