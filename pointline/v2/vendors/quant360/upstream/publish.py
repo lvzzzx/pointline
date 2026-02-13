@@ -47,7 +47,6 @@ def publish_member_payload(
 
     if output_path.exists():
         return Quant360PublishedFile(
-            member_key=payload.member_job.member_key,
             bronze_rel_path=str(rel_path),
             output_path=output_path,
             output_sha256=_compute_file_sha256(output_path),
@@ -69,7 +68,6 @@ def publish_member_payload(
             tmp_path.unlink(missing_ok=True)
 
     return Quant360PublishedFile(
-        member_key=payload.member_job.member_key,
         bronze_rel_path=str(rel_path),
         output_path=output_path,
         output_sha256=_compute_file_sha256(output_path),

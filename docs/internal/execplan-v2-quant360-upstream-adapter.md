@@ -17,6 +17,7 @@ The user-visible behavior is that upstream processing becomes a separate, explic
 - [x] (2026-02-13 01:35Z) Implemented deterministic archive-to-extracted publish flow using `py7zr`, deterministic layout paths, and atomic temp-file rename.
 - [x] (2026-02-13 01:45Z) Added adapter-facing tests for success, idempotency rerun skip, partial retry after injected failure, archive name validation, corrupted archive continuation, and ledger state persistence.
 - [x] (2026-02-13 01:55Z) Integrated active docs references (`docs/data_sources/quant360_cn_l2.md` and sibling integration ExecPlan) to make the extracted-file contract explicit and keep archive handling upstream-only.
+- [x] (2026-02-13 12:10Z) Refactored ledger from member-level to archive-level (one record per `.7z`) and updated runner/tests for archive-granularity skip/retry.
 
 ## Surprises & Discoveries
 
@@ -46,8 +47,8 @@ The user-visible behavior is that upstream processing becomes a separate, explic
   Rationale: Reduces operational drift, improves testability, and removes host-tool dependency from the critical path.
   Date/Author: 2026-02-13 / Codex
 
-- Decision: Maintain a dedicated upstream ledger for archive/member processing state, separate from Silver ingest manifest.
-  Rationale: Upstream extraction idempotency and Silver ingestion idempotency solve different problems and must not be conflated.
+- Decision: Maintain a dedicated upstream ledger for archive processing state (one record per `.7z`), separate from Silver ingest manifest.
+  Rationale: Upstream extraction idempotency and Silver ingestion idempotency solve different problems and must not be conflated, and archive-level state keeps ledger size bounded and simple.
   Date/Author: 2026-02-13 / Codex
 
 - Decision: Keep upstream extracted output layout as `exchange=<...>/type=<stream_type>/date=<YYYY-MM-DD>/symbol=<...>/<symbol>.csv.gz`.
@@ -56,6 +57,10 @@ The user-visible behavior is that upstream processing becomes a separate, explic
 
 - Decision: Normalize extracted file permissions before reading payload bytes.
   Rationale: Prevents platform-specific extraction permission issues from breaking deterministic upstream processing.
+  Date/Author: 2026-02-13 / Codex
+
+- Decision: Refactor extraction to one-pass per archive, preferring `7z x` when available and falling back to `py7zr`.
+  Rationale: Per-member extraction is too slow on large archives; one-pass extraction mirrors proven script performance while preserving v2 function-first boundaries.
   Date/Author: 2026-02-13 / Codex
 
 ## Outcomes & Retrospective
@@ -80,7 +85,7 @@ Milestone 2 implements deterministic archive discovery and member planning. In `
 
 Milestone 3 implements extraction and normalized publish with atomic writes. In `extract.py`, use `py7zr` to read archive members and stream bytes to publisher input without shelling out. In `publish.py`, write outputs as gzipped CSV files to a stable layout under the configured Bronze root, first writing to a temporary file in the same directory and then atomically renaming to final target. The output path must be deterministic and immutable for a given archive content hash and member path, so reruns do not mutate previously published content.
 
-Milestone 4 adds idempotent ledger behavior and failure recovery. In `ledger.py`, store per-member state keyed by `(archive_sha256, member_path)` and include output path, output hash, status, and timestamps. The runner in `runner.py` must skip members already in `success`, retry only `failed`/`pending`, and never duplicate successful outputs. If processing fails mid-run, subsequent reruns resume from remaining members and preserve prior successes.
+Milestone 4 adds idempotent ledger behavior and failure recovery. In `ledger.py`, store per-archive state keyed by archive identity (source filename + archive content hash) and include status and run counters. The runner in `runner.py` must skip archives already in `success`, retry archives in `failed`, and never duplicate successful outputs because publish remains deterministic and existence-safe. If processing fails mid-run, subsequent reruns resume at archive granularity.
 
 Milestone 5 defines v2 handoff and verification tests. The runner must return a deterministic list of published extracted files and enough metadata to construct `BronzeFileMetadata` objects for downstream ingestion. Add tests under `tests/v2/quant360/` to prove success path, idempotent rerun, partial retry after injected failure, invalid archive filename rejection, corrupted archive handling, malformed member path handling, and stable ordering of produced metadata.
 
@@ -124,7 +129,7 @@ Acceptance is behavior-based and requires three demonstrations.
 
 First, the upstream adapter must transform valid Quant360 archives into extracted per-symbol gzipped CSV files in deterministic layout, and emit deterministic metadata ordering.
 
-Second, rerunning the exact same upstream command on unchanged inputs must produce zero new writes and report all members skipped by idempotency ledger state.
+Second, rerunning the exact same upstream command on unchanged inputs must produce zero new writes and report all members skipped because their archive is already `success` in the idempotency ledger.
 
 Third, after an injected partial failure (for example one corrupted member), fixing the input and rerunning must publish only remaining failed/pending members while preserving already successful outputs without rewrite.
 
@@ -132,7 +137,7 @@ A final architecture acceptance check is that `pointline/v2/ingestion/pipeline.p
 
 ## Idempotence and Recovery
 
-All upstream steps are designed to be safely repeatable. Discovery is read-only. Publish writes are atomic, so process interruption cannot leave partially visible final files. The ledger records per-member outcomes; reruns skip successful members and retry only incomplete work.
+All upstream steps are designed to be safely repeatable. Discovery is read-only. Publish writes are atomic, so process interruption cannot leave partially visible final files. The ledger records per-archive outcomes; reruns skip successful archives and retry only failed archives.
 
 If a run fails, do not delete successful outputs. Fix the failing input or code path and rerun the same command. If a ledger entry is incorrect due to a bug, repair only the affected ledger records and rerun; do not clear the entire ledger unless intentionally rebuilding from scratch.
 
@@ -195,7 +200,7 @@ In `pointline/v2/vendors/quant360/upstream/ledger.py`, define:
 
     class Quant360UpstreamLedger:
         def load(self) -> None: ...
-        def should_skip(self, key: Quant360MemberKey) -> bool: ...
+        def should_skip(self, key: Quant360ArchiveKey) -> bool: ...
         def mark_success(self, record: Quant360LedgerRecord) -> None: ...
         def mark_failure(self, record: Quant360LedgerRecord) -> None: ...
 
@@ -212,3 +217,5 @@ Dependencies and constraints:
 Revision Note (2026-02-13 00:00Z): Initial ExecPlan created to define a clean, idempotent Quant360 upstream adapter for v2, with archive handling isolated from ingestion core and CLI explicitly out of scope.
 Revision Note (2026-02-13 01:47Z): Implemented upstream adapter core in `pointline/v2/vendors/quant360/upstream/` and added dedicated upstream tests under `tests/v2/quant360/`; validated idempotent rerun, partial retry, corrupted archive continuation, and deterministic publish behavior.
 Revision Note (2026-02-13 01:56Z): Added `Quant360PublishedFile.to_bronze_file_metadata()` handoff helper and aligned active docs to the upstream/extracted-file boundary.
+Revision Note (2026-02-13 12:10Z): Switched upstream ledger semantics to archive-level state (one record per `.7z`) and updated runner/tests/docs to match.
+Revision Note (2026-02-13 12:25Z): Replaced per-member extraction loop with one-pass archive extraction (prefer `7z`, fallback `py7zr`) and updated upstream tests for extract-path failure behavior.

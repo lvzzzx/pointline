@@ -15,11 +15,10 @@ from pointline.v2.vendors.quant360.upstream.discover import (
     discover_quant360_archives,
     plan_archive_members,
 )
-from pointline.v2.vendors.quant360.upstream.extract import extract_member_payload
+from pointline.v2.vendors.quant360.upstream.extract import iter_archive_members
 from pointline.v2.vendors.quant360.upstream.ledger import Quant360UpstreamLedger, _now_us
 from pointline.v2.vendors.quant360.upstream.models import (
     Quant360LedgerRecord,
-    Quant360MemberKey,
     Quant360UpstreamRunResult,
 )
 from pointline.v2.vendors.quant360.upstream.publish import publish_member_payload
@@ -44,15 +43,13 @@ def run_quant360_upstream(
     failed = 0
 
     for archive_job in archive_jobs:
+        archive_key = archive_job.archive_key
         try:
             member_jobs = plan_archive_members(archive_job)
         except Exception as exc:
             failed += 1
             record = Quant360LedgerRecord(
-                member_key=Quant360MemberKey(
-                    archive_sha256=archive_job.archive_sha256,
-                    member_path="__archive__",
-                ),
+                archive_key=archive_key,
                 status=LEDGER_STATUS_FAILED,
                 updated_at_us=_now_us(),
                 failure_reason=FAILURE_REASON_DISCOVER,
@@ -62,57 +59,67 @@ def run_quant360_upstream(
             failure_records.append(record)
             continue
 
-        for member_job in member_jobs:
-            total_members += 1
-            member_key = member_job.member_key
-            if ledger.should_skip(member_key):
-                skipped += 1
-                continue
+        total_members += len(member_jobs)
+        if ledger.should_skip(archive_key):
+            skipped += len(member_jobs)
+            continue
 
-            if dry_run:
-                continue
+        archive_had_failure = False
+        archive_published = 0
+        archive_failure_reason: str | None = None
+        archive_error_message: str | None = None
 
+        if not dry_run:
             try:
-                payload = extract_member_payload(member_job)
-            except Exception as exc:
-                failed += 1
-                record = Quant360LedgerRecord(
-                    member_key=member_key,
-                    status=LEDGER_STATUS_FAILED,
-                    updated_at_us=_now_us(),
-                    failure_reason=FAILURE_REASON_EXTRACT,
-                    error_message=str(exc),
-                )
-                ledger.mark_failure(record)
-                failure_records.append(record)
-                continue
+                for payload in iter_archive_members(archive_job, member_jobs=member_jobs):
+                    try:
+                        published_file = publish_member_payload(payload, bronze_root=bronze_root)
+                    except Exception as exc:
+                        archive_had_failure = True
+                        if archive_failure_reason is None:
+                            archive_failure_reason = FAILURE_REASON_PUBLISH
+                            archive_error_message = str(exc)
+                        continue
 
-            try:
-                published_file = publish_member_payload(payload, bronze_root=bronze_root)
+                    archive_published += 1
+                    if published_file.already_exists:
+                        skipped += 1
+                    else:
+                        published += 1
+                        published_files.append(published_file)
             except Exception as exc:
-                failed += 1
-                record = Quant360LedgerRecord(
-                    member_key=member_key,
-                    status=LEDGER_STATUS_FAILED,
-                    updated_at_us=_now_us(),
-                    failure_reason=FAILURE_REASON_PUBLISH,
-                    error_message=str(exc),
-                )
-                ledger.mark_failure(record)
-                failure_records.append(record)
-                continue
+                archive_had_failure = True
+                if archive_failure_reason is None:
+                    archive_failure_reason = FAILURE_REASON_EXTRACT
+                    archive_error_message = str(exc)
 
-            published += 1
-            published_files.append(published_file)
-            ledger.mark_success(
-                Quant360LedgerRecord(
-                    member_key=member_key,
-                    status=LEDGER_STATUS_SUCCESS,
-                    updated_at_us=_now_us(),
-                    bronze_rel_path=published_file.bronze_rel_path,
-                    output_sha256=published_file.output_sha256,
-                )
+        if dry_run:
+            continue
+
+        if archive_had_failure:
+            failed += 1
+            record = Quant360LedgerRecord(
+                archive_key=archive_key,
+                status=LEDGER_STATUS_FAILED,
+                updated_at_us=_now_us(),
+                failure_reason=archive_failure_reason,
+                error_message=archive_error_message,
+                member_count=len(member_jobs),
+                published_count=archive_published,
             )
+            ledger.mark_failure(record)
+            failure_records.append(record)
+            continue
+
+        ledger.mark_success(
+            Quant360LedgerRecord(
+                archive_key=archive_key,
+                status=LEDGER_STATUS_SUCCESS,
+                updated_at_us=_now_us(),
+                member_count=len(member_jobs),
+                published_count=archive_published,
+            )
+        )
 
     if not dry_run:
         ledger.save()

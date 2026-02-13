@@ -6,6 +6,7 @@ from datetime import date
 
 import polars as pl
 import pytest
+from pointline.validation_utils import DataQualityWarning
 
 from pointline.encoding import get_profile
 from pointline.io.vendors.binance_vision.parsers.klines import parse_binance_klines_csv
@@ -14,7 +15,6 @@ from pointline.tables.klines import (
     KLINE_SCHEMA,
     check_kline_completeness,
 )
-from pointline.validation_utils import DataQualityWarning
 
 # Exchange used throughout encoding/decoding tests (crypto profile)
 EXCHANGE = "binance-futures"

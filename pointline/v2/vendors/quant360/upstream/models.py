@@ -11,12 +11,12 @@ from pointline.v2.vendors.quant360.types import Quant360ArchiveMeta
 
 
 @dataclass(frozen=True)
-class Quant360MemberKey:
+class Quant360ArchiveKey:
+    source_filename: str
     archive_sha256: str
-    member_path: str
 
     def as_string(self) -> str:
-        return f"{self.archive_sha256}:{self.member_path}"
+        return f"{self.source_filename}:{self.archive_sha256}"
 
 
 @dataclass(frozen=True)
@@ -24,6 +24,13 @@ class Quant360ArchiveJob:
     archive_path: Path
     archive_meta: Quant360ArchiveMeta
     archive_sha256: str
+
+    @property
+    def archive_key(self) -> Quant360ArchiveKey:
+        return Quant360ArchiveKey(
+            source_filename=self.archive_meta.source_filename,
+            archive_sha256=self.archive_sha256,
+        )
 
 
 @dataclass(frozen=True)
@@ -44,13 +51,6 @@ class Quant360MemberJob:
     def trading_date(self) -> date:
         return self.archive_job.archive_meta.trading_date
 
-    @property
-    def member_key(self) -> Quant360MemberKey:
-        return Quant360MemberKey(
-            archive_sha256=self.archive_job.archive_sha256,
-            member_path=self.member_path,
-        )
-
 
 @dataclass(frozen=True)
 class Quant360MemberPayload:
@@ -60,7 +60,6 @@ class Quant360MemberPayload:
 
 @dataclass(frozen=True)
 class Quant360PublishedFile:
-    member_key: Quant360MemberKey
     bronze_rel_path: str
     output_path: Path
     output_sha256: str
@@ -85,13 +84,13 @@ class Quant360PublishedFile:
 
 @dataclass(frozen=True)
 class Quant360LedgerRecord:
-    member_key: Quant360MemberKey
+    archive_key: Quant360ArchiveKey
     status: str
     updated_at_us: int
     failure_reason: str | None = None
     error_message: str | None = None
-    bronze_rel_path: str | None = None
-    output_sha256: str | None = None
+    member_count: int | None = None
+    published_count: int | None = None
 
 
 @dataclass(frozen=True)

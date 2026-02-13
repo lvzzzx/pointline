@@ -11,16 +11,17 @@ from pointline.v2.vendors.quant360.upstream.contracts import (
 )
 from pointline.v2.vendors.quant360.upstream.models import (
     Quant360ArchiveJob,
+    Quant360ArchiveKey,
     Quant360MemberJob,
-    Quant360MemberKey,
 )
 
 
-def test_member_key_string_is_stable() -> None:
-    key = Quant360MemberKey(
-        archive_sha256="a" * 64, member_path="order_new_STK_SZ_20240102/000001.csv"
+def test_archive_key_string_is_stable() -> None:
+    key = Quant360ArchiveKey(
+        source_filename="order_new_STK_SZ_20240102.7z",
+        archive_sha256="d" * 64,
     )
-    assert key.as_string() == ("a" * 64) + ":order_new_STK_SZ_20240102/000001.csv"
+    assert key.as_string() == "order_new_STK_SZ_20240102.7z:" + ("d" * 64)
 
 
 def test_member_job_properties_follow_archive_meta() -> None:
@@ -45,7 +46,6 @@ def test_member_job_properties_follow_archive_meta() -> None:
     assert member_job.data_type == "order_new"
     assert member_job.exchange == "szse"
     assert member_job.trading_date == date(2024, 1, 2)
-    assert member_job.member_key.archive_sha256 == "b" * 64
 
 
 def test_ledger_status_values_are_explicit() -> None:

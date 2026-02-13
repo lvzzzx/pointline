@@ -11,7 +11,7 @@ from pointline.v2.vendors.quant360.upstream.contracts import (
     LEDGER_STATUS_FAILED,
     LEDGER_STATUS_SUCCESS,
 )
-from pointline.v2.vendors.quant360.upstream.models import Quant360LedgerRecord, Quant360MemberKey
+from pointline.v2.vendors.quant360.upstream.models import Quant360ArchiveKey, Quant360LedgerRecord
 
 
 def _now_us() -> int:
@@ -20,22 +20,22 @@ def _now_us() -> int:
 
 def _record_to_dict(record: Quant360LedgerRecord) -> dict[str, object]:
     return {
-        "archive_sha256": record.member_key.archive_sha256,
-        "member_path": record.member_key.member_path,
+        "source_filename": record.archive_key.source_filename,
+        "archive_sha256": record.archive_key.archive_sha256,
         "status": record.status,
         "updated_at_us": record.updated_at_us,
         "failure_reason": record.failure_reason,
         "error_message": record.error_message,
-        "bronze_rel_path": record.bronze_rel_path,
-        "output_sha256": record.output_sha256,
+        "member_count": record.member_count,
+        "published_count": record.published_count,
     }
 
 
 def _record_from_dict(data: dict[str, object]) -> Quant360LedgerRecord:
     return Quant360LedgerRecord(
-        member_key=Quant360MemberKey(
+        archive_key=Quant360ArchiveKey(
+            source_filename=str(data["source_filename"]),
             archive_sha256=str(data["archive_sha256"]),
-            member_path=str(data["member_path"]),
         ),
         status=str(data["status"]),
         updated_at_us=int(data["updated_at_us"]),
@@ -43,15 +43,15 @@ def _record_from_dict(data: dict[str, object]) -> Quant360LedgerRecord:
             str(data["failure_reason"]) if data.get("failure_reason") is not None else None
         ),
         error_message=str(data["error_message"]) if data.get("error_message") is not None else None,
-        bronze_rel_path=str(data["bronze_rel_path"])
-        if data.get("bronze_rel_path") is not None
-        else None,
-        output_sha256=str(data["output_sha256"]) if data.get("output_sha256") is not None else None,
+        member_count=int(data["member_count"]) if data.get("member_count") is not None else None,
+        published_count=(
+            int(data["published_count"]) if data.get("published_count") is not None else None
+        ),
     )
 
 
 class Quant360UpstreamLedger:
-    """Local JSON state store keyed by archive content hash + member path."""
+    """Local JSON state store keyed by archive identity."""
 
     def __init__(self, path: Path) -> None:
         self.path = path
@@ -87,16 +87,16 @@ class Quant360UpstreamLedger:
         tmp_path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
         tmp_path.replace(self.path)
 
-    def should_skip(self, key: Quant360MemberKey) -> bool:
+    def should_skip(self, key: Quant360ArchiveKey) -> bool:
         record = self._records.get(key.as_string())
         return record is not None and record.status == LEDGER_STATUS_SUCCESS
 
     def mark_success(self, record: Quant360LedgerRecord) -> None:
         if record.status != LEDGER_STATUS_SUCCESS:
             raise ValueError(f"mark_success requires status={LEDGER_STATUS_SUCCESS!r}")
-        self._records[record.member_key.as_string()] = record
+        self._records[record.archive_key.as_string()] = record
 
     def mark_failure(self, record: Quant360LedgerRecord) -> None:
         if record.status != LEDGER_STATUS_FAILED:
             raise ValueError(f"mark_failure requires status={LEDGER_STATUS_FAILED!r}")
-        self._records[record.member_key.as_string()] = record
+        self._records[record.archive_key.as_string()] = record

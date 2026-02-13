@@ -108,3 +108,28 @@ def test_runner_continues_when_one_archive_is_corrupted(tmp_path: Path) -> None:
     assert result.published == 1
     assert result.failed == 1
     assert any(record.failure_reason == "discover_error" for record in result.failure_records)
+
+
+def test_runner_marks_extract_failure_when_member_missing(tmp_path: Path, monkeypatch) -> None:
+    source_dir = tmp_path / "source"
+    bronze_root = tmp_path / "bronze"
+    ledger_path = tmp_path / "state" / "quant360_upstream.json"
+    source_dir.mkdir()
+
+    _write_archive(
+        source_dir / "order_new_STK_SZ_20240102.7z",
+        {"order_new_STK_SZ_20240102/000001.csv": "a,b\n1,2\n"},
+    )
+
+    real_iter = upstream_runner.iter_archive_members
+
+    def broken_iter(*args, **kwargs):
+        iterator = real_iter(*args, **kwargs)
+        yield from iterator
+        raise ValueError("simulated extract mismatch")
+
+    monkeypatch.setattr(upstream_runner, "iter_archive_members", broken_iter)
+
+    result = run_quant360_upstream(source_dir, bronze_root, ledger_path)
+    assert result.failed == 1
+    assert any(record.failure_reason == "extract_error" for record in result.failure_records)
