@@ -12,7 +12,10 @@ from collections.abc import Callable
 import polars as pl
 
 from pointline.vendors.tardis.parsers import (
+    parse_tardis_derivative_ticker,
     parse_tardis_incremental_l2,
+    parse_tardis_liquidations,
+    parse_tardis_options_chain,
     parse_tardis_quotes,
     parse_tardis_trades,
 )
@@ -25,6 +28,9 @@ _PARSER_BY_DATA_TYPE: dict[str, TardisParser] = {
     "incremental_book_L2": parse_tardis_incremental_l2,
     "incremental_book_l2": parse_tardis_incremental_l2,
     "orderbook_updates": parse_tardis_incremental_l2,
+    "derivative_ticker": parse_tardis_derivative_ticker,
+    "liquidations": parse_tardis_liquidations,
+    "options_chain": parse_tardis_options_chain,
 }
 
 

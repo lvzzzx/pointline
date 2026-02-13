@@ -4,7 +4,10 @@ import polars as pl
 
 from pointline.schemas.types import PRICE_SCALE, QTY_SCALE
 from pointline.vendors.tardis import (
+    parse_tardis_derivative_ticker,
     parse_tardis_incremental_l2,
+    parse_tardis_liquidations,
+    parse_tardis_options_chain,
     parse_tardis_quotes,
     parse_tardis_trades,
 )
@@ -188,3 +191,229 @@ def test_parse_tardis_incremental_l2_multi_symbol() -> None:
     assert out["symbol"].to_list() == ["BTCUSDT", "ETHUSDT"]
     assert out["exchange"].to_list() == ["binance-futures", "binance-futures"]
     assert out["is_snapshot"].to_list() == [False, True]
+
+
+# --- derivative_ticker ---
+
+
+def test_parse_tardis_derivative_ticker_scales_prices_and_keeps_rates() -> None:
+    raw = pl.DataFrame(
+        {
+            "exchange": ["binance-futures"],
+            "symbol": ["BTCUSDT"],
+            "timestamp": [1_700_000_000_000_100],
+            "local_timestamp": [1_700_000_000_000_200],
+            "mark_price": [43_210.5],
+            "index_price": [43_200.0],
+            "last_price": [43_215.0],
+            "open_interest": [1234.5],
+            "funding_rate": [0.0001],
+            "predicted_funding_rate": [0.00012],
+            "funding_timestamp": [1_700_003_600_000_000],
+        }
+    )
+
+    out = parse_tardis_derivative_ticker(raw)
+    assert out.columns == [
+        "symbol",
+        "exchange",
+        "ts_event_us",
+        "ts_local_us",
+        "mark_price",
+        "index_price",
+        "last_price",
+        "open_interest",
+        "funding_rate",
+        "predicted_funding_rate",
+        "funding_timestamp",
+    ]
+    assert out["exchange"][0] == "binance-futures"
+    assert out["symbol"][0] == "BTCUSDT"
+    assert out["ts_event_us"][0] == 1_700_000_000_000_100
+    assert out["ts_local_us"][0] == 1_700_000_000_000_200
+    assert out["mark_price"][0] == int(round(43_210.5 * PRICE_SCALE))
+    assert out["index_price"][0] == int(round(43_200.0 * PRICE_SCALE))
+    assert out["last_price"][0] == int(round(43_215.0 * PRICE_SCALE))
+    assert out["open_interest"][0] == int(round(1234.5 * QTY_SCALE))
+    assert out["funding_rate"][0] == 0.0001
+    assert out["predicted_funding_rate"][0] == 0.00012
+    assert out["funding_timestamp"][0] == 1_700_003_600_000_000
+
+
+def test_parse_tardis_derivative_ticker_handles_optional_columns() -> None:
+    raw = pl.DataFrame(
+        {
+            "exchange": ["deribit"],
+            "symbol": ["BTC-PERPETUAL"],
+            "timestamp": [1_700_000_000_000_100],
+            "mark_price": [43_000.0],
+        }
+    )
+
+    out = parse_tardis_derivative_ticker(raw)
+    assert out["mark_price"][0] == int(round(43_000.0 * PRICE_SCALE))
+    assert out["index_price"][0] is None
+    assert out["last_price"][0] is None
+    assert out["open_interest"][0] is None
+    assert out["funding_rate"][0] is None
+    assert out["predicted_funding_rate"][0] is None
+    assert out["funding_timestamp"][0] is None
+    assert out["ts_local_us"][0] is None
+
+
+# --- liquidations ---
+
+
+def test_parse_tardis_liquidations_scales_and_maps_fields() -> None:
+    raw = pl.DataFrame(
+        {
+            "exchange": ["binance-futures"],
+            "symbol": ["BTCUSDT"],
+            "timestamp": [1_700_000_000_000_100],
+            "local_timestamp": [1_700_000_000_000_200],
+            "id": ["liq-1"],
+            "side": ["SELL"],
+            "price": [42_500.0],
+            "amount": [0.1],
+        }
+    )
+
+    out = parse_tardis_liquidations(raw)
+    assert out.columns == [
+        "symbol",
+        "exchange",
+        "ts_event_us",
+        "ts_local_us",
+        "liquidation_id",
+        "side",
+        "price",
+        "qty",
+    ]
+    assert out["exchange"][0] == "binance-futures"
+    assert out["symbol"][0] == "BTCUSDT"
+    assert out["ts_event_us"][0] == 1_700_000_000_000_100
+    assert out["ts_local_us"][0] == 1_700_000_000_000_200
+    assert out["liquidation_id"][0] == "liq-1"
+    assert out["side"][0] == "sell"
+    assert out["price"][0] == int(round(42_500.0 * PRICE_SCALE))
+    assert out["qty"][0] == int(round(0.1 * QTY_SCALE))
+
+
+def test_parse_tardis_liquidations_handles_optional_id() -> None:
+    raw = pl.DataFrame(
+        {
+            "exchange": ["okx"],
+            "symbol": ["BTC-USDT-SWAP"],
+            "timestamp": [1_700_000_000_000_100],
+            "side": ["buy"],
+            "price": [100.0],
+            "amount": [1.0],
+        }
+    )
+
+    out = parse_tardis_liquidations(raw)
+    assert out["liquidation_id"][0] is None
+
+
+# --- options_chain ---
+
+
+def test_parse_tardis_options_chain_scales_and_maps_fields() -> None:
+    raw = pl.DataFrame(
+        {
+            "exchange": ["deribit"],
+            "symbol": ["BTC-20240126-42000-C"],
+            "timestamp": [1_700_000_000_000_100],
+            "local_timestamp": [1_700_000_000_000_200],
+            "type": ["Call"],
+            "strike_price": [42_000.0],
+            "expiration": [1_706_284_800_000_000],
+            "open_interest": [500.0],
+            "last_price": [0.05],
+            "bid_price": [0.045],
+            "bid_amount": [10.0],
+            "bid_iv": [0.55],
+            "ask_price": [0.055],
+            "ask_amount": [8.0],
+            "ask_iv": [0.58],
+            "mark_price": [0.05],
+            "mark_iv": [0.56],
+            "underlying_index": ["BTC"],
+            "underlying_price": [43_000.0],
+            "delta": [0.45],
+            "gamma": [0.0001],
+            "vega": [15.5],
+            "theta": [-20.3],
+            "rho": [0.5],
+        }
+    )
+
+    out = parse_tardis_options_chain(raw)
+    assert out.columns == [
+        "symbol",
+        "exchange",
+        "ts_event_us",
+        "ts_local_us",
+        "option_type",
+        "strike",
+        "expiration_ts_us",
+        "open_interest",
+        "last_price",
+        "bid_price",
+        "bid_qty",
+        "bid_iv",
+        "ask_price",
+        "ask_qty",
+        "ask_iv",
+        "mark_price",
+        "mark_iv",
+        "underlying_index",
+        "underlying_price",
+        "delta",
+        "gamma",
+        "vega",
+        "theta",
+        "rho",
+    ]
+    assert out["exchange"][0] == "deribit"
+    assert out["option_type"][0] == "call"
+    assert out["strike"][0] == int(round(42_000.0 * PRICE_SCALE))
+    assert out["expiration_ts_us"][0] == 1_706_284_800_000_000
+    assert out["open_interest"][0] == int(round(500.0 * QTY_SCALE))
+    assert out["last_price"][0] == int(round(0.05 * PRICE_SCALE))
+    assert out["bid_price"][0] == int(round(0.045 * PRICE_SCALE))
+    assert out["bid_qty"][0] == int(round(10.0 * QTY_SCALE))
+    assert out["bid_iv"][0] == 0.55
+    assert out["ask_price"][0] == int(round(0.055 * PRICE_SCALE))
+    assert out["ask_qty"][0] == int(round(8.0 * QTY_SCALE))
+    assert out["ask_iv"][0] == 0.58
+    assert out["mark_price"][0] == int(round(0.05 * PRICE_SCALE))
+    assert out["mark_iv"][0] == 0.56
+    assert out["underlying_index"][0] == "BTC"
+    assert out["underlying_price"][0] == int(round(43_000.0 * PRICE_SCALE))
+    assert out["delta"][0] == 0.45
+    assert out["gamma"][0] == 0.0001
+    assert out["vega"][0] == 15.5
+    assert out["theta"][0] == -20.3
+    assert out["rho"][0] == 0.5
+
+
+def test_parse_tardis_options_chain_handles_minimal_columns() -> None:
+    raw = pl.DataFrame(
+        {
+            "exchange": ["deribit"],
+            "symbol": ["BTC-20240126-42000-P"],
+            "timestamp": [1_700_000_000_000_100],
+            "type": ["Put"],
+            "strike_price": [42_000.0],
+            "expiration": [1_706_284_800_000_000],
+        }
+    )
+
+    out = parse_tardis_options_chain(raw)
+    assert out["option_type"][0] == "put"
+    assert out["strike"][0] == int(round(42_000.0 * PRICE_SCALE))
+    assert out["open_interest"][0] is None
+    assert out["bid_price"][0] is None
+    assert out["delta"][0] is None
+    assert out["underlying_index"][0] is None

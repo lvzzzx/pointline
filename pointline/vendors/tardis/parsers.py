@@ -56,6 +56,24 @@ def _first_present_int64(df: pl.DataFrame, *, candidates: tuple[str, ...]) -> pl
     return pl.lit(None, dtype=pl.Int64)
 
 
+def _optional_float64(df: pl.DataFrame, *, column: str) -> pl.Expr:
+    if column in df.columns:
+        return pl.col(column).cast(pl.Float64)
+    return pl.lit(None, dtype=pl.Float64)
+
+
+def _optional_scaled(df: pl.DataFrame, *, column: str, scale: int) -> pl.Expr:
+    if column in df.columns:
+        return _scaled_expr(column, scale=scale)
+    return pl.lit(None, dtype=pl.Int64)
+
+
+def _optional_int64(df: pl.DataFrame, *, column: str) -> pl.Expr:
+    if column in df.columns:
+        return pl.col(column).cast(pl.Int64)
+    return pl.lit(None, dtype=pl.Int64)
+
+
 def _require_non_null_ts_event(df: pl.DataFrame, *, context: str) -> None:
     if "ts_event_us" not in df.columns:
         raise ValueError(f"{context}: ts_event_us missing after parsing")
@@ -184,6 +202,163 @@ def parse_tardis_incremental_l2(df: pl.DataFrame) -> pl.DataFrame:
             "price",
             "qty",
             "is_snapshot",
+        ]
+    )
+
+    _require_non_null_ts_event(parsed, context=context)
+    return parsed
+
+
+def parse_tardis_derivative_ticker(df: pl.DataFrame) -> pl.DataFrame:
+    """Parse Tardis derivative_ticker CSV rows into canonical columns.
+
+    Scales price fields via PRICE_SCALE and open_interest via QTY_SCALE.
+    Keeps funding_rate / predicted_funding_rate as raw Float64.
+    """
+
+    context = "parse_tardis_derivative_ticker"
+    _require_columns(df, ["exchange", "symbol", "mark_price"], context=context)
+
+    parsed = df.with_columns(
+        [
+            pl.col("exchange").cast(pl.Utf8).str.strip_chars().str.to_lowercase().alias("exchange"),
+            pl.col("symbol").cast(pl.Utf8).str.strip_chars().alias("symbol"),
+            _resolve_ts_event_expr(df, context=context).alias("ts_event_us"),
+            _resolve_ts_local_expr(df).alias("ts_local_us"),
+            _scaled_expr("mark_price", scale=PRICE_SCALE).alias("mark_price"),
+            _optional_scaled(df, column="index_price", scale=PRICE_SCALE).alias("index_price"),
+            _optional_scaled(df, column="last_price", scale=PRICE_SCALE).alias("last_price"),
+            _optional_scaled(df, column="open_interest", scale=QTY_SCALE).alias("open_interest"),
+            _optional_float64(df, column="funding_rate").alias("funding_rate"),
+            _optional_float64(df, column="predicted_funding_rate").alias("predicted_funding_rate"),
+            _optional_int64(df, column="funding_timestamp").alias("funding_timestamp"),
+        ]
+    ).select(
+        [
+            "symbol",
+            "exchange",
+            "ts_event_us",
+            "ts_local_us",
+            "mark_price",
+            "index_price",
+            "last_price",
+            "open_interest",
+            "funding_rate",
+            "predicted_funding_rate",
+            "funding_timestamp",
+        ]
+    )
+
+    _require_non_null_ts_event(parsed, context=context)
+    return parsed
+
+
+def parse_tardis_liquidations(df: pl.DataFrame) -> pl.DataFrame:
+    """Parse Tardis liquidations CSV rows into canonical columns.
+
+    Nearly identical to trades: scales price/amount, maps side, optional id.
+    """
+
+    context = "parse_tardis_liquidations"
+    _require_columns(df, ["exchange", "symbol", "side", "price", "amount"], context=context)
+
+    parsed = df.with_columns(
+        [
+            pl.col("exchange").cast(pl.Utf8).str.strip_chars().str.to_lowercase().alias("exchange"),
+            pl.col("symbol").cast(pl.Utf8).str.strip_chars().alias("symbol"),
+            _resolve_ts_event_expr(df, context=context).alias("ts_event_us"),
+            _resolve_ts_local_expr(df).alias("ts_local_us"),
+            _optional_utf8(df, column="id").alias("liquidation_id"),
+            pl.col("side").cast(pl.Utf8).str.strip_chars().str.to_lowercase().alias("side"),
+            _scaled_expr("price", scale=PRICE_SCALE).alias("price"),
+            _scaled_expr("amount", scale=QTY_SCALE).alias("qty"),
+        ]
+    ).select(
+        [
+            "symbol",
+            "exchange",
+            "ts_event_us",
+            "ts_local_us",
+            "liquidation_id",
+            "side",
+            "price",
+            "qty",
+        ]
+    )
+
+    _require_non_null_ts_event(parsed, context=context)
+    return parsed
+
+
+def parse_tardis_options_chain(df: pl.DataFrame) -> pl.DataFrame:
+    """Parse Tardis options_chain CSV rows into canonical columns.
+
+    Scales strike and price columns via PRICE_SCALE, quantities via QTY_SCALE.
+    Keeps IV and Greeks as raw Float64. Maps ``type`` → ``option_type``.
+    """
+
+    context = "parse_tardis_options_chain"
+    _require_columns(
+        df,
+        ["exchange", "symbol", "type", "strike_price", "expiration"],
+        context=context,
+    )
+
+    parsed = df.with_columns(
+        [
+            pl.col("exchange").cast(pl.Utf8).str.strip_chars().str.to_lowercase().alias("exchange"),
+            pl.col("symbol").cast(pl.Utf8).str.strip_chars().alias("symbol"),
+            _resolve_ts_event_expr(df, context=context).alias("ts_event_us"),
+            _resolve_ts_local_expr(df).alias("ts_local_us"),
+            pl.col("type").cast(pl.Utf8).str.strip_chars().str.to_lowercase().alias("option_type"),
+            _scaled_expr("strike_price", scale=PRICE_SCALE).alias("strike"),
+            pl.col("expiration").cast(pl.Int64).alias("expiration_ts_us"),
+            _optional_scaled(df, column="open_interest", scale=QTY_SCALE).alias("open_interest"),
+            _optional_scaled(df, column="last_price", scale=PRICE_SCALE).alias("last_price"),
+            _optional_scaled(df, column="bid_price", scale=PRICE_SCALE).alias("bid_price"),
+            _optional_scaled(df, column="bid_amount", scale=QTY_SCALE).alias("bid_qty"),
+            _optional_float64(df, column="bid_iv").alias("bid_iv"),
+            _optional_scaled(df, column="ask_price", scale=PRICE_SCALE).alias("ask_price"),
+            _optional_scaled(df, column="ask_amount", scale=QTY_SCALE).alias("ask_qty"),
+            _optional_float64(df, column="ask_iv").alias("ask_iv"),
+            _optional_scaled(df, column="mark_price", scale=PRICE_SCALE).alias("mark_price"),
+            _optional_float64(df, column="mark_iv").alias("mark_iv"),
+            _optional_utf8(df, column="underlying_index").alias("underlying_index"),
+            _optional_scaled(df, column="underlying_price", scale=PRICE_SCALE).alias(
+                "underlying_price"
+            ),
+            _optional_float64(df, column="delta").alias("delta"),
+            _optional_float64(df, column="gamma").alias("gamma"),
+            _optional_float64(df, column="vega").alias("vega"),
+            _optional_float64(df, column="theta").alias("theta"),
+            _optional_float64(df, column="rho").alias("rho"),
+        ]
+    ).select(
+        [
+            "symbol",
+            "exchange",
+            "ts_event_us",
+            "ts_local_us",
+            "option_type",
+            "strike",
+            "expiration_ts_us",
+            "open_interest",
+            "last_price",
+            "bid_price",
+            "bid_qty",
+            "bid_iv",
+            "ask_price",
+            "ask_qty",
+            "ask_iv",
+            "mark_price",
+            "mark_iv",
+            "underlying_index",
+            "underlying_price",
+            "delta",
+            "gamma",
+            "vega",
+            "theta",
+            "rho",
         ]
     )
 
