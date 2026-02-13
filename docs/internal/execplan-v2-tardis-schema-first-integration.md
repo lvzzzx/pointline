@@ -68,7 +68,7 @@ Key terms used in this plan:
 - PIT (point in time) means symbol resolution uses the validity window `valid_from_ts_us <= ts_event_us < valid_until_ts_us`.
 - Tie-break keys mean deterministic ordering columns used for replay-safe sorting.
 
-Current gap: Tardis source semantics are documented in `docs/data_sources/tardis.md`, but there is no active Tardis parser/dispatch module in runtime code.
+Current gap: Tardis source semantics are documented in `docs/references/tardis.md`, but there is no active Tardis parser/dispatch module in runtime code.
 
 ## Plan of Work
 

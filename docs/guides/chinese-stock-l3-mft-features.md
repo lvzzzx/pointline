@@ -1942,7 +1942,7 @@ def estimate_slippage_l3(
 
 - `docs/guides/feature-pipeline-modes.md` - PIT-safe pipeline templates
 - `docs/guides/cotrading-networks-chinese-stocks.md` - Co-trading networks for cross-stock dependency modeling
-- `docs/data_sources/quant360_cn_l2.md` - Quant360 data source documentation with v2 schema
+- `docs/references/quant360_cn_l2.md` - Quant360 data source documentation with v2 schema
 - `pointline/schemas/events_cn.py` - v2 canonical table schemas
 - `docs/internal/execplan-v2-quant360-cn-l2-integration.md` - v2 integration plan
 
@@ -2063,4 +2063,4 @@ This document has been updated to reflect the Pointline v2 canonical schema. Key
 - **SSE**: `order_type` is NULL (not provided); `channel_biz_seq` is populated
 - **Aggressor Side**: Can be inferred by comparing `bid_order_ref` vs `ask_order_ref`
 
-For complete data source documentation, see `docs/data_sources/quant360_cn_l2.md`.
+For complete data source documentation, see `docs/references/quant360_cn_l2.md`.

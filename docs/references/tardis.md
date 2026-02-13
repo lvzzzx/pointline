@@ -475,7 +475,7 @@ for ts, group in grouped:
 
 ---
 
-## Appendix: Sample Data URLs
+## 11. Appendix: Sample Data URLs
 
 ### Free Samples (First of Month)
 

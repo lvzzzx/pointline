@@ -85,7 +85,7 @@ Production note: `research.pipeline(...)` and `research.workflow(...)` are the c
 | [Research API Guide](reference/api-reference.md) | Complete API reference with examples |
 | [CLI Reference](reference/cli-reference.md) | All CLI commands with examples ✨ **NEW** |
 | [Schemas](reference/schemas.md) | Table structures, data types, and field definitions |
-| [Data Sources](data_sources/quant360_szse_l2.md) | Vendor-specific documentation |
+| [Data Sources](references/quant360_cn_l2.md) | Vendor-specific documentation |
 
 **CLI Reference:**
 ```bash

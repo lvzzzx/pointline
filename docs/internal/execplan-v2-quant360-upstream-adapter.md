@@ -16,7 +16,7 @@ The user-visible behavior is that upstream processing becomes a separate, explic
 - [x] (2026-02-13 01:30Z) Created v2 upstream adapter package under `pointline/v2/vendors/quant360/upstream/` with contracts, models, discovery, extraction, publish, ledger, and runner modules.
 - [x] (2026-02-13 01:35Z) Implemented deterministic archive-to-extracted publish flow using `py7zr`, deterministic layout paths, and atomic temp-file rename.
 - [x] (2026-02-13 01:45Z) Added adapter-facing tests for success, idempotency rerun skip, partial retry after injected failure, archive name validation, corrupted archive continuation, and ledger state persistence.
-- [x] (2026-02-13 01:55Z) Integrated active docs references (`docs/data_sources/quant360_cn_l2.md` and sibling integration ExecPlan) to make the extracted-file contract explicit and keep archive handling upstream-only.
+- [x] (2026-02-13 01:55Z) Integrated active docs references (`docs/references/quant360_cn_l2.md` and sibling integration ExecPlan) to make the extracted-file contract explicit and keep archive handling upstream-only.
 - [x] (2026-02-13 12:10Z) Refactored ledger from member-level to archive-level (one record per `.7z`) and updated runner/tests for archive-granularity skip/retry.
 
 ## Surprises & Discoveries
@@ -89,7 +89,7 @@ Milestone 4 adds idempotent ledger behavior and failure recovery. In `ledger.py`
 
 Milestone 5 defines v2 handoff and verification tests. The runner must return a deterministic list of published extracted files and enough metadata to construct `BronzeFileMetadata` objects for downstream ingestion. Add tests under `tests/v2/quant360/` to prove success path, idempotent rerun, partial retry after injected failure, invalid archive filename rejection, corrupted archive handling, malformed member path handling, and stable ordering of produced metadata.
 
-Milestone 6 updates docs and active references. Update `docs/data_sources/quant360_cn_l2.md` and this plan’s sibling v2 integration plan to clearly state that v2 core contract is extracted files, while archive extraction is handled by the upstream adapter in `pointline/v2/vendors/quant360/upstream/`.
+Milestone 6 updates docs and active references. Update `docs/references/quant360_cn_l2.md` and this plan’s sibling v2 integration plan to clearly state that v2 core contract is extracted files, while archive extraction is handled by the upstream adapter in `pointline/v2/vendors/quant360/upstream/`.
 
 ## Concrete Steps
 
