@@ -50,11 +50,10 @@ def _parse_yyyymmdd_us(expr: pl.Expr) -> pl.Expr:
 def stock_basic_to_snapshot(raw: pl.DataFrame) -> pl.DataFrame:
     """Convert Tushare stock_basic to a v2 dim_symbol snapshot.
 
-    Filters to listed (L) and paused (P) stocks.  Returns a DataFrame with
-    the snapshot columns expected by ``dim_symbol.bootstrap()`` /
-    ``dim_symbol.upsert()``.
+    Includes listed (L), paused (P), and delisted (D) stocks.
+    Delisted stocks are included for historical PIT correctness.
     """
-    df = raw.filter(pl.col("list_status").is_in(["L", "P"]))
+    df = raw.filter(pl.col("list_status").is_in(["L", "P", "D"]))
 
     df = df.with_columns(_normalize_exchange(pl.col("exchange")).alias("exchange"))
     df = df.filter(pl.col("exchange").is_not_null())

@@ -85,24 +85,32 @@ def main():
     existing_version = store.current_version()
     print(f"  Current version: {existing_version}, rows: {dim.height if not dim.is_empty() else 0}")
 
-    # Fetch listed stocks
+    # Fetch all stocks (listed + paused + delisted) for complete history
     print(f"Fetching stock_basic from Tushare (exchange={args.exchange or 'all'})")
+
+    # Fetch listed/paused
     listed_raw = fetch_stock_basic(pro, exchange=args.exchange, list_status="L")
     print(f"  Listed stocks: {len(listed_raw)}")
 
+    # Fetch delisted (for both snapshot AND delistings)
+    delisted_raw = fetch_stock_basic(pro, exchange=args.exchange, list_status="D")
+    print(f"  Delisted stocks: {len(delisted_raw)}")
+
+    # Combine for snapshot (includes delisted for historical PIT)
+    all_raw = pl.concat([listed_raw, delisted_raw], how="diagonal")
+    print(f"  Total for snapshot: {len(all_raw)}")
+
     # Transform using vendor module (handles STAR Market lot_size)
-    snapshot = stock_basic_to_snapshot(listed_raw)
+    snapshot = stock_basic_to_snapshot(all_raw)
     print(f"  Snapshot rows: {len(snapshot)}")
 
-    # Fetch delistings
-    print("Fetching delisted stocks")
-    delisted_raw = fetch_stock_basic(pro, exchange=args.exchange, list_status="D")
+    # Delistings for SCD2 close logic
     delistings = stock_basic_to_delistings(delisted_raw)
     if delistings is not None and len(delistings) > 0:
-        print(f"  Delisted stocks: {len(delistings)}")
+        print(f"  Delistings for SCD2: {len(delistings)}")
     else:
         delistings = None
-        print("  No delisted stocks")
+        print("  No delistings")
 
     # Perform SCD2 upsert
     print("Performing SCD2 upsert")
