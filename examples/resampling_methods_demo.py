@@ -6,7 +6,6 @@ This example demonstrates how to use different resampling methods
 Run: python examples/resampling_methods_demo.py
 """
 
-from pointline.registry import find_symbol
 from pointline.research.features import (
     ClockSpineConfig,
     DollarBarConfig,
@@ -17,6 +16,7 @@ from pointline.research.features import (
     build_event_spine,
     build_feature_frame,
 )
+from pointline.tables.dim_symbol import find_symbol
 
 
 def demo_clock_spine():

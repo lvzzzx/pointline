@@ -1,73 +1,193 @@
-# Pointline Architecture (One-Page Design)
+# Pointline Architecture v2
 
-**Status:** Live
-**Scope:** Local-host offline research data lake (single machine)
+**Status:** Current
+**Scope:** Single-node offline market data lake for deterministic ingestion and research
 
-## 1) System Purpose
+---
 
-Pointline provides deterministic, point-in-time-safe ingestion and research on market data using a local Delta Lake stack.
+## 1) Philosophy
 
-Core goals:
-- PIT correctness for replay and feature computation.
-- Deterministic reruns with stable lineage.
-- Fast local iteration with operational simplicity.
+Keep it clean, clear, and simple:
+
+- **Schemas are code.** One canonical schema per table, versioned only by git history.
+- **Ingestion is function-first.** No heavy framework; just parsers, pipelines, and manifests.
+- **Keep only mechanisms that protect PIT correctness and replay determinism.**
+- **No backward compatibility.** Rebuild/re-ingest is the migration path.
+
+---
 
 ## 2) Canonical Stack
 
-- Storage: Delta Lake (`delta-rs`)
-- Compute: Polars (primary), DuckDB (ad hoc SQL)
-- Runtime model: local filesystem only (no distributed/cloud backend)
+| Layer | Technology |
+|-------|------------|
+| Storage | Delta Lake (`delta-rs`) |
+| Compute | Polars |
+| Runtime | Local filesystem, single machine only |
+
+No cloud/distributed assumptions. No legacy adapter paths.
+
+---
 
 ## 3) Data Lake Model
 
-- **Bronze**: Immutable raw vendor files and API captures.
-- **Silver**: Typed normalized tables with lineage (`file_id`, `file_line_number`).
-- **Gold**: Optional derived tables when justified by query demand.
+### Bronze
+Immutable raw vendor files and API captures.
 
-Default partitioning: `exchange`, `date`.
+### Silver
+Typed, normalized event/dimension/control tables with deterministic lineage.
 
-## 4) Ingestion Contract
+### Gold
+Optional derived tables (user-defined, out of scope for core).
 
-Pipeline stages:
-1. Discover Bronze files.
-2. Skip already successful files via `silver.ingest_manifest`.
-3. Parse/normalize to Silver schema.
-4. Resolve symbols via `dim_symbol` (SCD2, PIT validity windows).
-5. Apply validation + quarantine rules.
-6. Write Silver table (idempotent semantics).
-7. Record status in manifest and validation log.
+### Lineage Fields (Silver Event Tables)
+Every event row carries:
+- `file_id` — stable identifier for the source Bronze file
+- `file_seq` — deterministic sequence within that file
 
-Identity key for file-level tracking:
-`(vendor, data_type, bronze_file_name, sha256)`.
+---
 
-## 5) Research Contract
+## 4) Partition Contract (Timezone Aware)
 
-Canonical APIs:
-- `research.pipeline(request: QuantResearchInputV2) -> QuantResearchOutputV2`
-- `research.workflow(request: QuantResearchWorkflowInputV2) -> QuantResearchWorkflowOutputV2`
+Event tables are partitioned by:
 
-Execution invariants:
-- Half-open windows: `[T_prev, T)`.
-- Backward-only feature direction (forward logic is label-only).
-- Deterministic sort/tie-break keys:
-  `exchange_id, symbol_id, ts_local_us, file_id, file_line_number`.
-- Registry-governed operators/rollups; fail-fast gates on PIT/determinism violations.
+```
+(exchange, trading_date)
+```
 
-## 6) Layering Rules
+`trading_date` is derived from `ts_event_us` converted to **exchange-local time**:
 
-- **Domain (`pointline/tables/*`)**: pure schema/transform logic, no IO side effects.
-- **Services (`pointline/services/*`)**: orchestration and sequencing.
-- **IO (`pointline/io/*`)**: Delta read/write/merge, maintenance, physical layout.
+1. `ts_event_us` is UTC microseconds.
+2. Convert using canonical `exchange -> timezone` mapping.
+3. `trading_date = local_datetime.date()`.
 
-## 7) Operational Defaults
+**Timezone Mappings:**
+- Crypto exchanges: UTC (unless explicitly overridden)
+- China A-share (`sse`, `szse`): `Asia/Shanghai`
+
+---
+
+## 5) Ingestion Contract
+
+Single-file flow (`ingest_file(meta) -> result`):
+
+1. **Discover** candidate Bronze files.
+2. **Idempotency gate** via manifest success state.
+3. **Parse** and canonicalize rows.
+4. **Derive and validate** `(exchange, trading_date)` partition alignment.
+5. **Resolve/check** PIT symbol coverage via `dim_symbol`.
+6. **Apply validation** and quarantine rules.
+7. **Write Silver** with deterministic lineage (`file_id`, `file_seq`).
+8. **Record status** and diagnostics in control tables.
+
+### Manifest Identity
+Key: `(vendor, data_type, bronze_path, file_hash)`
+
+### Status Model
+```
+pending | success | failed | quarantined
+```
+
+### Failure Paths
+- Empty parse → `failed`
+- Exchange-timezone partition mismatch → `failed`
+- No PIT symbol coverage → `quarantined`
+- Validation removes all rows → `quarantined`
+
+---
+
+## 6) Schema Contract
+
+- Event timestamps: `Int64` microseconds (`*_ts_us`)
+- Monetary/quantity fields: scaled `Int64` (no float in canonical storage)
+- `symbol_id`: deterministic and stable across reruns
+- `dim_symbol`: SCD2 validity windows (`valid_from_ts_us <= ts < valid_until_ts_us`)
+
+Canonical schema definitions live in `pointline/schemas/`.
+
+---
+
+## 7) Determinism Contract
+
+Replay ordering must be explicit and stable.
+
+**Default Tie-Break Keys:**
+
+| Table Type | Tie-Break Order |
+|------------|-----------------|
+| trades, quotes | `(exchange, symbol_id, ts_event_us, file_id, file_seq)` |
+| orderbook updates | `(exchange, symbol_id, ts_event_us, book_seq, file_id, file_seq)` |
+
+---
+
+## 8) Module Layout
+
+```
+pointline/
+├── __init__.py       # Public exports (TRADES, QUOTES, get_table_spec, etc.)
+├── protocols.py      # Core protocols (BronzeFileMetadata, etc.)
+├── dim_symbol.py     # SCD2 dimension utilities
+├── schemas/          # Canonical schema registry (types, events, dimensions, control)
+├── ingestion/        # Function-first ingestion pipeline
+│   ├── pipeline.py   # ingest_file()
+│   ├── manifest.py   # Manifest operations
+│   ├── timezone.py   # Exchange-timezone derivation
+│   ├── pit.py        # PIT coverage checks
+│   └── lineage.py    # file_id, file_seq assignment
+├── storage/          # Storage adapters
+│   ├── contracts.py  # Store protocols
+│   └── delta/        # Delta Lake implementations
+│       ├── event_store.py
+│       ├── dimension_store.py
+│       ├── manifest_store.py
+│       └── quarantine_store.py
+├── vendors/          # Vendor integrations
+│   ├── quant360/     # Quant360 CN L2/L3 data
+│   └── tushare/      # Tushare symbol data
+└── research/         # Research API
+    ├── query.py      # Event loading
+    ├── spine.py      # Spine builders
+    └── discovery.py  # Symbol discovery
+```
+
+### Key Import Paths
+
+```python
+# Core schemas
+from pointline import TRADES, QUOTES, ORDERBOOK_UPDATES, DIM_SYMBOL
+from pointline.schemas import get_table_spec
+
+# Ingestion
+from pointline.ingestion.pipeline import ingest_file
+from pointline.protocols import BronzeFileMetadata
+
+# Storage
+from pointline.storage.delta import DeltaEventStore, DeltaDimensionStore
+
+# Research
+from pointline.research import load_events, build_spine, discover_symbols
+```
+
+---
+
+## 9) Operational Defaults
 
 - Correctness over throughput.
-- Explicit operator-driven maintenance (`optimize`, `vacuum`).
-- No backward compatibility guarantee for legacy contracts in this clean-break architecture.
+- Explicit maintenance (`optimize`, `vacuum`) by operator choice.
+- No backward compatibility guarantee for legacy contracts.
+- No mandatory migration path for old schema versions; rebuild/re-ingest is acceptable.
 
-## 8) Out of Scope
+---
 
-- Live execution/routing.
-- Cloud object storage.
-- Distributed compute/storage backends.
-- Automatic migration of historical legacy formats.
+## 10) Out of Scope
+
+- Live execution/routing
+- Cloud object storage
+- Distributed compute/storage backends
+- CLI orchestration (separate concern)
+
+---
+
+## 11) References
+
+- Ingestion design: `docs/architecture/simplified-ingestion-design-v2.md`
+- V2 cleanup plan: `docs/internal/execplan-v2-final-cleanup.md`

@@ -1,9 +1,9 @@
 # Chinese Stock L3 MFT Features - Supplement
 ## Beyond Call Auctions: Order Flow, Toxicity & Microstructure
 
-**Persona:** Quant Researcher (MFT)  
-**Data Source:** SZSE/SSE Level 3 (l3_orders, l3_ticks)  
-**Scope:** Continuous trading microstructure features  
+**Persona:** Quant Researcher (MFT)
+**Data Source:** SZSE/SSE Level 3 (l3_orders, l3_ticks)
+**Scope:** Continuous trading microstructure features
 **Version:** 1.0
 
 ---
@@ -50,32 +50,32 @@ def calculate_vpin(
         .otherwise(-pl.col("qty"))
         .alias("signed_volume"),
     ])
-    
+
     # Create volume buckets (accumulate until bucket_size reached)
     ticks = ticks.with_columns([
         pl.col("qty").cum_sum().alias("cum_volume"),
     ])
-    
+
     ticks = ticks.with_columns([
         (pl.col("cum_volume") / volume_bucket_size).floor().alias("volume_bucket"),
     ])
-    
+
     # Calculate imbalance within each bucket
     bucket_imbalance = ticks.group_by("volume_bucket").agg([
         pl.col("signed_volume").abs().sum().alias("bucket_imbalance"),
         pl.col("qty").sum().alias("bucket_volume"),
     ])
-    
+
     # VPIN = average |imbalance| / volume across buckets
     bucket_imbalance = bucket_imbalance.with_columns([
         (pl.col("bucket_imbalance") / pl.col("bucket_volume")).alias("bucket_vpin"),
     ])
-    
+
     # Rolling VPIN
     bucket_imbalance = bucket_imbalance.with_columns([
         pl.col("bucket_vpin").rolling_mean(window_size=n_buckets).alias("vpin"),
     ])
-    
+
     return bucket_imbalance
 ```
 
@@ -113,7 +113,7 @@ def bulk_volume_classification(
         on="ts_local_us",
         strategy="backward",
     )
-    
+
     # BVC formula: weight = (price - low) / (high - low)
     ticks_classified = ticks_with_bar.with_columns([
         ((pl.col("price") - pl.col("low")) / (pl.col("high") - pl.col("low")))
@@ -123,7 +123,7 @@ def bulk_volume_classification(
         (pl.col("buy_weight") * pl.col("qty")).alias("classified_buys"),
         ((1 - pl.col("buy_weight")) * pl.col("qty")).alias("classified_sells"),
     ])
-    
+
     return ticks_classified
 
 # 2. Toxicity Ratio (order cancellations / executions)
@@ -135,7 +135,7 @@ def toxicity_ratio(orders: pl.DataFrame, window_us: int = 60_000_000) -> pl.Data
         pl.when(pl.col("order_type") == 2).then(1).otherwise(0).alias("is_cancel"),
         pl.when(pl.col("order_type").is_in([0, 1])).then(1).otherwise(0).alias("is_submit"),
     ])
-    
+
     return orders.with_columns([
         pl.col("is_cancel").rolling_sum(window_size=window_us, min_periods=1).alias("cancels"),
         pl.col("is_submit").rolling_sum(window_size=window_us, min_periods=1).alias("submits"),
@@ -165,30 +165,30 @@ def information_flow_rate(
         pl.lit("order").alias("event_type"),
         pl.col("qty").abs().alias("size"),
     ])
-    
+
     tick_events = ticks.filter(pl.col("tick_type") == 0).select([
         "ts_local_us",
         pl.lit("trade").alias("event_type"),
         pl.col("qty").abs().alias("size"),
     ])
-    
+
     all_events = pl.concat([order_events, tick_events]).sort("ts_local_us")
-    
+
     # Inter-event durations
     all_events = all_events.with_columns([
         (pl.col("ts_local_us") - pl.col("ts_local_us").shift(1)).alias("inter_event_duration_us"),
     ])
-    
+
     # Information flow metrics
     metrics = {
         "mean_inter_event_us": all_events["inter_event_duration_us"].mean(),
         "event_clustering": all_events["inter_event_duration_us"].std() / all_events["inter_event_duration_us"].mean(),
         "burst_ratio": (
-            all_events.filter(pl.col("inter_event_duration_us") < 1000).height / 
+            all_events.filter(pl.col("inter_event_duration_us") < 1000).height /
             all_events.height
         ),
     }
-    
+
     return metrics
 ```
 
@@ -221,7 +221,7 @@ def lee_ready_l3_classification(
     """
     # For each trade, look up the aggressor order
     # In L3: the order that crossed the spread is the aggressor
-    
+
     ticks_classified = ticks.with_columns([
         # Default: use side from tick (if available)
         pl.when(pl.col("side") == 0)
@@ -231,11 +231,11 @@ def lee_ready_l3_classification(
         .otherwise(pl.lit("unknown"))
         .alias("l3_classification"),
     ])
-    
+
     # Enhanced with order lookup
     # If we can match buy_order_id or sell_order_id to order book
     # we can determine: was it a market order (aggressive) or limit crossing?
-    
+
     return ticks_classified
 
 # Classification quality metrics
@@ -274,7 +274,7 @@ def trade_size_signature(
     percentiles = ticks.select([
         pl.col("qty").quantile(p/100).alias(f"p{p}") for p in percentile_thresholds
     ])
-    
+
     # Size categories
     ticks = ticks.with_columns([
         pl.when(pl.col("qty") <= percentiles["p50"])
@@ -286,18 +286,18 @@ def trade_size_signature(
         .otherwise(pl.lit("block"))
         .alias("size_category"),
     ])
-    
+
     # Signature analysis
     signature = ticks.group_by("size_category").agg([
         pl.col("qty").count().alias("trade_count"),
         pl.col("qty").sum().alias("volume"),
         pl.col("price").std().alias("price_volatility"),
     ])
-    
+
     # Institutional participation ratio
     total_volume = ticks["qty"].sum()
     inst_volume = signature.filter(pl.col("size_category") == "institutional")["volume"].sum()
-    
+
     return {
         "size_distribution": signature,
         "institutional_participation": inst_volume / total_volume if total_volume > 0 else 0,
@@ -325,36 +325,36 @@ def liquidity_resilience(
     # Identify large trades (> 95th percentile)
     large_trade_threshold = ticks["qty"].quantile(0.95)
     large_trades = ticks.filter(
-        (pl.col("qty") >= large_trade_threshold) & 
+        (pl.col("qty") >= large_trade_threshold) &
         (pl.col("tick_type") == 0)
     )
-    
+
     # For each large trade, measure depth before and after
     resilience_events = []
-    
+
     for trade in large_trades.iter_rows(named=True):
         trade_ts = trade["ts_local_us"]
-        
+
         # Depth before trade (5s window before)
         depth_before = orders.filter(
             (pl.col("ts_local_us") >= trade_ts - recovery_window_us) &
             (pl.col("ts_local_us") < trade_ts)
         ).select(pl.col("qty").sum()).item() or 0
-        
+
         # Depth after trade (5s window after)
         depth_after = orders.filter(
             (pl.col("ts_local_us") > trade_ts) &
             (pl.col("ts_local_us") <= trade_ts + recovery_window_us)
         ).select(pl.col("qty").sum()).item() or 0
-        
+
         resilience = depth_after / depth_before if depth_before > 0 else 0
-        
+
         resilience_events.append({
             "ts_local_us": trade_ts,
             "trade_qty": trade["qty"],
             "resilience_ratio": resilience,
         })
-    
+
     return pl.DataFrame(resilience_events)
 ```
 
@@ -379,17 +379,17 @@ def order_book_shape(
     book_state = orders.group_by("px_int").agg([
         pl.col("qty").sum().alias("depth_at_price"),
     ]).sort("px_int")
-    
+
     # Calculate slope (change in depth per price level)
     book_state = book_state.with_columns([
         pl.col("depth_at_price").diff().alias("depth_change"),
         pl.col("px_int").diff().alias("price_change"),
     ])
-    
+
     book_state = book_state.with_columns([
         (pl.col("depth_change") / pl.col("price_change")).alias("slope"),
     ])
-    
+
     # Shape metrics
     metrics = {
         "mean_slope": book_state["slope"].mean(),
@@ -400,7 +400,7 @@ def order_book_shape(
             book_state.filter(pl.col("px_int") < mid_price)["depth_at_price"].sum()
         ),
     }
-    
+
     return metrics
 ```
 
@@ -426,22 +426,22 @@ def detect_iceberg_signatures(
     ticks = ticks.with_columns([
         pl.col("price").round(2).alias("price_bucket"),  # Round to tick size
     ])
-    
+
     # Find repeated trade sizes at same price
     potential_slices = ticks.group_by(["price_bucket", "qty"]).agg([
         pl.col("ts_local_us").count().alias("slice_count"),
         pl.col("ts_local_us").alias("timestamps"),
     ]).filter(pl.col("slice_count") >= min_slices)
-    
+
     # Check timing pattern (regular intervals suggest algorithmic)
     iceberg_candidates = []
-    
+
     for row in potential_slices.iter_rows(named=True):
         timestamps = sorted(row["timestamps"])
         if len(timestamps) >= min_slices:
             intervals = [timestamps[i+1] - timestamps[i] for i in range(len(timestamps)-1)]
             interval_cv = np.std(intervals) / np.mean(intervals) if np.mean(intervals) > 0 else float('inf')
-            
+
             # Low CV (regular intervals) + multiple slices = iceberg signature
             if interval_cv < 0.5:  # Regular timing
                 iceberg_candidates.append({
@@ -451,7 +451,7 @@ def detect_iceberg_signatures(
                     "total_volume": row["qty"] * row["slice_count"],
                     "interval_regularity": interval_cv,
                 })
-    
+
     return pl.DataFrame(iceberg_candidates)
 ```
 
@@ -467,7 +467,7 @@ def detect_order_layering(
 ) -> pl.DataFrame:
     """
     Detect potential layering/spoofing patterns.
-    
+
     Layering pattern: Place orders at multiple levels, cancel before execution.
     """
     # Group orders by price level
@@ -476,18 +476,18 @@ def detect_order_layering(
         pl.col("order_type").filter(pl.col("order_type") == 2).count().alias("cancellations"),
         pl.col("order_type").filter(pl.col("order_type").is_in([0, 1])).count().alias("submissions"),
     ])
-    
+
     # Calculate cancellation rate
     order_lifecycle = order_lifecycle.with_columns([
         (pl.col("cancellations") / pl.col("total_orders")).alias("cancellation_rate"),
     ])
-    
+
     # Flag suspicious price levels
     suspicious_levels = order_lifecycle.filter(
         (pl.col("cancellation_rate") > cancellation_threshold) &
         (pl.col("total_orders") > min_orders)
     )
-    
+
     return suspicious_levels
 ```
 
@@ -513,19 +513,19 @@ def trade_intensity_features(
     ticks = ticks.sort("ts_local_us").with_columns([
         (pl.col("ts_local_us") - pl.col("ts_local_us").shift(1)).alias("duration_since_last_us"),
     ])
-    
+
     # Rolling intensity metrics
     return ticks.with_columns([
         # Trade count per window
         pl.col("ts_local_us").count().over(rolling_window=window_us).alias("trade_count_1m"),
-        
+
         # Average inter-trade duration
         pl.col("duration_since_last_us").mean().over(rolling_window=window_us).alias("avg_inter_trade_us"),
-        
+
         # Burstiness coefficient (CV of inter-trade times)
-        (pl.col("duration_since_last_us").std().over(rolling_window=window_us) / 
+        (pl.col("duration_since_last_us").std().over(rolling_window=window_us) /
          pl.col("duration_since_last_us").mean().over(rolling_window=window_us)).alias("burstiness"),
-        
+
         # Acceleration (change in intensity)
         pl.col("trade_count_1m").diff().alias("intensity_acceleration"),
     ])
@@ -554,25 +554,25 @@ def order_trade_timing(
         "ts_local_us",
         every=f"{window_us}us",
     ).agg(pl.len().alias("order_count"))
-    
+
     # Calculate trade arrival rate
     trade_rate = ticks.filter(pl.col("tick_type") == 0).group_by_dynamic(
         "ts_local_us",
         every=f"{window_us}us",
     ).agg(pl.len().alias("trade_count"))
-    
+
     # Join and calculate lead-lag
     combined = order_rate.join(trade_rate, on="ts_local_us", how="outer").fill_null(0)
-    
+
     combined = combined.with_columns([
         pl.col("order_count").shift(1).alias("order_count_lag1"),
         pl.col("order_count").shift(-1).alias("order_count_lead1"),
     ])
-    
+
     # Correlation: do orders lead trades?
     lead_corr = combined.select(pl.corr("order_count", "trade_count")).item()
     lag_corr = combined.select(pl.corr("order_count_lag1", "trade_count")).item()
-    
+
     return {
         "order_trade_contemporaneous_corr": lead_corr,
         "order_trade_lag_corr": lag_corr,
@@ -593,7 +593,7 @@ def kyles_lambda(
 ) -> pl.DataFrame:
     """
     Estimate Kyle's Lambda: price change per unit of signed volume.
-    
+
     Kyle's Lambda = Cov(ΔP, Q) / Var(Q)
     Where ΔP = price change, Q = signed volume
     """
@@ -605,13 +605,13 @@ def kyles_lambda(
         .otherwise(-pl.col("qty"))
         .alias("signed_volume"),
     ])
-    
+
     # Rolling regression (price_change ~ signed_volume)
     return ticks.with_columns([
         # Simplified: use covariance / variance relationship
         (pl.col("price_change") * pl.col("signed_volume")).rolling_mean(window_size=window_us)
         .alias("cov_price_volume"),
-        
+
         (pl.col("signed_volume") ** 2).rolling_mean(window_size=window_us)
         .alias("var_volume"),
     ]).with_columns([
@@ -635,14 +635,14 @@ def realized_spread_analysis(
 ) -> pl.DataFrame:
     """
     Calculate realized spread to measure adverse selection.
-    
+
     Realized Spread = 2 * (Trade_Price - Future_Mid_Price)
     """
     # Get future mid price (simplified: use future trades)
     ticks = ticks.sort("ts_local_us").with_columns([
         pl.col("price").shift(-5).mean().over(rolling_window=future_window_us).alias("future_price"),
     ])
-    
+
     # Realized spread (signed by trade side)
     return ticks.with_columns([
         pl.when(pl.col("side") == 0)  # Buy
@@ -665,21 +665,21 @@ def relative_liquidity_factor(
 ) -> pl.DataFrame:
     """
     Rank stocks by composite liquidity score.
-    
+
     Use for: Long liquid, short illiquid (or vice versa for premium capture).
     """
     liquidity_scores = []
-    
+
     for symbol in symbol_universe:
         ticks = query.szse_l3_ticks("szse", symbol, date, date, decoded=True)
         orders = query.szse_l3_orders("szse", symbol, date, date, decoded=True)
-        
+
         # Calculate component scores
         spread = estimate_effective_spread(ticks)
         depth = calculate_avg_depth(orders)
         resiliency = calculate_resilience(ticks, orders)
         kyle_lambda = estimate_kyles_lambda(ticks)
-        
+
         # Composite score (lower = more liquid)
         composite = (
             0.3 * spread +
@@ -687,22 +687,22 @@ def relative_liquidity_factor(
             0.2 * (1 / resiliency) +
             0.2 * kyle_lambda
         )
-        
+
         liquidity_scores.append({
             "symbol": symbol,
             "liquidity_score": composite,
             "spread": spread,
             "depth": depth,
         })
-    
+
     scores_df = pl.DataFrame(liquidity_scores)
-    
+
     # Rank within universe
     scores_df = scores_df.with_columns([
         pl.col("liquidity_score").rank().alias("liquidity_rank"),
         pl.col("liquidity_score").z_score().alias("liquidity_zscore"),
     ])
-    
+
     return scores_df
 ```
 
@@ -717,21 +717,21 @@ def informed_trading_factor(
 ) -> pl.DataFrame:
     """
     Rank stocks by probability of informed trading.
-    
+
     Use for: Avoid high PIN stocks (adverse selection) or trade directionally.
     """
     informed_scores = []
-    
+
     for symbol in symbol_universe:
         ticks = query.szse_l3_ticks("szse", symbol, date, date, decoded=True)
         orders = query.szse_l3_orders("szse", symbol, date, date, decoded=True)
-        
+
         # Component metrics
         vpin = calculate_vpin(ticks)
         toxicity = calculate_toxicity_ratio(orders)
         cancel_rate = calculate_cancellation_rate(orders)
         large_trade_ratio = calculate_large_trade_ratio(ticks)
-        
+
         # Composite informed score
         composite = (
             0.3 * vpin +
@@ -739,13 +739,13 @@ def informed_trading_factor(
             0.25 * cancel_rate +
             0.2 * large_trade_ratio
         )
-        
+
         informed_scores.append({
             "symbol": symbol,
             "informed_score": composite,
             "vpin": vpin,
         })
-    
+
     return pl.DataFrame(informed_scores)
 ```
 
@@ -816,6 +816,6 @@ def informed_trading_factor(
 
 ---
 
-**Document Version:** 1.0  
-**Last Updated:** 2024  
+**Document Version:** 1.0
+**Last Updated:** 2024
 **Owner:** Quant Research Team

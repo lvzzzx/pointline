@@ -1,7 +1,7 @@
 # Chinese Stock L3 MFT Feature Engineering Guide
 
 **Persona:** Quant Researcher (MFT)
-**Data Source:** SZSE/SSE Level 3 (l3_orders, l3_ticks)
+**Data Source:** SZSE/SSE Level 3 (`cn_order_events`, `cn_tick_events`)
 **Scope:** Opening/Closing Call Auctions + Continuous Trading
 **Version:** 1.0
 
@@ -33,7 +33,7 @@ This guide provides a comprehensive feature engineering framework for mid-freque
 | Afternoon Continuous | 13:00-14:57 | 05:00-06:57 | Standard continuous double auction |
 | Closing Call Auction | 14:57-15:00 | 06:57-07:00 | Non-cancellable, MOC flows |
 
-**Critical PIT Constraint:** All timestamps in Pointline are stored in UTC. A trade at "09:30:00 CST" appears as "01:30:00" in `ts_exch_us`.
+**Critical PIT Constraint:** All timestamps in Pointline v2 are stored as microseconds since Unix epoch in UTC. The column `ts_event_us` contains the exchange event timestamp (in UTC microseconds). A trade at "09:30:00 CST" (UTC+8) corresponds to `ts_event_us` = 09:30:00 UTC converted to microseconds.
 
 ### 1.2 Chinese Market Specifics
 
@@ -53,7 +53,7 @@ This guide provides a comprehensive feature engineering framework for mid-freque
 
 ### 1.3 Channel Architecture & Deterministic Sequencing
 
-L3 data from SZSE/SSE is organized into **independent channels**. Each channel carries a distinct instrument class and maintains its own sequence numbering.
+L3 data from SZSE/SSE is organized into **independent channels**. Each channel carries a distinct instrument class and maintains its own sequence numbering. In v2 schema, this is captured in `channel_id`.
 
 | Exchange | Channel Scope | Notes |
 |----------|--------------|-------|
@@ -62,35 +62,46 @@ L3 data from SZSE/SSE is organized into **independent channels**. Each channel c
 | SZSE | Funds (ETFs) | Separate channel from stocks and bonds |
 | SSE | Convertible Bonds | SSE's own channel |
 
-#### `appl_seq_num` Properties
+#### Sequence Number Properties (v2 Schema)
 
-| Property | Behavior |
-|----------|----------|
-| Scope | Per-channel (not per-symbol, not global) |
-| Starting value | 1 |
-| Uniqueness | Unique within a channel for a given trading day |
-| Contiguity | Continuous within a channel — gaps indicate message loss |
-| Daily reset | Yes — resets to 1 at the start of each trading day |
-| Cross-channel | NOT unique across channels |
+In the v2 canonical schema, the original `ApplSeqNum` is mapped to `channel_seq`:
+
+| Property | Behavior | v2 Column |
+|----------|----------|-----------|
+| Scope | Per-channel (not per-symbol, not global) | `channel_id` identifies the channel |
+| Sequence | Unique within channel per day | `channel_seq` (was `ApplSeqNum`) |
+| Starting value | 1 | Daily reset |
+| Uniqueness | Unique within channel for trading day | `channel_seq` |
+| Contiguity | Continuous — gaps indicate message loss | Check `channel_seq` continuity |
+| Daily reset | Yes | Always filter by `trading_date` |
+
+**Additional v2 Sequence Fields:**
+
+| Field | Description | Source |
+|-------|-------------|--------|
+| `channel_seq` | Per-channel feed sequence (was `ApplSeqNum`/`event_seq`) | SSE: `OrderNo`, SZSE: `ApplSeqNum` |
+| `channel_biz_seq` | Per-channel business sequence (was `exchange_seq`) | SSE: `BizIndex`, SZSE: NULL |
+| `symbol_order_seq` | Per-symbol order counter (was `exchange_order_index`) | SSE: `OrderIndex`, SZSE: NULL |
+| `symbol_trade_seq` | Per-symbol trade counter (was `exchange_trade_index`) | SSE: `TradeIndex`, SZSE: NULL |
 
 #### Shared Sequence Space
 
-Orders (`l3_orders`) and ticks (`l3_ticks`) share the same `(channel_no, appl_seq_num)` sequence within a channel. A tick's `bid_appl_seq_num` / `offer_appl_seq_num` reference the `appl_seq_num` of the originating orders.
+Orders (`cn_order_events`) and ticks (`cn_tick_events`) share the same `(channel_id, channel_seq)` sequence space within a channel. A tick's `bid_order_ref` / `ask_order_ref` reference the `channel_seq` of the originating orders.
 
 This means within a single channel, the combined stream of orders and ticks forms a **total order** over all events.
 
 #### Deterministic Replay Keys
 
-Since `appl_seq_num` resets to 1 each trading day, multi-day replay must include `date` in the sort key. `ts_local_us` is an absolute UTC epoch and naturally orders across days.
+Since `channel_seq` resets daily, multi-day replay must include `trading_date` in the sort key. `ts_event_us` is an absolute UTC epoch and naturally orders across days.
 
 | Scenario | Sort Key | Rationale |
 |----------|----------|-----------|
-| Intra-channel, single day | `(channel_no, appl_seq_num)` | Exchange-native total order within one day |
-| Intra-channel, multi-day | `(date, channel_no, appl_seq_num)` | `appl_seq_num` resets daily; `date` disambiguates |
-| Cross-channel merge | `(ts_local_us, file_id, file_line_number)` | No cross-channel sequence; fall back to arrival time |
-| Cross-table merge (orders + ticks) | `(ts_local_us, file_id, file_line_number)` | Orders and ticks are separate feeds |
+| Intra-channel, single day | `(channel_id, channel_seq)` | Exchange-native total order within one day |
+| Intra-channel, multi-day | `(trading_date, channel_id, channel_seq)` | `channel_seq` resets daily; `trading_date` disambiguates |
+| Cross-channel merge | `(ts_event_us, file_id, file_seq)` | No cross-channel sequence; fall back to arrival time |
+| Cross-table merge | `(ts_event_us, file_id, file_seq)` | Use event timestamp for ordering |
 
-**Critical:** `appl_seq_num` alone is meaningless without `channel_no` and `date`. Two channels can both have `appl_seq_num=1` at the same time, and the same channel reuses `appl_seq_num=1` on different days.
+**Critical:** `channel_seq` alone is meaningless without `channel_id` and `trading_date`. Two channels can both have `channel_seq=1` at the same time, and the same channel reuses `channel_seq=1` on different days.
 
 ---
 
@@ -178,7 +189,7 @@ call_cancel_acceleration = cancel_09_19_09_20 / cancel_09_15_09_16
 - Low cancel ratio (<10%): Strong conviction, committed orders
 - High acceleration: Urgency or last-minute information arrival
 
-**L3 Advantage:** Requires individual order lifecycle tracking (order_id → cancel event). Impossible with L2.
+**L3 Advantage:** Requires individual order lifecycle tracking (`order_ref` → cancel event). Impossible with L2.
 
 ---
 
@@ -336,7 +347,7 @@ order_lifetime_skew = skew(order_lifetimes)
 - Toxic (> 30%): Informed flow likely, expect adverse selection
 - Extreme (> 50%): "Quote stuffing" or aggressive HFT
 
-**L3 Requirement:** Must track individual order_ids from submission to cancellation.
+**L3 Requirement:** Must track individual `order_ref` (which equals `channel_seq` for orders) from submission to cancellation.
 
 ---
 
@@ -388,10 +399,10 @@ large_trade_participation = large_trade_volume / total_volume
 
 **Formula:**
 ```python
-# Match orders with fills using order_id
+# Match orders with fills using order_ref
 for each filled_trade:
-    order = lookup_order(trade.order_id)
-    time_to_fill = trade.ts_exch_us - order.ts_exch_us
+    order = lookup_order(trade.bid_order_ref or trade.ask_order_ref)
+    time_to_fill = trade.ts_event_us - order.ts_event_us
 
 fill_rate_proxy = mean(time_to_fill)
 fill_rate_percentile_95 = percentile_95(time_to_fill)
@@ -786,23 +797,24 @@ def calculate_t1_constraint_intensity(
     last_hour_start_us = 6_00_00_000_000  # 14:00 UTC
 
     last_hour_volume = day_trades.filter(
-        pl.col("ts_exch_us").mod(86_400_000_000) >= last_hour_start_us
+        pl.col("ts_event_us").mod(86_400_000_000) >= last_hour_start_us
     )["qty"].sum()
 
     afternoon_volume = day_trades.filter(
-        pl.col("ts_exch_us").mod(86_400_000_000) >= afternoon_start_us
+        pl.col("ts_event_us").mod(86_400_000_000) >= afternoon_start_us
     )["qty"].sum()
 
     late_day_ratio = last_hour_volume / afternoon_volume if afternoon_volume > 0 else 0
 
     # 3. Market order concentration (informed urgency)
-    market_orders = close_auction_orders.filter(pl.col("order_type") == 1).height
+    # Note: order_type is NULL for SSE, only available for SZSE
+    market_orders = close_auction_orders.filter(pl.col("order_type") == "MARKET").height
     total_orders = close_auction_orders.height
     market_order_ratio = market_orders / total_orders if total_orders > 0 else 0
 
     # 4. Cancellation commitment (low cancel = high conviction)
     cancelled_orders = close_auction_orders.filter(
-        pl.col("order_type") == 2  # Cancel type
+        pl.col("event_kind") == "CANCEL"
     ).height
     cancel_ratio = cancelled_orders / total_orders if total_orders > 0 else 0
     commitment_score = 1 - cancel_ratio  # Inverted: low cancel = high commitment
@@ -868,8 +880,8 @@ def classify_informed_flow(
         window_end = SESSION_BOUNDS["close_call_end"]
 
     window_orders = orders.filter(
-        (pl.col("ts_exch_us").mod(86_400_000_000) >= window_start) &
-        (pl.col("ts_exch_us").mod(86_400_000_000) <= window_end)
+        (pl.col("ts_event_us").mod(86_400_000_000) >= window_start) &
+        (pl.col("ts_event_us").mod(86_400_000_000) <= window_end)
     )
 
     # Calculate percentiles for classification
@@ -878,17 +890,18 @@ def classify_informed_flow(
     # Classify each order
     classified = window_orders.with_columns([
         # Informed trader signatures
+        # Note: order_type is only available for SZSE (NULL for SSE)
         pl.when(
-            (pl.col("order_type") == 1) &  # Market order (urgency)
-            (pl.col("qty") > qty_80th)      # Large size
+            (pl.col("order_type") == "MARKET") &  # Market order (urgency)
+            (pl.col("qty") > qty_80th)            # Large size
         ).then(pl.lit("informed_aggressive"))
         .when(
-            (pl.col("order_type") == 0) &  # Limit order
-            (pl.col("qty") > qty_80th) &   # Large size
-            (pl.col("price").is_not_null())  # Specific price (not market)
+            (pl.col("order_type") == "LIMIT") &   # Limit order
+            (pl.col("qty") > qty_80th) &          # Large size
+            (pl.col("price").is_not_null())       # Specific price
         ).then(pl.lit("informed_passive"))
         .when(
-            (pl.col("order_type") == 0) &  # Limit order
+            (pl.col("event_kind") == "ADD") &     # New order
             (pl.col("qty") <= window_orders["qty"].median())  # Small
         ).then(pl.lit("uninformed_retail"))
         .otherwise(pl.lit("unknown"))
@@ -960,7 +973,7 @@ def calculate_adverse_selection_cost(
     asc_data = trades.with_columns([
         # Forward-looking price (next trade or X seconds ahead)
         pl.col("price").shift(-1).alias("next_price"),
-        pl.col("ts_exch_us").alias("trade_time"),
+        pl.col("ts_event_us").alias("trade_time"),
     ]).with_columns([
         # Effective spread approximation
         ((pl.col("price") - pl.col("next_price")) / pl.col("price")).alias("price_impact")
@@ -1023,14 +1036,16 @@ def predict_overnight_drift(
     Prediction Time: Day T 15:00 (after close)
     Target: Day T+1 09:30 open gap
     """
-    # Load Day T data
-    orders = query.l3_orders("szse", symbol_id, date, date, decoded=True)
-    ticks = query.l3_ticks("szse", symbol_id, date, date, decoded=True)
+    # Load Day T data - v2 schema
+    orders = query.cn_order_events(exchange="szse", symbol_id=symbol_id,
+                                   start_date=date, end_date=date)
+    ticks = query.cn_tick_events(exchange="szse", symbol_id=symbol_id,
+                                 start_date=date, end_date=date)
 
     # Calculate components
     t1ci = calculate_t1_constraint_intensity(
         orders.filter(
-            (pl.col("ts_exch_us").mod(86_400_000_000) >= SESSION_BOUNDS["close_call_start"])
+            (pl.col("ts_event_us").mod(86_400_000_000) >= SESSION_BOUNDS["close_call_start"])
         ),
         ticks
     )
@@ -1040,8 +1055,8 @@ def predict_overnight_drift(
 
     # Closing auction features
     close_orders = orders.filter(
-        (pl.col("ts_exch_us").mod(86_400_000_000) >= SESSION_BOUNDS["close_call_start"]) &
-        (pl.col("ts_exch_us").mod(86_400_000_000) <= SESSION_BOUNDS["close_call_end"])
+        (pl.col("ts_event_us").mod(86_400_000_000) >= SESSION_BOUNDS["close_call_start"]) &
+        (pl.col("ts_event_us").mod(86_400_000_000) <= SESSION_BOUNDS["close_call_end"])
     )
 
     close_bid_pressure = close_orders.filter(pl.col("side") == 0)["qty"].sum() or 0
@@ -1105,8 +1120,8 @@ def calculate_stuck_buyer_inventory(
     """
     # Identify Day T closing auction buyers
     close_buyers = day_t_orders.filter(
-        (pl.col("ts_exch_us").mod(86_400_000_000) >= SESSION_BOUNDS["close_call_start"]) &
-        (pl.col("side") == 0)  # Buy side
+        (pl.col("ts_event_us").mod(86_400_000_000) >= SESSION_BOUNDS["close_call_start"]) &
+        (pl.col("side") == "BUY")  # Buy side
     )
 
     total_stuck_qty = close_buyers["qty"].sum()
@@ -1312,13 +1327,16 @@ def extract_opening_auction_features(
     Valid Prediction: 09:30 onwards
     """
     # Load L3 data
-    orders = query.l3_orders("szse", symbol_id, date, date, decoded=True)
-    ticks = query.l3_ticks("szse", symbol_id, date, date, decoded=True)
+    # Load from v2 schema tables
+    orders = query.cn_order_events(exchange="szse", symbol_id=symbol_id,
+                                   start_date=date, end_date=date)
+    ticks = query.cn_tick_events(exchange="szse", symbol_id=symbol_id,
+                                 start_date=date, end_date=date)
 
     # Sort for deterministic PIT ordering (cross-table merge uses arrival time)
-    # For intra-channel replay, use: .sort(["channel_no", "appl_seq_num"])
-    orders = orders.sort(["ts_local_us", "file_id", "file_line_number"])
-    ticks = ticks.sort(["ts_local_us", "file_id", "file_line_number"])
+    # For intra-channel replay, use: .sort(["channel_id", "channel_seq"])
+    orders = orders.sort(["ts_event_us", "file_id", "file_seq"])
+    ticks = ticks.sort(["ts_event_us", "file_id", "file_seq"])
 
     # === AUCTION PERIOD FILTERING ===
     def time_of_day(ts):
@@ -1354,11 +1372,10 @@ def extract_opening_auction_features(
         columns="order_type"
     )
 
-    # order_type: 0=limit, 1=market, 2=cancel
+    # event_kind: ADD=limit, CANCEL=cancel
+    # Note: order_type field indicates Market/Limit (SZSE only, NULL for SSE)
     call_cancel_ratio = (
-        pl.when(pl.col("2").is_not_null())
-        .then(pl.col("2") / (pl.col("0").fill_null(0) + pl.col("1").fill_null(0) + pl.col("2")))
-        .otherwise(0.0)
+        cancelled_qty / submitted_qty
     )
 
     # 2. Bid/Ask Pressure
@@ -1369,8 +1386,8 @@ def extract_opening_auction_features(
 
     # 3. Auction Volume
     auction_trades = ticks.filter(
-        (pl.col("ts_exch_us").mod(86_400_000_000) <= SESSION_BOUNDS["open_call_end"]) &
-        (pl.col("tick_type") == 0)  # Fills only
+        (pl.col("ts_event_us").mod(86_400_000_000) <= SESSION_BOUNDS["open_call_end"]) &
+        (pl.col("event_kind") == "TRADE")  # Fills only
     )
 
     auction_volume = auction_trades.select(pl.col("qty").sum()).item() or 0
@@ -1398,8 +1415,9 @@ def create_session_aware_bars(
     """
     Create OHLCV bars with Chinese session metadata.
     """
-    ticks = query.l3_ticks("szse", symbol_id, date, date, decoded=True)
-    ticks = ticks.filter(pl.col("tick_type") == 0)  # Fills only
+    ticks = query.cn_tick_events(exchange="szse", symbol_id=symbol_id,
+                                  start_date=date, end_date=date)
+    ticks = ticks.filter(pl.col("event_kind") == "TRADE")  # Fills only
 
     # Add session phase column
     def get_session_phase(ts):
@@ -1423,12 +1441,12 @@ def create_session_aware_bars(
         )
 
     ticks = ticks.with_columns([
-        get_session_phase(pl.col("ts_exch_us")).alias("session_phase"),
+        get_session_phase(pl.col("ts_event_us")).alias("session_phase"),
     ])
 
     # Aggregate to bars
     bars = ticks.group_by_dynamic(
-        "ts_local_us",
+        "ts_event_us",
         every=bar_interval,
         period=bar_interval,
         closed="left",
@@ -1477,37 +1495,41 @@ def extract_close_to_open_features(
     # Calculate T+1 date
     date_t1 = (datetime.strptime(date_t, "%Y-%m-%d") + timedelta(days=1)).strftime("%Y-%m-%d")
 
-    # Load closing auction data (Day T)
-    orders_t = query.l3_orders("szse", symbol_id, date_t, date_t, decoded=True)
-    ticks_t = query.l3_ticks("szse", symbol_id, date_t, date_t, decoded=True)
+    # Load closing auction data (Day T) - v2 schema
+    orders_t = query.cn_order_events(exchange="szse", symbol_id=symbol_id,
+                                     start_date=date_t, end_date=date_t)
+    ticks_t = query.cn_tick_events(exchange="szse", symbol_id=symbol_id,
+                                   start_date=date_t, end_date=date_t)
 
-    # Load opening auction data (Day T+1)
-    orders_t1 = query.l3_orders("szse", symbol_id, date_t1, date_t1, decoded=True)
-    ticks_t1 = query.l3_ticks("szse", symbol_id, date_t1, date_t1, decoded=True)
+    # Load opening auction data (Day T+1) - v2 schema
+    orders_t1 = query.cn_order_events(exchange="szse", symbol_id=symbol_id,
+                                      start_date=date_t1, end_date=date_t1)
+    ticks_t1 = query.cn_tick_events(exchange="szse", symbol_id=symbol_id,
+                                    start_date=date_t1, end_date=date_t1)
 
     # Filter closing auction (Day T)
     close_orders = orders_t.filter(
-        (pl.col("ts_exch_us").mod(86_400_000_000) >= SESSION_BOUNDS["close_call_start"]) &
-        (pl.col("ts_exch_us").mod(86_400_000_000) <= SESSION_BOUNDS["close_call_end"])
-    ).sort(["ts_local_us", "file_id", "file_line_number"])
+        (pl.col("ts_event_us").mod(86_400_000_000) >= SESSION_BOUNDS["close_call_start"]) &
+        (pl.col("ts_event_us").mod(86_400_000_000) <= SESSION_BOUNDS["close_call_end"])
+    ).sort(["ts_event_us", "file_id", "file_seq"])
 
     close_ticks = ticks_t.filter(
-        (pl.col("ts_exch_us").mod(86_400_000_000) >= SESSION_BOUNDS["close_call_start"]) &
-        (pl.col("ts_exch_us").mod(86_400_000_000) <= SESSION_BOUNDS["close_call_end"]) &
-        (pl.col("tick_type") == 0)  # Fills only
-    ).sort(["ts_local_us", "file_id", "file_line_number"])
+        (pl.col("ts_event_us").mod(86_400_000_000) >= SESSION_BOUNDS["close_call_start"]) &
+        (pl.col("ts_event_us").mod(86_400_000_000) <= SESSION_BOUNDS["close_call_end"]) &
+        (pl.col("event_kind") == "TRADE")  # Fills only
+    ).sort(["ts_event_us", "file_id", "file_seq"])
 
     # Filter opening auction (Day T+1)
     open_orders = orders_t1.filter(
-        (pl.col("ts_exch_us").mod(86_400_000_000) >= SESSION_BOUNDS["open_call_start"]) &
-        (pl.col("ts_exch_us").mod(86_400_000_000) <= SESSION_BOUNDS["open_call_end"])
-    ).sort(["ts_local_us", "file_id", "file_line_number"])
+        (pl.col("ts_event_us").mod(86_400_000_000) >= SESSION_BOUNDS["open_call_start"]) &
+        (pl.col("ts_event_us").mod(86_400_000_000) <= SESSION_BOUNDS["open_call_end"])
+    ).sort(["ts_event_us", "file_id", "file_seq"])
 
     open_ticks = ticks_t1.filter(
-        (pl.col("ts_exch_us").mod(86_400_000_000) >= SESSION_BOUNDS["open_call_start"]) &
-        (pl.col("ts_exch_us").mod(86_400_000_000) <= SESSION_BOUNDS["open_call_end"]) &
-        (pl.col("tick_type") == 0)
-    ).sort(["ts_local_us", "file_id", "file_line_number"])
+        (pl.col("ts_event_us").mod(86_400_000_000) >= SESSION_BOUNDS["open_call_start"]) &
+        (pl.col("ts_event_us").mod(86_400_000_000) <= SESSION_BOUNDS["open_call_end"]) &
+        (pl.col("event_kind") == "TRADE")
+    ).sort(["ts_event_us", "file_id", "file_seq"])
 
     # === AUCTION PRICE EXTRACTION ===
     close_auction_price = close_ticks.select(pl.col("price").last()).item()
@@ -1635,16 +1657,25 @@ def calculate_imbalance_persistence(
 | **Persistence calculation leak** | Include current day when calculating historical persistence correlation | Use rolling window excluding current observation |
 | **T+1 gap peeking** | Use intraday T+1 prices to validate overnight gap prediction | Gap prediction must use only T close + T+1 auction open |
 
-### 5.2 Determinism Checklist
+### 5.2 Determinism Checklist (v2 Schema)
 
-- [ ] Intra-channel single-day: sort by `(channel_no, appl_seq_num)`
-- [ ] Intra-channel multi-day: sort by `(date, channel_no, appl_seq_num)` — `appl_seq_num` resets daily
-- [ ] Cross-channel / cross-table merge: sort by `(ts_local_us, file_id, file_line_number)`
-- [ ] Primary timeline: `ts_local_us` (not `ts_exch_us` for cross-venue)
+- [ ] Intra-channel single-day: sort by `(channel_id, channel_seq)`
+- [ ] Intra-channel multi-day: sort by `(trading_date, channel_id, channel_seq)` — `channel_seq` resets daily
+- [ ] Cross-channel / cross-table merge: sort by `(ts_event_us, file_id, file_seq)`
+- [ ] Primary timeline: `ts_event_us` (exchange event timestamp in UTC microseconds)
 - [ ] As-of joins: `strategy="backward"` only
 - [ ] Forward transforms: Labels only, never features
 - [ ] Bar boundaries: Fixed `closed` and `label` parameters
 - [ ] Reproducibility: Same inputs → identical outputs
+
+**v2 Column Mapping:**
+| Old Name | v2 Name | Description |
+|----------|---------|-------------|
+| `appl_seq_num` | `channel_seq` | Per-channel feed sequence |
+| `channel_no` | `channel_id` | Channel identifier (1-6 for SSE) |
+| `ts_exch_us` | `ts_event_us` | Exchange event timestamp (UTC µs) |
+| `ts_local_us` | `ts_local_us` | Arrival timestamp (UTC µs) - retained |
+| `file_line_number` | `file_seq` | Line sequence within file |
 
 ### 5.3 Validation Tests
 
@@ -1911,10 +1942,9 @@ def estimate_slippage_l3(
 
 - `docs/guides/feature-pipeline-modes.md` - PIT-safe pipeline templates
 - `docs/guides/cotrading-networks-chinese-stocks.md` - Co-trading networks for cross-stock dependency modeling
-- `docs/guides/t1-adverse-selection-cotrading-integration.md` - Integration of T+1 features with co-trading networks
-- `skills/pointline-research/references/schemas.md` - L3 table schemas
-- `skills/pointline-research/references/exchange_quirks.md` - SZSE/SSE specifics
-- `skills/pointline-research/references/analysis_patterns.md` - General patterns
+- `docs/data_sources/quant360_cn_l2.md` - Quant360 data source documentation with v2 schema
+- `pointline/schemas/events_cn.py` - v2 canonical table schemas
+- `docs/internal/execplan-v2-quant360-cn-l2-integration.md` - v2 integration plan
 
 ### 8.2 Academic References
 
@@ -1952,6 +1982,11 @@ from pointline.dim_symbol import read_dim_symbol_table
 | `large_trade_imbalance` | Flow Toxicity | Partial | 1-5 minutes | Medium |
 | `fill_rate_proxy` | Queue Position | Yes | 1-5 minutes | Medium |
 | `session_phase` | Temporal | No | Context | Low |
+| **Key v2 Schema Columns** ||||
+| `channel_seq` | Sequencing | Yes | All | Critical |
+| `channel_id` | Sequencing | Yes | All | Critical |
+| `event_kind` | Event Type | Yes | All | Critical |
+| `order_ref` | Order Linkage | Yes | All | High |
 | **Close-to-Open Features** ||||
 | `overnight_gap_bps` | Overnight Gap | No | 09:30-10:00 | High |
 | `imbalance_persistence` | Persistence | No | 09:25-09:35 | High |
@@ -1986,6 +2021,46 @@ from pointline.dim_symbol import read_dim_symbol_table
 
 ---
 
-**Document Version:** 1.0
-**Last Updated:** 2024
+**Document Version:** 2.0
+**Last Updated:** 2025-02
 **Owner:** Quant Research Team
+
+---
+
+## 10. v2 Schema Migration Notes
+
+This document has been updated to reflect the Pointline v2 canonical schema. Key changes from v1:
+
+### Table Name Changes
+| v1 Name | v2 Name | Description |
+|---------|---------|-------------|
+| `l3_orders` | `cn_order_events` | Order flow with canonical columns |
+| `l3_ticks` | `cn_tick_events` | Trade executions with canonical columns |
+
+### Column Name Changes
+| v1 Name | v2 Name | Notes |
+|---------|---------|-------|
+| `appl_seq_num` | `channel_seq` | Per-channel feed sequence |
+| `channel_no` | `channel_id` | Channel identifier |
+| `ts_exch_us` | `ts_event_us` | Exchange event timestamp |
+| `file_line_number` | `file_seq` | File line sequence |
+| `order_type` (raw) | `order_type` | Canonical: MARKET/LIMIT/NULL |
+| `side` (raw) | `side` | Canonical: BUY/SELL |
+| `tick_type` | `event_kind` | TRADE/CANCEL for ticks; ADD/CANCEL for orders |
+
+### New v2 Columns
+| Column | Description |
+|--------|-------------|
+| `channel_biz_seq` | Per-channel business sequence (SSE BizIndex) |
+| `symbol_order_seq` | Per-symbol order counter (SSE OrderIndex) |
+| `symbol_trade_seq` | Per-symbol trade counter (SSE TradeIndex) |
+| `order_ref` | Order reference (maps to order's `channel_seq`) |
+| `bid_order_ref` | Bid order reference in trades |
+| `ask_order_ref` | Ask order reference in trades |
+
+### Exchange-Specific Notes
+- **SZSE**: `order_type` is populated (MARKET/LIMIT); `channel_biz_seq` is NULL
+- **SSE**: `order_type` is NULL (not provided); `channel_biz_seq` is populated
+- **Aggressor Side**: Can be inferred by comparing `bid_order_ref` vs `ask_order_ref`
+
+For complete data source documentation, see `docs/data_sources/quant360_cn_l2.md`.

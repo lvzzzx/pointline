@@ -1,10 +1,21 @@
-"""Pointline data lake ETL utilities."""
+"""Pointline v2 - Clean market data lake."""
 
-# Export introspection API for schema discovery
-from pointline.introspection import get_schema, get_schema_info, list_columns
+from pointline.protocols import BronzeFileMetadata
+from pointline.schemas import (
+    DIM_SYMBOL,
+    ORDERBOOK_UPDATES,
+    QUOTES,
+    TRADES,
+    get_table_spec,
+    list_table_specs,
+)
 
 __all__ = [
-    "get_schema",
-    "list_columns",
-    "get_schema_info",
+    "TRADES",
+    "QUOTES",
+    "ORDERBOOK_UPDATES",
+    "DIM_SYMBOL",
+    "get_table_spec",
+    "list_table_specs",
+    "BronzeFileMetadata",
 ]
