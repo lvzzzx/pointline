@@ -123,14 +123,48 @@ Replay ordering must be explicit and stable.
 
 ```
 pointline/
+├── __init__.py       # Public exports (TRADES, QUOTES, get_table_spec, etc.)
+├── protocols.py      # Core protocols (BronzeFileMetadata, etc.)
+├── dim_symbol.py     # SCD2 dimension utilities
 ├── schemas/          # Canonical schema registry (types, events, dimensions, control)
-├── v2/               # v2 ingestion core
-│   └── ingestion/
-│       ├── pipeline.py       # ingest_file()
-│       ├── manifest.py       # Manifest ops
-│       ├── timezone.py       # Exchange-timezone derivation
-│       └── validators.py     # PIT checks, row validation
-└── io/               # Storage adapters (Delta, etc.)
+├── ingestion/        # Function-first ingestion pipeline
+│   ├── pipeline.py   # ingest_file()
+│   ├── manifest.py   # Manifest operations
+│   ├── timezone.py   # Exchange-timezone derivation
+│   ├── pit.py        # PIT coverage checks
+│   └── lineage.py    # file_id, file_seq assignment
+├── storage/          # Storage adapters
+│   ├── contracts.py  # Store protocols
+│   └── delta/        # Delta Lake implementations
+│       ├── event_store.py
+│       ├── dimension_store.py
+│       ├── manifest_store.py
+│       └── quarantine_store.py
+├── vendors/          # Vendor integrations
+│   ├── quant360/     # Quant360 CN L2/L3 data
+│   └── tushare/      # Tushare symbol data
+└── research/         # Research API
+    ├── query.py      # Event loading
+    ├── spine.py      # Spine builders
+    └── discovery.py  # Symbol discovery
+```
+
+### Key Import Paths
+
+```python
+# Core schemas
+from pointline import TRADES, QUOTES, ORDERBOOK_UPDATES, DIM_SYMBOL
+from pointline.schemas import get_table_spec
+
+# Ingestion
+from pointline.ingestion.pipeline import ingest_file
+from pointline.protocols import BronzeFileMetadata
+
+# Storage
+from pointline.storage.delta import DeltaEventStore, DeltaDimensionStore
+
+# Research
+from pointline.research import load_events, build_spine, discover_symbols
 ```
 
 ---
@@ -156,4 +190,4 @@ pointline/
 ## 11) References
 
 - Ingestion design: `docs/architecture/simplified-ingestion-design-v2.md`
-- Cutover plan: `docs/internal/execplan-v2-clean-cutover.md`
+- V2 cleanup plan: `docs/internal/execplan-v2-final-cleanup.md`
