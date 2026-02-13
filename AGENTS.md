@@ -41,3 +41,7 @@
 - Read `docs/architecture/design.md` before changing schema or ETL semantics.
 - For larger features/refactors, create an ExecPlan per `PLANS.md`.
 - Before pushing, run `pre-commit run --all-files`.
+
+# ExecPlans
+
+When writing complex features or significant refactors, use an ExecPlan (as described in .agent/PLANS.md) from design to implementation.
