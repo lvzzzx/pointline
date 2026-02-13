@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-from typing import Any
-
 from pointline.io.protocols import BronzeFileMetadata
 from pointline.v2.ingestion.models import IngestionResult
+from pointline.v2.storage.contracts import ManifestStore
 
 
 def build_manifest_identity(meta: BronzeFileMetadata) -> tuple[str, str, str, str]:
@@ -13,7 +12,7 @@ def build_manifest_identity(meta: BronzeFileMetadata) -> tuple[str, str, str, st
 
 
 def update_manifest_status(
-    manifest_repo: Any,
+    manifest_repo: ManifestStore,
     meta: BronzeFileMetadata,
     file_id: int,
     status: str,

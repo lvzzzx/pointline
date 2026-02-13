@@ -21,10 +21,11 @@ from pointline.v2.ingestion.models import IngestionResult
 from pointline.v2.ingestion.normalize import normalize_to_table_spec
 from pointline.v2.ingestion.pit import check_pit_coverage
 from pointline.v2.ingestion.timezone import derive_trading_date_frame
+from pointline.v2.storage.contracts import EventStore, ManifestStore, QuarantineStore
 from pointline.v2.vendors.quant360 import canonicalize_quant360_frame
 
 Parser = Callable[[BronzeFileMetadata], pl.DataFrame]
-Writer = Callable[[str, pl.DataFrame], None]
+Writer = Callable[[str, pl.DataFrame], None] | EventStore
 
 _TABLE_ALIASES: dict[str, str] = {
     "trades": "trades",
@@ -83,13 +84,42 @@ def _combine_reasons(*reasons: str | None) -> str | None:
     return "+".join(ordered)
 
 
+def _write_rows(writer: Writer, table_name: str, df: pl.DataFrame) -> None:
+    if callable(writer):
+        writer(table_name, df)
+        return
+    writer.append(table_name, df)
+
+
+def _append_quarantine(
+    quarantine_store: QuarantineStore | None,
+    *,
+    dry_run: bool,
+    file_id: int | None,
+    table_name: str,
+    rows: pl.DataFrame,
+    reason: str | None,
+) -> None:
+    if dry_run or quarantine_store is None or rows.is_empty():
+        return
+    if file_id is None:
+        raise ValueError("file_id must be present when writing quarantine rows")
+    quarantine_store.append(
+        table_name,
+        rows,
+        reason=reason or "quarantined",
+        file_id=file_id,
+    )
+
+
 def ingest_file(
     meta: BronzeFileMetadata,
     *,
     parser: Parser,
-    manifest_repo: Any,
+    manifest_repo: ManifestStore,
     writer: Writer,
     dim_symbol_df: pl.DataFrame,
+    quarantine_store: QuarantineStore | None = None,
     force: bool = False,
     dry_run: bool = False,
 ) -> IngestionResult:
@@ -155,6 +185,14 @@ def ingest_file(
             )
         )
         if validated_rows.is_empty():
+            _append_quarantine(
+                quarantine_store,
+                dry_run=dry_run,
+                file_id=file_id,
+                table_name=table_name,
+                rows=rule_quarantined_rows,
+                reason=rule_quarantine_reason,
+            )
             result = _result(
                 status=INGEST_STATUS_QUARANTINED,
                 file_id=file_id,
@@ -178,6 +216,22 @@ def ingest_file(
         quarantine_reason = _combine_reasons(rule_quarantine_reason, pit_quarantine_reason)
 
         if valid_rows.is_empty():
+            _append_quarantine(
+                quarantine_store,
+                dry_run=dry_run,
+                file_id=file_id,
+                table_name=table_name,
+                rows=rule_quarantined_rows,
+                reason=rule_quarantine_reason,
+            )
+            _append_quarantine(
+                quarantine_store,
+                dry_run=dry_run,
+                file_id=file_id,
+                table_name=table_name,
+                rows=pit_quarantined_rows,
+                reason=pit_quarantine_reason,
+            )
             result = _result(
                 status=INGEST_STATUS_QUARANTINED,
                 file_id=file_id,
@@ -196,8 +250,25 @@ def ingest_file(
         with_lineage = assign_lineage(valid_rows, file_id=file_id)
         normalized = normalize_to_table_spec(with_lineage, spec)
 
+        _append_quarantine(
+            quarantine_store,
+            dry_run=dry_run,
+            file_id=file_id,
+            table_name=table_name,
+            rows=rule_quarantined_rows,
+            reason=rule_quarantine_reason,
+        )
+        _append_quarantine(
+            quarantine_store,
+            dry_run=dry_run,
+            file_id=file_id,
+            table_name=table_name,
+            rows=pit_quarantined_rows,
+            reason=pit_quarantine_reason,
+        )
+
         if not dry_run:
-            writer(table_name, normalized)
+            _write_rows(writer, table_name, normalized)
 
         result = _result(
             status=INGEST_STATUS_SUCCESS,

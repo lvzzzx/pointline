@@ -13,11 +13,11 @@ The user-visible behavior is a clean v2 storage boundary: reruns are determinist
 ## Progress
 
 - [x] (2026-02-13 13:25Z) Authored initial ExecPlan with v2-owned storage scope, file-level targets, acceptance criteria, and hard boundary rules.
-- [ ] Create v2 storage contracts and failing tests before implementation (completed: none; remaining: `pointline/v2/storage/*` contracts and `tests/v2/storage/test_contracts.py`).
-- [ ] Implement Delta-backed manifest adapter with deterministic identity and status transitions (completed: none; remaining: adapter code + unit tests).
-- [ ] Implement Delta-backed event, dimension, and quarantine adapters (completed: none; remaining: adapter code + integration tests).
-- [ ] Wire v2 ingestion pipeline to v2 storage adapters only (completed: none; remaining: pipeline dependency surface update and no-legacy-import tests).
-- [ ] Update architecture/docs references and capture final validation evidence (completed: none; remaining: docs updates + full quality gates).
+- [x] (2026-02-13 13:44Z) Added v2 storage contracts/models and Delta adapter package under `pointline/v2/storage/` with manifest, event, dimension, quarantine, and layout/util modules.
+- [x] (2026-02-13 13:47Z) Wired `pointline/v2/ingestion/pipeline.py` to accept v2 storage adapters directly (event store object and optional quarantine store) while preserving callable writer compatibility.
+- [x] (2026-02-13 13:50Z) Added storage-focused tests under `tests/v2/storage/` plus runtime boundary guard `tests/v2/test_core_integration_no_legacy_imports.py`.
+- [x] (2026-02-13 13:52Z) Verified implementation with `uv run pytest tests/v2 -q` and targeted Ruff checks.
+- [ ] Update architecture/docs references for v2 storage ownership (completed: new ExecPlan and evidence updates; remaining: architecture/data-source pages if needed in follow-up doc pass).
 
 ## Surprises & Discoveries
 
@@ -29,6 +29,9 @@ The user-visible behavior is a clean v2 storage boundary: reruns are determinist
 
 - Observation: Quant360 upstream v2 now provides deterministic extracted-file handoff and archive-level restart semantics, so storage migration can focus on ingestion/silver correctness rather than archive extraction.
   Evidence: `pointline/v2/vendors/quant360/upstream/*` plus `tests/v2/quant360/test_upstream_runner.py`.
+
+- Observation: Using strict schema validation in storage adapters catches drift early and kept pipeline regressions at zero while adding adapter support.
+  Evidence: `tests/v2/storage/test_event_store_delta.py` and full `tests/v2` pass after adapter wiring.
 
 ## Decision Log
 
@@ -48,11 +51,15 @@ The user-visible behavior is a clean v2 storage boundary: reruns are determinist
   Rationale: This is already the v2 design invariant and must remain stable across adapter migration.
   Date/Author: 2026-02-13 / Codex
 
+- Decision: Implement the v2 manifest adapter with lock + deterministic overwrite of canonical schema rows keyed by `file_id`.
+  Rationale: This keeps behavior deterministic and simple for single-node v2 execution while preserving restart safety and stable IDs.
+  Date/Author: 2026-02-13 / Codex
+
 ## Outcomes & Retrospective
 
-This section is intentionally forward-looking at plan creation time. The target outcome is a single active v2 storage path with deterministic idempotency/recovery semantics and no runtime dependency on legacy repository modules from v2 ingestion code.
+The v2-owned storage adapter layer is now implemented under `pointline/v2/storage/` and integrated into the v2 ingestion pipeline surface. The runtime can ingest through v2 Delta adapters for manifest/event/quarantine flows with deterministic behavior verified by tests.
 
-The primary risk is partial migration where v2 adapters exist but v2 pipeline or tests still quietly rely on `pointline/io/*`. This plan addresses that by making boundary-enforcement tests first-class acceptance criteria.
+The primary remaining risk is documentation drift, not runtime coupling. A boundary guard test now prevents forbidden legacy repository imports from v2 runtime modules, reducing regression risk for future changes.
 
 ## Context and Orientation
 
@@ -146,17 +153,17 @@ If manifest records become inconsistent during development, repair only affected
 
 Record concise evidence snippets here during implementation.
 
-    2026-02-13 13:xxZ
+    2026-02-13 13:52Z
     Command: uv run pytest tests/v2/storage/test_manifest_store_delta.py -q
-    Output: <fill during implementation>
+    Output: 2 passed
 
-    2026-02-13 13:xxZ
+    2026-02-13 13:52Z
     Command: uv run pytest tests/v2/test_core_integration_no_legacy_imports.py -q
-    Output: <fill during implementation>
+    Output: 1 passed
 
-    2026-02-13 13:xxZ
+    2026-02-13 13:52Z
     Command: uv run pytest tests/v2 -q
-    Output: <fill during implementation>
+    Output: 94 passed
 
 ## Interfaces and Dependencies
 
@@ -199,3 +206,4 @@ Do not import legacy repository implementations from active v2 runtime modules. 
 ---
 
 Revision Note (2026-02-13 13:25Z): Initial ExecPlan created for v2-owned storage adapter layer to remove legacy repository coupling from active v2 ingestion runtime while keeping CLI rewrite out of scope.
+Revision Note (2026-02-13 13:52Z): Implemented `pointline/v2/storage/*` Delta adapters, integrated v2 pipeline adapter support, and added storage + no-legacy-import test coverage with full `tests/v2` pass.
