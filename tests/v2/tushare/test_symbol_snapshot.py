@@ -78,7 +78,8 @@ class TestSnapshot:
         assert row["lot_size"] == CN_LOT_SIZE
         assert row["contract_size"] is None
 
-    def test_snapshot_filters_listed_and_paused(self):
+    def test_snapshot_includes_listed_paused_and_delisted(self):
+        """All stocks (L, P, D) are included with proper SCD2 metadata."""
         raw = _raw_tushare(
             [
                 {
@@ -114,11 +115,21 @@ class TestSnapshot:
             ]
         )
         snap = stock_basic_to_snapshot(raw)
-        assert snap.height == 2
+        # All 3 included (L, P, D)
+        assert snap.height == 3
         symbols = snap["exchange_symbol"].to_list()
         assert "000001" in symbols
         assert "000002" in symbols
-        assert "000003" not in symbols
+        assert "000003" in symbols
+
+        # Check SCD2 fields
+        listed = snap.filter(pl.col("exchange_symbol") == "000001").row(0, named=True)
+        assert listed["is_current"] is True
+        assert listed["valid_until_ts_us"] == 2**63 - 1  # MAX
+
+        delisted = snap.filter(pl.col("exchange_symbol") == "000003").row(0, named=True)
+        assert delisted["is_current"] is False
+        assert delisted["valid_until_ts_us"] == _ts_us(date(2023, 1, 1))
 
     def test_snapshot_normalizes_exchange(self):
         raw = _raw_tushare(
@@ -320,7 +331,40 @@ class TestDelistings:
         assert dl.height == 0
 
     def test_delistings_schema_compatible_with_upsert(self):
-        raw = _raw_tushare(
+        """Test incremental upsert: bootstrap with L, then use delistings to close."""
+        # t0: bootstrap with L stocks only
+        raw_t0 = _raw_tushare(
+            [
+                {
+                    "ts_code": "000001.SZ",
+                    "symbol": "000001",
+                    "name": "A",
+                    "exchange": "SZSE",
+                    "market": "主板",
+                    "list_status": "L",
+                    "list_date": "20200101",
+                    "delist_date": None,
+                },
+                {
+                    "ts_code": "000002.SZ",
+                    "symbol": "000002",
+                    "name": "B",
+                    "exchange": "SZSE",
+                    "market": "主板",
+                    "list_status": "L",
+                    "list_date": "20100101",
+                    "delist_date": None,
+                },
+            ]
+        )
+        snap_t0 = stock_basic_to_snapshot(raw_t0)
+        dim = bootstrap(snap_t0, effective_ts_us=1_000_000)
+        validate(dim)
+        assert dim.height == 2
+        assert dim.filter(pl.col("is_current")).height == 2
+
+        # t1: 000002 gets delisted - use snapshot (L only) + delistings to close
+        raw_t1 = _raw_tushare(
             [
                 {
                     "ts_code": "000001.SZ",
@@ -344,62 +388,17 @@ class TestDelistings:
                 },
             ]
         )
-        snap = stock_basic_to_snapshot(raw)
-        dl = stock_basic_to_delistings(raw)
-
-        # bootstrap with the active stock, then upsert with delisting
-        dim = bootstrap(snap, effective_ts_us=1_000_000)
-
-        # The delisted stock wasn't in the initial bootstrap, so add it first
-        snap_with_delisted = stock_basic_to_snapshot(
-            _raw_tushare(
-                [
-                    {
-                        "ts_code": "000001.SZ",
-                        "symbol": "000001",
-                        "name": "A",
-                        "exchange": "SZSE",
-                        "market": "主板",
-                        "list_status": "L",
-                        "list_date": "20200101",
-                        "delist_date": None,
-                    },
-                    {
-                        "ts_code": "000002.SZ",
-                        "symbol": "000002",
-                        "name": "B",
-                        "exchange": "SZSE",
-                        "market": "主板",
-                        "list_status": "L",
-                        "list_date": "20100101",
-                        "delist_date": None,
-                    },
-                ]
-            )
-        )
-        dim = upsert(dim, snap_with_delisted, effective_ts_us=2_000_000, delistings=dl.clear())
-        # Now upsert removing 000002 via delistings
-        snap_without = stock_basic_to_snapshot(
-            _raw_tushare(
-                [
-                    {
-                        "ts_code": "000001.SZ",
-                        "symbol": "000001",
-                        "name": "A",
-                        "exchange": "SZSE",
-                        "market": "主板",
-                        "list_status": "L",
-                        "list_date": "20200101",
-                        "delist_date": None,
-                    },
-                ]
-            )
-        )
-        dim = upsert(dim, snap_without, effective_ts_us=3_000_000, delistings=dl)
+        # For incremental updates, use listed-only snapshot + delistings
+        snap_t1 = stock_basic_to_snapshot(raw_t1.filter(pl.col("list_status") == "L"))
+        dl_t1 = stock_basic_to_delistings(raw_t1)
+        dim = upsert(dim, snap_t1, effective_ts_us=2_000_000, delistings=dl_t1)
         validate(dim)
-        # 000002 should have a closed row
+
+        # 000001 still current, 000002 closed
+        assert dim.filter(pl.col("is_current")).height == 1
         closed = dim.filter((pl.col("exchange_symbol") == "000002") & (~pl.col("is_current")))
-        assert closed.height >= 1
+        assert closed.height == 1
+        assert closed["valid_until_ts_us"][0] == _ts_us(date(2023, 6, 15))
 
 
 # ---------------------------------------------------------------------------
@@ -408,38 +407,9 @@ class TestDelistings:
 
 
 class TestIntegration:
-    def test_bootstrap_then_upsert_with_delist(self):
-        """Bootstrap from snapshot, then delist a stock."""
-        raw_t0 = _raw_tushare(
-            [
-                {
-                    "ts_code": "000001.SZ",
-                    "symbol": "000001",
-                    "name": "A",
-                    "exchange": "SZSE",
-                    "market": "主板",
-                    "list_status": "L",
-                    "list_date": "20200101",
-                    "delist_date": None,
-                },
-                {
-                    "ts_code": "000002.SZ",
-                    "symbol": "000002",
-                    "name": "B",
-                    "exchange": "SZSE",
-                    "market": "主板",
-                    "list_status": "L",
-                    "list_date": "20200101",
-                    "delist_date": None,
-                },
-            ]
-        )
-        dim = bootstrap(stock_basic_to_snapshot(raw_t0), effective_ts_us=1_000_000)
-        validate(dim)
-        assert dim.height == 2
-
-        # t1: 000002 gets delisted
-        raw_t1 = _raw_tushare(
+    def test_bootstrap_with_delisted_included(self):
+        """Bootstrap includes delisted stocks with proper SCD2 metadata."""
+        raw = _raw_tushare(
             [
                 {
                     "ts_code": "000001.SZ",
@@ -463,17 +433,19 @@ class TestIntegration:
                 },
             ]
         )
-        snap_t1 = stock_basic_to_snapshot(raw_t1)
-        dl_t1 = stock_basic_to_delistings(raw_t1)
-        dim = upsert(dim, snap_t1, effective_ts_us=2_000_000, delistings=dl_t1)
-        validate(dim)
+        snap = stock_basic_to_snapshot(raw)
+        # Snapshot includes both L and D
+        assert snap.height == 2
 
-        # 000001 still current, 000002 closed
-        assert dim.filter(pl.col("is_current")).height == 1
-        assert dim.filter(pl.col("is_current"))["exchange_symbol"][0] == "000001"
-        closed = dim.filter((pl.col("exchange_symbol") == "000002") & (~pl.col("is_current")))
-        assert closed.height == 1
-        assert closed["valid_until_ts_us"][0] == _ts_us(date(2024, 1, 1))
+        # Listed stock: is_current=True, valid_until=MAX
+        listed = snap.filter(pl.col("exchange_symbol") == "000001").row(0, named=True)
+        assert listed["is_current"] is True
+        assert listed["valid_until_ts_us"] == 2**63 - 1
+
+        # Delisted stock: is_current=False, valid_until=delist_date
+        delisted = snap.filter(pl.col("exchange_symbol") == "000002").row(0, named=True)
+        assert delisted["is_current"] is False
+        assert delisted["valid_until_ts_us"] == _ts_us(date(2024, 1, 1))
 
     def test_upsert_new_ipo(self):
         """A stock not in dim appears in the next snapshot → new listing."""
