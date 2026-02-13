@@ -4,7 +4,6 @@
 from pathlib import Path
 
 import polars as pl
-
 from pointline.tables.klines import check_kline_completeness
 
 # Load all kline_1h data

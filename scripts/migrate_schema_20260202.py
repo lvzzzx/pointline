@@ -18,7 +18,6 @@ import argparse
 from pathlib import Path
 
 import polars as pl
-
 from pointline.config import get_table_path
 
 MIGRATIONS: dict[str, dict[str, str]] = {
