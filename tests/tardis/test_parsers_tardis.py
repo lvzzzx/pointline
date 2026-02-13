@@ -319,6 +319,17 @@ def test_parse_tardis_liquidations_handles_optional_id() -> None:
 
 
 def test_parse_tardis_options_chain_scales_and_maps_fields() -> None:
+    """
+    Validate that parse_tardis_options_chain maps input columns to the expected output schema and applies price/quantity scaling.
+    
+    Asserts that the output contains the expected columns and that:
+    - exchange and symbol values are passed through,
+    - `type` is normalized to lowercase as `option_type`,
+    - strike and all price-like fields are scaled by PRICE_SCALE and converted to integers,
+    - quantity-like fields (open_interest, bid_amount, ask_amount) are scaled by QTY_SCALE and converted to integers,
+    - expiration is preserved as `expiration_ts_us`,
+    - implied volatility fields (`bid_iv`, `ask_iv`, `mark_iv`) and greeks (`delta`, `gamma`, `vega`, `theta`, `rho`) are preserved.
+    """
     raw = pl.DataFrame(
         {
             "exchange": ["deribit"],

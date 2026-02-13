@@ -205,6 +205,17 @@ def test_ingest_tardis_derivative_ticker_succeeds() -> None:
     writer = CapturingWriter()
 
     def parser(meta: BronzeFileMetadata) -> pl.DataFrame:
+        """
+        Create a parsed DataFrame for a derivative ticker Tardis stream.
+        
+        Parses a fabricated raw Tardis derivative-ticker payload (constructed from the provided metadata's data_type) and returns a Polars DataFrame containing derivative ticker fields such as `exchange`, `symbol`, `timestamp`, `local_timestamp`, `mark_price`, `index_price`, `last_price`, `open_interest`, `funding_rate`, `predicted_funding_rate`, and `funding_timestamp`.
+        
+        Parameters:
+            meta (BronzeFileMetadata): File metadata whose `data_type` is used to select the appropriate Tardis stream parser.
+        
+        Returns:
+            pl.DataFrame: Parsed derivative ticker rows ready for ingestion.
+        """
         stream_parser = get_tardis_parser(meta.data_type)
         raw = pl.DataFrame(
             {
@@ -245,6 +256,15 @@ def test_ingest_tardis_liquidations_succeeds() -> None:
     writer = CapturingWriter()
 
     def parser(meta: BronzeFileMetadata) -> pl.DataFrame:
+        """
+        Create and parse a sample liquidation record using the Tardis parser selected by the metadata.
+        
+        Parameters:
+            meta (BronzeFileMetadata): Metadata whose `data_type` determines which Tardis parser to use.
+        
+        Returns:
+            pl.DataFrame: Parsed DataFrame produced by the selected Tardis stream parser representing a single liquidation event.
+        """
         stream_parser = get_tardis_parser(meta.data_type)
         raw = pl.DataFrame(
             {
@@ -283,6 +303,15 @@ def test_ingest_tardis_options_chain_succeeds() -> None:
     writer = CapturingWriter()
 
     def parser(meta: BronzeFileMetadata) -> pl.DataFrame:
+        """
+        Create and parse a sample options_chain DataFrame using the Tardis parser selected by meta.data_type.
+        
+        Parameters:
+            meta (BronzeFileMetadata): Metadata whose data_type determines which Tardis stream parser to use.
+        
+        Returns:
+            pl.DataFrame: Parsed options-chain records ready for ingestion, including fields such as exchange, symbol, timestamp and local_timestamp, option `type`, `strike_price`/strike, `expiration`/expiration_ts_us, prices (`last_price`, `mark_price`, `underlying_price`), bid/ask prices and amounts, implied vols (`bid_iv`, `ask_iv`, `mark_iv`), `open_interest`, and Greeks (`delta`, `gamma`, `vega`, `theta`, `rho`).
+        """
         stream_parser = get_tardis_parser(meta.data_type)
         raw = pl.DataFrame(
             {
