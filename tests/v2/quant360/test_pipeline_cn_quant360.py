@@ -116,7 +116,7 @@ def test_ingest_quant360_order_contract_routes_and_scales() -> None:
 
     table_name, written = writer.calls[0]
     assert table_name == "cn_order_events"
-    assert written["event_seq"][0] == 10
+    assert written["channel_seq"][0] == 10
     assert written["channel_id"][0] == 3
     assert written["order_ref"][0] == 10
     assert written["event_kind"][0] == "ADD"
@@ -248,8 +248,8 @@ def test_ingest_quant360_sse_order_missing_aux_indices_partially_quarantines() -
 
     table_name, written = writer.calls[0]
     assert table_name == "cn_order_events"
-    assert written["exchange_seq"][0] == 1001
-    assert written["exchange_order_index"][0] == 101
+    assert written["channel_biz_seq"][0] == 1001
+    assert written["symbol_order_seq"][0] == 101
 
 
 def test_ingest_quant360_sse_tick_missing_aux_indices_quarantines_all() -> None:

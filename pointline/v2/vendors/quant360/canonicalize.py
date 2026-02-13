@@ -41,7 +41,7 @@ def _canonicalize_order_events(df: pl.DataFrame) -> pl.DataFrame:
 
     prepared = df.with_columns(
         [
-            pl.col("appl_seq_num").cast(pl.Int64).alias("event_seq"),
+            pl.col("appl_seq_num").cast(pl.Int64).alias("channel_seq"),
             pl.col("channel_no").cast(pl.Int32).alias("channel_id"),
             pl.col("appl_seq_num").cast(pl.Int64).alias("order_ref"),
             pl.col("price_raw")
@@ -51,8 +51,8 @@ def _canonicalize_order_events(df: pl.DataFrame) -> pl.DataFrame:
             .cast(pl.Int64)
             .alias("price"),
             pl.col("qty_raw").cast(pl.Float64).mul(QTY_SCALE).round().cast(pl.Int64).alias("qty"),
-            pl.col("biz_index_raw").cast(pl.Int64).alias("exchange_seq"),
-            pl.col("order_index_raw").cast(pl.Int64).alias("exchange_order_index"),
+            pl.col("biz_index_raw").cast(pl.Int64).alias("channel_biz_seq"),
+            pl.col("order_index_raw").cast(pl.Int64).alias("symbol_order_seq"),
             pl.col("side_raw")
             .cast(pl.Utf8)
             .str.strip_chars()
@@ -124,7 +124,7 @@ def _canonicalize_tick_events(df: pl.DataFrame) -> pl.DataFrame:
 
     prepared = df.with_columns(
         [
-            pl.col("appl_seq_num").cast(pl.Int64).alias("event_seq"),
+            pl.col("appl_seq_num").cast(pl.Int64).alias("channel_seq"),
             pl.col("channel_no").cast(pl.Int32).alias("channel_id"),
             pl.col("bid_appl_seq_num").cast(pl.Int64).alias("bid_order_ref"),
             pl.col("offer_appl_seq_num").cast(pl.Int64).alias("ask_order_ref"),
@@ -145,8 +145,8 @@ def _canonicalize_tick_events(df: pl.DataFrame) -> pl.DataFrame:
             .cast(pl.Int64)
             .alias("price"),
             pl.col("qty_raw").cast(pl.Float64).mul(QTY_SCALE).round().cast(pl.Int64).alias("qty"),
-            pl.col("biz_index_raw").cast(pl.Int64).alias("exchange_seq"),
-            pl.col("trade_index_raw").cast(pl.Int64).alias("exchange_trade_index"),
+            pl.col("biz_index_raw").cast(pl.Int64).alias("channel_biz_seq"),
+            pl.col("trade_index_raw").cast(pl.Int64).alias("symbol_trade_seq"),
         ]
     )
     return prepared.with_columns(

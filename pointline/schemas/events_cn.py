@@ -25,16 +25,20 @@ CN_ORDER_EVENTS = TableSpec(
     kind="event",
     column_specs=(
         *_common_cn_event_columns(),
-        ColumnSpec("event_seq", pl.Int64),
-        ColumnSpec("channel_id", pl.Int32),
-        ColumnSpec("order_ref", pl.Int64),
+        # Sequences: different scopes and semantics
+        ColumnSpec("channel_id", pl.Int32),  # Feed channel (1-6)
+        ColumnSpec("channel_seq", pl.Int64),  # Per-channel feed sequence (ApplSeqNum)
+        ColumnSpec(
+            "channel_biz_seq", pl.Int64, nullable=True
+        ),  # Per-channel business seq (BizIndex)
+        ColumnSpec("symbol_order_seq", pl.Int64, nullable=True),  # Per-symbol order counter
+        ColumnSpec("order_ref", pl.Int64),  # Order reference (maps to channel_seq)
+        # Event details
         ColumnSpec("event_kind", pl.Utf8),
         ColumnSpec("side", pl.Utf8),
         ColumnSpec("order_type", pl.Utf8, nullable=True),
         ColumnSpec("price", pl.Int64, scale=PRICE_SCALE),
         ColumnSpec("qty", pl.Int64, scale=QTY_SCALE),
-        ColumnSpec("exchange_seq", pl.Int64, nullable=True),
-        ColumnSpec("exchange_order_index", pl.Int64, nullable=True),
     ),
     partition_by=("exchange", "trading_date"),
     business_keys=(),
@@ -43,7 +47,7 @@ CN_ORDER_EVENTS = TableSpec(
         "symbol_id",
         "trading_date",
         "channel_id",
-        "event_seq",
+        "channel_seq",
         "file_id",
         "file_seq",
     ),
@@ -56,16 +60,21 @@ CN_TICK_EVENTS = TableSpec(
     kind="event",
     column_specs=(
         *_common_cn_event_columns(),
-        ColumnSpec("event_seq", pl.Int64),
-        ColumnSpec("channel_id", pl.Int32),
+        # Sequences: different scopes and semantics
+        ColumnSpec("channel_id", pl.Int32),  # Feed channel (1-6)
+        ColumnSpec("channel_seq", pl.Int64),  # Per-channel feed sequence (ApplSeqNum)
+        ColumnSpec(
+            "channel_biz_seq", pl.Int64, nullable=True
+        ),  # Per-channel business seq (BizIndex)
+        ColumnSpec("symbol_trade_seq", pl.Int64, nullable=True),  # Per-symbol trade counter
+        # Order references
         ColumnSpec("bid_order_ref", pl.Int64, nullable=True),
         ColumnSpec("ask_order_ref", pl.Int64, nullable=True),
+        # Trade details
         ColumnSpec("event_kind", pl.Utf8),
         ColumnSpec("aggressor_side", pl.Utf8, nullable=True),
         ColumnSpec("price", pl.Int64, scale=PRICE_SCALE),
         ColumnSpec("qty", pl.Int64, scale=QTY_SCALE),
-        ColumnSpec("exchange_seq", pl.Int64, nullable=True),
-        ColumnSpec("exchange_trade_index", pl.Int64, nullable=True),
     ),
     partition_by=("exchange", "trading_date"),
     business_keys=(),
@@ -74,7 +83,7 @@ CN_TICK_EVENTS = TableSpec(
         "symbol_id",
         "trading_date",
         "channel_id",
-        "event_seq",
+        "channel_seq",
         "file_id",
         "file_seq",
     ),

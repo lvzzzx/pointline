@@ -18,20 +18,20 @@ def test_cn_order_events_contract() -> None:
 
     assert spec.partition_by == ("exchange", "trading_date")
     assert {"file_id", "file_seq", "symbol_id", "ts_event_us"} <= required
-    assert {"channel_id", "event_seq", "order_ref", "event_kind", "side"} <= required
+    assert {"channel_id", "channel_seq", "order_ref", "event_kind", "side"} <= required
     assert spec.tie_break_keys == (
         "exchange",
         "symbol_id",
         "trading_date",
         "channel_id",
-        "event_seq",
+        "channel_seq",
         "file_id",
         "file_seq",
     )
     assert spec.scale_for("price") == PRICE_SCALE
     assert spec.scale_for("qty") == QTY_SCALE
-    assert "exchange_seq" in schema
-    assert "exchange_order_index" in schema
+    assert "channel_biz_seq" in schema
+    assert "symbol_order_seq" in schema
     assert "source_exchange_seq" not in schema
     assert "source_exchange_order_index" not in schema
 
@@ -43,20 +43,20 @@ def test_cn_tick_events_contract() -> None:
 
     assert spec.partition_by == ("exchange", "trading_date")
     assert {"file_id", "file_seq", "symbol_id", "ts_event_us"} <= required
-    assert {"channel_id", "event_seq", "event_kind"} <= required
+    assert {"channel_id", "channel_seq", "event_kind"} <= required
     assert spec.tie_break_keys == (
         "exchange",
         "symbol_id",
         "trading_date",
         "channel_id",
-        "event_seq",
+        "channel_seq",
         "file_id",
         "file_seq",
     )
     assert spec.scale_for("price") == PRICE_SCALE
     assert spec.scale_for("qty") == QTY_SCALE
-    assert "exchange_seq" in schema
-    assert "exchange_trade_index" in schema
+    assert "channel_biz_seq" in schema
+    assert "symbol_trade_seq" in schema
     assert "source_exchange_seq" not in schema
     assert "source_exchange_trade_index" not in schema
 
