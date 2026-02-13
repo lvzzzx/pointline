@@ -59,12 +59,10 @@ def stock_basic_to_snapshot(raw: pl.DataFrame) -> pl.DataFrame:
     df = df.with_columns(_normalize_exchange(pl.col("exchange")).alias("exchange"))
     df = df.filter(pl.col("exchange").is_not_null())
 
-    # STAR Market (688xxx/689xxx on SSE) uses 200-share lots
+    # STAR Market (科创板) uses 200-share lots; all others use 100
+    # Tushare market field: 主板/创业板/科创板/CDR
     lot_size_expr = (
-        pl.when(
-            (pl.col("exchange") == "sse")
-            & (pl.col("symbol").str.starts_with("688") | pl.col("symbol").str.starts_with("689"))
-        )
+        pl.when(pl.col("market") == "科创板")
         .then(pl.lit(STAR_MARKET_LOT_SIZE))
         .otherwise(pl.lit(CN_LOT_SIZE))
         .cast(pl.Int64)
