@@ -103,31 +103,50 @@ def main():
     snapshot = stock_basic_to_snapshot(all_raw, effective_ts_us=effective_ts_us)
     print(f"  Snapshot rows: {len(snapshot)}")
 
-    # Assign deterministic symbol_ids
+    # Merge with existing dim_symbol (preserve other vendors)
+    print("Merging with existing dim_symbol")
+    tushare_exchanges = ["sse", "szse"]
+
+    if dim.is_empty():
+        # First run - just use Tushare data
+        merged = snapshot
+        print("  Existing dim_symbol is empty, using Tushare data only")
+    else:
+        # Preserve non-Tushare exchanges
+        other_exchanges = dim.filter(~pl.col("exchange").is_in(tushare_exchanges))
+        print(f"  Preserving {len(other_exchanges)} rows from other exchanges")
+        print(f"    Exchanges: {other_exchanges['exchange'].unique().to_list()}")
+
+        # Combine: other exchanges + new Tushare data
+        merged = pl.concat([other_exchanges, snapshot], how="diagonal")
+        print(f"  Combined: {len(merged)} rows")
+
+    # Assign symbol_ids
     print("Assigning symbol_ids")
-    result = assign_symbol_ids(snapshot)
+    result = assign_symbol_ids(merged)
 
     # Validate
     print("Validating")
     validate(result)
-    print(f"  Result: {result.height} rows")
+    print(f"  Final result: {result.height} rows")
 
-    # Print summary by market type
+    # Print summary
+    print("  By exchange:")
+    exch_summary = (
+        result.group_by("exchange").agg(pl.len().alias("count")).sort("count", descending=True)
+    )
+    for row in exch_summary.iter_rows(named=True):
+        print(f"    {row['exchange']}: {row['count']}")
+
+    print("  By market type:")
     market_summary = (
-        result.group_by("market_type")
-        .agg(
-            [
-                pl.len().alias("count"),
-                pl.col("lot_size").first().alias("lot_size_sample"),
-            ]
-        )
+        result.filter(pl.col("exchange").is_in(tushare_exchanges))
+        .group_by("market_type")
+        .agg(pl.len().alias("count"))
         .sort("count", descending=True)
     )
-    print("  By market type:")
     for row in market_summary.iter_rows(named=True):
-        lot = row["lot_size_sample"]
-        lot_shares = lot // 1_000_000_000  # Convert from scaled to actual
-        print(f"    {row['market_type']}: {row['count']} (lot={lot_shares})")
+        print(f"    {row['market_type']}: {row['count']}")
 
     # Save
     print(f"Saving to {store.dim_symbol_path}")
