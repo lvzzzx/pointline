@@ -25,8 +25,9 @@ TRADES = TableSpec(
     kind="event",
     column_specs=(
         *_common_event_columns(),
+        ColumnSpec("trade_id", pl.Utf8, nullable=True),
         ColumnSpec("side", pl.Utf8),
-        ColumnSpec("is_buyer_maker", pl.Boolean),
+        ColumnSpec("is_buyer_maker", pl.Boolean, nullable=True),
         ColumnSpec("price", pl.Int64, scale=PRICE_SCALE),
         ColumnSpec("qty", pl.Int64, scale=QTY_SCALE),
     ),
@@ -60,7 +61,7 @@ ORDERBOOK_UPDATES = TableSpec(
     kind="event",
     column_specs=(
         *_common_event_columns(),
-        ColumnSpec("book_seq", pl.Int64),
+        ColumnSpec("book_seq", pl.Int64, nullable=True),
         ColumnSpec("side", pl.Utf8),
         ColumnSpec("price", pl.Int64, scale=PRICE_SCALE),
         ColumnSpec("qty", pl.Int64, scale=QTY_SCALE),

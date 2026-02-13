@@ -19,6 +19,7 @@ def _trades_row(*, symbol_id: int = 7, file_seq: int = 1) -> pl.DataFrame:
             "ts_local_us": [1_700_000_000_000_000],
             "file_id": [1],
             "file_seq": [file_seq],
+            "trade_id": [""],
             "side": ["buy"],
             "is_buyer_maker": [False],
             "price": [123_000_000_000],

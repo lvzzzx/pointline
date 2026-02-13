@@ -8,6 +8,7 @@ from typing import Any
 import polars as pl
 
 from pointline.ingestion.cn_validation import apply_cn_exchange_validations
+from pointline.ingestion.event_validation import apply_event_validations
 from pointline.ingestion.lineage import assign_lineage
 from pointline.ingestion.manifest import update_manifest_status
 from pointline.ingestion.models import IngestionResult
@@ -26,11 +27,14 @@ from pointline.vendors.quant360 import canonicalize_quant360_frame
 
 Parser = Callable[[BronzeFileMetadata], pl.DataFrame]
 Writer = Callable[[str, pl.DataFrame], None] | EventStore
+QuarantineBatch = tuple[pl.DataFrame, str | None]
 
 _TABLE_ALIASES: dict[str, str] = {
     "trades": "trades",
     "quotes": "quotes",
     "orderbook_updates": "orderbook_updates",
+    "incremental_book_L2": "orderbook_updates",
+    "incremental_book_l2": "orderbook_updates",
     "cn_order_events": "cn_order_events",
     "order_new": "cn_order_events",
     "l3_orders": "cn_order_events",
@@ -112,6 +116,36 @@ def _append_quarantine(
     )
 
 
+def _append_quarantine_batches(
+    quarantine_store: QuarantineStore | None,
+    *,
+    dry_run: bool,
+    file_id: int | None,
+    table_name: str,
+    batches: tuple[QuarantineBatch, ...],
+) -> None:
+    for rows, reason in batches:
+        _append_quarantine(
+            quarantine_store,
+            dry_run=dry_run,
+            file_id=file_id,
+            table_name=table_name,
+            rows=rows,
+            reason=reason,
+        )
+
+
+def _concat_rows_like(
+    *,
+    template: pl.DataFrame,
+    rows: tuple[pl.DataFrame, ...],
+) -> pl.DataFrame:
+    non_empty = [frame for frame in rows if not frame.is_empty()]
+    if not non_empty:
+        return template.head(0)
+    return pl.concat(non_empty, how="vertical")
+
+
 def ingest_file(
     meta: BronzeFileMetadata,
     *,
@@ -178,20 +212,30 @@ def ingest_file(
         )
         with_trading_date = derive_trading_date_frame(canonicalized)
 
-        validated_rows, rule_quarantined_rows, rule_quarantine_reason = (
-            apply_cn_exchange_validations(
-                with_trading_date,
-                table_name=table_name,
-            )
+        generic_validated_rows, generic_quarantined_rows, generic_quarantine_reason = (
+            apply_event_validations(with_trading_date, table_name=table_name)
         )
+        validated_rows, cn_quarantined_rows, cn_quarantine_reason = apply_cn_exchange_validations(
+            generic_validated_rows,
+            table_name=table_name,
+        )
+        rule_quarantine_batches: tuple[QuarantineBatch, ...] = (
+            (generic_quarantined_rows, generic_quarantine_reason),
+            (cn_quarantined_rows, cn_quarantine_reason),
+        )
+        rule_quarantined_rows = _concat_rows_like(
+            template=with_trading_date,
+            rows=(generic_quarantined_rows, cn_quarantined_rows),
+        )
+        rule_quarantine_reason = _combine_reasons(generic_quarantine_reason, cn_quarantine_reason)
+
         if validated_rows.is_empty():
-            _append_quarantine(
+            _append_quarantine_batches(
                 quarantine_store,
                 dry_run=dry_run,
                 file_id=file_id,
                 table_name=table_name,
-                rows=rule_quarantined_rows,
-                reason=rule_quarantine_reason,
+                batches=rule_quarantine_batches,
             )
             result = _result(
                 status=INGEST_STATUS_QUARANTINED,
@@ -216,21 +260,15 @@ def ingest_file(
         quarantine_reason = _combine_reasons(rule_quarantine_reason, pit_quarantine_reason)
 
         if valid_rows.is_empty():
-            _append_quarantine(
+            _append_quarantine_batches(
                 quarantine_store,
                 dry_run=dry_run,
                 file_id=file_id,
                 table_name=table_name,
-                rows=rule_quarantined_rows,
-                reason=rule_quarantine_reason,
-            )
-            _append_quarantine(
-                quarantine_store,
-                dry_run=dry_run,
-                file_id=file_id,
-                table_name=table_name,
-                rows=pit_quarantined_rows,
-                reason=pit_quarantine_reason,
+                batches=(
+                    *rule_quarantine_batches,
+                    (pit_quarantined_rows, pit_quarantine_reason),
+                ),
             )
             result = _result(
                 status=INGEST_STATUS_QUARANTINED,
@@ -250,21 +288,15 @@ def ingest_file(
         with_lineage = assign_lineage(valid_rows, file_id=file_id)
         normalized = normalize_to_table_spec(with_lineage, spec)
 
-        _append_quarantine(
+        _append_quarantine_batches(
             quarantine_store,
             dry_run=dry_run,
             file_id=file_id,
             table_name=table_name,
-            rows=rule_quarantined_rows,
-            reason=rule_quarantine_reason,
-        )
-        _append_quarantine(
-            quarantine_store,
-            dry_run=dry_run,
-            file_id=file_id,
-            table_name=table_name,
-            rows=pit_quarantined_rows,
-            reason=pit_quarantine_reason,
+            batches=(
+                *rule_quarantine_batches,
+                (pit_quarantined_rows, pit_quarantine_reason),
+            ),
         )
 
         if not dry_run:

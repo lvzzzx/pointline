@@ -68,6 +68,7 @@ def _seed_trades_for_bars(silver_root: Path) -> None:
             "ts_local_us": [10, 20, 20, 30, 15],
             "file_id": [1, 1, 1, 1, 1],
             "file_seq": [1, 1, 2, 3, 1],
+            "trade_id": [None, None, None, None, None],
             "side": ["buy", "buy", "buy", "sell", "buy"],
             "is_buyer_maker": [False, False, False, True, False],
             "price": [
