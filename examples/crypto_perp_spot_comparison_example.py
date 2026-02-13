@@ -20,12 +20,12 @@ import os
 from datetime import datetime, timezone
 
 import polars as pl
+from pointline.research.resample import assign_to_buckets
+from pointline.research.spines import VolumeBarConfig, get_builder
 from scipy.stats import spearmanr
 
 from pointline import research
 from pointline.research import query
-from pointline.research.resample import assign_to_buckets
-from pointline.research.spines import VolumeBarConfig, get_builder
 
 # =============================================================================
 # CONFIGURATION
