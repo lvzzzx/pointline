@@ -13,8 +13,15 @@ from typing import Literal
 
 import polars as pl
 
+from pointline.v2.vendors.tushare.symbols import (
+    stock_basic_to_delistings,
+    stock_basic_to_snapshot,
+)
 
-# Configure Tushare with custom endpoint
+# STAR Market uses lot_size=200 instead of 100
+STAR_MARKET_LOT_SIZE = 200_000_000_000  # 200 × QTY_SCALE (1e9)
+
+
 def configure_tushare(token: str, http_url: str = "http://lianghua.nanyangqiankun.top"):
     """Configure Tushare with custom API endpoint."""
     try:
@@ -29,31 +36,17 @@ def configure_tushare(token: str, http_url: str = "http://lianghua.nanyangqianku
     return pro
 
 
-# Exchange rules for Chinese A-shares
-CN_EXCHANGE_RULES: dict[tuple[str, str], dict[str, int]] = {
-    ("SSE", "main_board"): {"lot_size": 100, "tick_size": 1},
-    ("SSE", "star_board"): {"lot_size": 200, "tick_size": 1},
-    ("SZSE", "main_board"): {"lot_size": 100, "tick_size": 1},
-    ("SZSE", "growth_board"): {"lot_size": 100, "tick_size": 1},
-}
+def adjust_star_market_lot_size(df: pl.DataFrame) -> pl.DataFrame:
+    """Adjust lot_size for STAR Market (688xxx/689xxx on SSE).
 
-MARKET_MAP: dict[str, str] = {
-    "主板": "main_board",
-    "创业板": "growth_board",
-    "科创板": "star_board",
-    "北交所": "bse_board",
-}
-
-
-def derive_contract_specs(exchange: str, exchange_symbol: str, market_type: str) -> dict[str, int]:
-    """Derive lot_size and tick_size from exchange rules."""
-    key = (exchange, market_type)
-    if key in CN_EXCHANGE_RULES:
-        return CN_EXCHANGE_RULES[key]
-    # Fallback: infer STAR market by symbol prefix
-    if exchange == "SSE" and exchange_symbol.startswith("688"):
-        return CN_EXCHANGE_RULES[("SSE", "star_board")]
-    return {"lot_size": 100, "tick_size": 1}
+    Tushare symbols module uses uniform lot_size=100. STAR Market requires 200.
+    """
+    return df.with_columns(
+        pl.when((pl.col("exchange") == "sse") & pl.col("exchange_symbol").str.starts_with("688"))
+        .then(pl.lit(STAR_MARKET_LOT_SIZE))
+        .otherwise(pl.col("lot_size"))
+        .alias("lot_size")
+    )
 
 
 def fetch_stock_basic(
@@ -66,81 +59,6 @@ def fetch_stock_basic(
 
     pdf = pro.stock_basic(exchange=exchange, list_status=list_status, fields=fields)
     return pl.from_pandas(pdf)
-
-
-def transform_to_snapshot(df: pl.DataFrame) -> pl.DataFrame:
-    """Transform Tushare stock_basic to dim_symbol snapshot format."""
-    # Map market types
-    df = df.with_columns(
-        [
-            pl.col("symbol").alias("exchange_symbol"),
-            pl.col("ts_code").alias("canonical_symbol"),
-            pl.col("market")
-            .map_elements(lambda x: MARKET_MAP.get(x, "main_board"), return_dtype=pl.Utf8)
-            .alias("market_type"),
-        ]
-    )
-
-    # Derive contract specs
-    def get_lot_size(row: dict) -> int:
-        return derive_contract_specs(row["exchange"], row["exchange_symbol"], row["market_type"])[
-            "lot_size"
-        ]
-
-    def get_tick_size(row: dict) -> int:
-        return derive_contract_specs(row["exchange"], row["exchange_symbol"], row["market_type"])[
-            "tick_size"
-        ]
-
-    df = df.with_columns(
-        [
-            pl.struct(["exchange", "exchange_symbol", "market_type"])
-            .map_elements(get_lot_size, return_dtype=pl.Int64)
-            .alias("lot_size"),
-            pl.struct(["exchange", "exchange_symbol", "market_type"])
-            .map_elements(get_tick_size, return_dtype=pl.Int64)
-            .alias("tick_size"),
-            pl.lit(None).cast(pl.Utf8).alias("base_asset"),
-            pl.lit(None).cast(pl.Utf8).alias("quote_asset"),
-            pl.lit(None).cast(pl.Int64).alias("contract_size"),
-        ]
-    )
-
-    return df.select(
-        [
-            "exchange",
-            "exchange_symbol",
-            "canonical_symbol",
-            "market_type",
-            "base_asset",
-            "quote_asset",
-            "lot_size",
-            "tick_size",
-            "contract_size",
-        ]
-    )
-
-
-def transform_delistings(df: pl.DataFrame) -> pl.DataFrame | None:
-    """Transform delisted stocks to delistings format."""
-    if df.is_empty():
-        return None
-
-    def yyyymmdd_to_micros(date_str: str | None) -> int:
-        if not date_str:
-            return int(datetime.now().timestamp() * 1_000_000)
-        dt = datetime.strptime(str(date_str), "%Y%m%d")
-        return int(dt.timestamp() * 1_000_000)
-
-    return df.select(
-        [
-            pl.col("exchange"),
-            pl.col("symbol").alias("exchange_symbol"),
-            pl.col("delist_date")
-            .map_elements(yyyymmdd_to_micros, return_dtype=pl.Int64)
-            .alias("delisted_at_ts_us"),
-        ]
-    )
 
 
 def main():
@@ -185,16 +103,23 @@ def main():
 
     # Fetch listed stocks
     print(f"Fetching stock_basic from Tushare (exchange={args.exchange or 'all'})")
-    listed_df = fetch_stock_basic(pro, exchange=args.exchange, list_status="L")
-    print(f"  Listed stocks: {len(listed_df)}")
+    listed_raw = fetch_stock_basic(pro, exchange=args.exchange, list_status="L")
+    print(f"  Listed stocks: {len(listed_raw)}")
 
-    snapshot = transform_to_snapshot(listed_df)
+    # Transform using vendor module, then adjust STAR Market
+    snapshot = stock_basic_to_snapshot(listed_raw)
+    snapshot = adjust_star_market_lot_size(snapshot)
+    print(f"  Snapshot rows: {len(snapshot)}")
 
     # Fetch delistings
     print("Fetching delisted stocks")
-    delisted_df = fetch_stock_basic(pro, exchange=args.exchange, list_status="D")
-    delistings = transform_delistings(delisted_df)
-    print(f"  Delisted stocks: {len(delisted_df)}")
+    delisted_raw = fetch_stock_basic(pro, exchange=args.exchange, list_status="D")
+    delistings = stock_basic_to_delistings(delisted_raw)
+    if delistings is not None and len(delistings) > 0:
+        print(f"  Delisted stocks: {len(delistings)}")
+    else:
+        delistings = None
+        print("  No delisted stocks")
 
     # Perform SCD2 upsert
     print("Performing SCD2 upsert")
@@ -211,6 +136,23 @@ def main():
 
     validate(result)
     print(f"  Result: {result.height} rows")
+
+    # Print summary by market type
+    market_summary = (
+        result.group_by("market_type")
+        .agg(
+            [
+                pl.len().alias("count"),
+                pl.col("lot_size").first().alias("lot_size_sample"),
+            ]
+        )
+        .sort("count", descending=True)
+    )
+    print("  By market type:")
+    for row in market_summary.iter_rows(named=True):
+        lot = row["lot_size_sample"]
+        lot_shares = lot // 1_000_000_000  # Convert from scaled to actual
+        print(f"    {row['market_type']}: {row['count']} (lot={lot_shares})")
 
     # Save
     print(f"Saving to {store.dim_symbol_path}")
