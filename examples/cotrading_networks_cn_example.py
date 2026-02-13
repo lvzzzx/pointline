@@ -15,9 +15,10 @@ Date: 2026-02-13
 from __future__ import annotations
 
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING
+from zoneinfo import ZoneInfo
 
 import numpy as np
 import polars as pl
@@ -41,10 +42,12 @@ TOP_K_NEIGHBORS = 10
 
 
 def get_day_bounds(trading_date: str) -> tuple[int, int]:
-    """Convert trading date to microsecond timestamps."""
-    date_dt = datetime.strptime(trading_date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
-    day_start_us = int(date_dt.timestamp() * 1_000_000)
-    day_end_us = day_start_us + 86_400_000_000  # +24 hours
+    """Convert trading date to microsecond timestamps (exchange-local day in Asia/Shanghai)."""
+    local_tz = ZoneInfo("Asia/Shanghai")
+    day_start_dt = datetime.strptime(trading_date, "%Y-%m-%d").replace(tzinfo=local_tz)
+    day_start_us = int(day_start_dt.timestamp() * 1_000_000)
+    day_end_dt = day_start_dt + timedelta(days=1)
+    day_end_us = int(day_end_dt.timestamp() * 1_000_000)
     return day_start_us, day_end_us
 
 
