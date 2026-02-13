@@ -30,6 +30,7 @@ The program covers **12 signal families** across **4 layers**:
 
 1. [Signal Taxonomy](#1-signal-taxonomy)
 2. [Layer 1: Microstructure](#2-layer-1-microstructure)
+   - [2.4 Microstructure-to-MFT Bridge Patterns](#24-microstructure-to-mft-bridge-how-fast-signals-serve-slow-strategies)
 3. [Layer 2: Derivatives](#3-layer-2-derivatives)
 4. [Layer 3: Cross-Dimensional](#4-layer-3-cross-dimensional)
 5. [Layer 4: Meta / Conditioning](#5-layer-4-meta--conditioning)
@@ -244,6 +245,171 @@ The `is_buyer_maker` field directly identifies aggressor side. Asymmetry in make
 
 - Lee & Ready (1991) — "Inferring Trade Direction from Intraday Data"
 - Chakrabarty, Moulton & Shkilko (2012) — "Short Sales, Long Sales, and the Lee-Ready Trade Classification Algorithm Revisited"
+
+---
+
+### 2.4 Microstructure-to-MFT Bridge: How Fast Signals Serve Slow Strategies
+
+**Problem statement:** Raw microstructure features (depth imbalance, microprice deviation, single-trade toxicity) have peak IC at 1-3 ticks and decay to noise within seconds. MFT strategies hold for 10s of seconds to minutes. Naively feeding tick-level features into an MFT model wastes them — by the time the signal is consumed, the information is stale.
+
+**Solution:** Microstructure features do not enter the MFT model as raw values. They are transformed through one of six bridge patterns that convert short-lived tick information into MFT-relevant state, regime, or timing variables.
+
+#### Bridge Pattern 1: Aggregated State Variables
+
+**Concept:** Aggregate tick-level signals over MFT-relevant windows. The aggregated value captures persistent microstructure state, not the transient tick.
+
+```
+Raw signal:     depth_imbalance[t]          → IC peak at 1-3 ticks, decays by tick 10
+Aggregated:     mean(depth_imbalance, 50)   → "the book has been bid-heavy for 50 bars"
+                ema(depth_imbalance, 100)    → exponential smoothing preserves recent bias
+```
+
+**Why it extends horizon:** A single tick of bid-heavy book is noise. Fifty consecutive bars of bid-heavy book is a resting demand regime. The aggregated state predicts not "next tick up" but "buyers are absorbing, next large sell will be cushioned" — an MFT-relevant statement.
+
+**Feature examples:**
+- `mean_depth_imbalance_50bar` — average book imbalance over 50 volume bars
+- `ema_microprice_deviation_100bar` — smoothed microprice vs mid spread
+- `cumulative_signed_flow_200bar` — accumulated net flow over a window
+- `fraction_time_bid_heavy_100bar` — percentage of bars where bid depth > ask depth
+
+**Testable hypothesis:** Aggregated imbalance at 50-bar and 100-bar windows should have IC > 0.03 at 5-10 bar forward horizons, even though the raw tick signal decays by bar 3.
+
+---
+
+#### Bridge Pattern 2: Regime Classification
+
+**Concept:** Use microstructure features to classify the current regime, then condition MFT signals on that regime. The microstructure signal does not need to predict returns — it only needs to tell you what kind of market you are in.
+
+```
+Microstructure regime label:
+  - TOXIC:     VPIN > 0.7, Kyle's lambda elevated
+  - THIN:      total book depth < 20th percentile
+  - INFORMED:  large-trade flow > 3σ
+  - NORMAL:    none of the above
+
+MFT model behavior:
+  - TOXIC regime  → funding-based signals get 2x weight (squeeze more likely)
+  - THIN regime   → reduce position sizing (slippage risk)
+  - INFORMED regime → flow signals get 2x weight (smart money present)
+  - NORMAL → default weights
+```
+
+**Why it extends horizon:** Regimes persist for minutes to hours, even though the microstructure data generating the label updates every tick. Regime transitions are infrequent events with MFT-horizon consequences.
+
+**Feature examples:**
+- `toxicity_regime` — categorical: TOXIC / ELEVATED / NORMAL / SAFE
+- `liquidity_regime` — categorical: THIN / NORMAL / DEEP
+- `flow_type_regime` — categorical: INFORMED / MIXED / NOISE
+
+**Testable hypothesis:** MFT signals (funding, basis, flow imbalance) conditioned on microstructure regime should have higher IC than unconditioned signals. Specifically, funding crowding signals should have higher IC during TOXIC regimes.
+
+---
+
+#### Bridge Pattern 3: Persistence and Duration Metrics
+
+**Concept:** Instead of the level of a microstructure signal, measure how long it has been in a given state. Persistence carries MFT-horizon information that the instantaneous level does not.
+
+```
+Raw signal:     depth_imbalance[t] = 0.3          → "bid-heavy right now"
+Persistence:    bars_since_imbalance_flipped = 87  → "bid-heavy for 87 bars straight"
+Duration:       mean_imbalance_duration = 45 bars  → "typical bid-heavy streak is 45 bars"
+```
+
+**Why it extends horizon:** A microstructure state that has persisted for 100 bars is more likely to persist for 10 more bars (mean-revert slowly) than one that just started. Persistence transforms a fast signal into a slow state variable.
+
+**Feature examples:**
+- `bars_since_imbalance_sign_flip` — how long current book bias has persisted
+- `vpin_above_threshold_duration` — how long toxicity has been elevated
+- `consecutive_same_direction_large_trades` — length of current large-trade run
+- `depth_regime_age` — bars since last regime transition
+
+**Testable hypothesis:** Persistence features should have IC at 5-10 bar horizons. Long persistence (>95th percentile) should predict mean reversion; short persistence after a flip should predict continuation.
+
+---
+
+#### Bridge Pattern 4: Transition Detection (Event Signals)
+
+**Concept:** Microstructure regime transitions are events with MFT-horizon consequences. The transition itself is the signal — not the continuous level. When the book suddenly thins, or VPIN spikes from 0.3 to 0.8, or large-trade flow reverses direction, these are discrete events that forecast the next several minutes.
+
+```
+Continuous:     vpin[t] = 0.75                    → IC decays in 3 ticks
+Transition:     vpin crossed 0.7 threshold 2 bars ago → event flag with MFT relevance
+                bars_since_vpin_spike = 2          → "toxicity just arrived"
+```
+
+**Why it extends horizon:** Markets take time to process new information. A sudden microstructure shift (book thins, toxicity spikes, informed flow appears) triggers an adjustment process that plays out over minutes, not ticks. The event flag marks the start of that process.
+
+**Feature examples:**
+- `vpin_crossed_above_07` — binary event flag, time since occurrence
+- `book_depth_dropped_below_p20` — sudden thinning event
+- `large_trade_cluster_started` — first large trade after quiet period
+- `microprice_diverged_from_mid_3sigma` — extreme microprice dislocation event
+- `resilience_failure` — depth did not recover within expected time after sweep
+
+**Testable hypothesis:** Event flags should have IC > 0.04 at 3-10 bar forward horizons. IC should decay more slowly than raw microstructure level features (half-life of 5-10 bars vs 1-3 bars).
+
+---
+
+#### Bridge Pattern 5: Entry/Exit Timing Within MFT Signals
+
+**Concept:** MFT signals from Layer 2-3 (funding, basis, options) determine direction. Microstructure features determine WHEN to enter and exit within that directional view. This is the "trigger" role — microstructure provides execution timing, not alpha.
+
+```
+MFT signal:     funding_zscore = -2.5 → "short bias for next 10 minutes"
+Micro timing:   wait until depth_imbalance < -0.2 AND vpin < 0.4
+                → "enter short NOW: ask-heavy book + low toxicity = good entry"
+
+Without timing: enter immediately at signal generation → wider spread, worse fill
+With timing:    enter when book is favorable → tighter spread, better fill
+```
+
+**Why it works:** This pattern does not require microstructure signals to predict returns at MFT horizons. It only requires them to predict the next few seconds of price/spread behavior — which is exactly where they are strongest.
+
+**Implementation:** This is not a feature in the traditional IC sense. It is an execution policy conditioned on microstructure state. Evaluation metric is implementation shortfall, not IC.
+
+**Testable hypothesis:** MFT strategies that condition entry timing on book state should achieve 15-30% lower implementation shortfall than strategies that enter immediately on signal.
+
+---
+
+#### Bridge Pattern 6: Integral / Cumulative Features
+
+**Concept:** Instead of the instantaneous microstructure value, use its cumulative integral over a window. This is mathematically related to Pattern 1 (aggregation) but focuses on the running sum rather than the mean — capturing total information arrival, not average state.
+
+```
+Raw:        signed_flow[t]                           → single bar flow direction
+Integral:   cumsum(signed_flow, reset_every=100bar)  → "net flow since last reset"
+            ewm_integral(depth_imbalance, span=50)   → exponential integral of book bias
+```
+
+**Why it extends horizon:** Cumulative flow divergence over 100 bars captures sustained buying or selling pressure. Even if each bar's flow imbalance has near-zero IC at 10-bar horizons, the cumulative sum over 100 bars measures structural demand/supply buildup that resolves over minutes.
+
+**Feature examples:**
+- `cumulative_signed_flow_100bar` — running sum of net signed volume
+- `cumulative_toxicity_integral_50bar` — integral of VPIN above baseline
+- `net_book_pressure_integral` — integral of depth imbalance, exponentially weighted
+
+**Testable hypothesis:** Integral features should have IC > 0.03 at 5-10 bar horizons even when the per-bar feature has IC < 0.01 at those horizons. Integral features should also have lower turnover than raw features.
+
+---
+
+#### Summary: Bridge Pattern Selection Guide
+
+| Pattern | Input | Output | MFT Use | When to Use |
+|---------|-------|--------|---------|-------------|
+| **1. Aggregation** | Tick-level signal | Smoothed state | Direct feature | Default choice; always try first |
+| **2. Regime** | Multiple micro signals | Categorical label | Conditioning variable | When you need to modulate other signals |
+| **3. Persistence** | Signal sign/threshold | Duration counter | Duration feature | When signal persistence is more informative than level |
+| **4. Transition** | Signal level crossing | Event flag + age | Event feature | When regime shifts matter more than regime levels |
+| **5. Timing** | Book state, toxicity | Entry/exit rule | Execution policy | When you already have directional alpha from Layer 2-3 |
+| **6. Integral** | Per-bar flow/pressure | Cumulative sum | Momentum feature | When cumulative pressure matters (demand/supply buildup) |
+
+**Evaluation protocol for bridge patterns:**
+
+1. Compute raw microstructure feature IC at horizons 1, 3, 5, 10 bars. Confirm rapid decay (IC_10bar < 0.3 × IC_1bar).
+2. Apply each bridge pattern. Measure IC at 5, 10, 20 bars.
+3. A pattern is successful if it shifts the IC peak from 1-3 bars to 5-10+ bars without losing more than 50% of the peak magnitude.
+4. Compare bridge-transformed features against simple rolling-mean baselines. Reject if rolling mean matches performance.
+5. Test interaction: bridge-transformed microstructure features conditioned on Layer 2 regime should outperform either alone.
 
 ---
 
