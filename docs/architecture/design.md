@@ -1,101 +1,159 @@
-# Pointline Architecture
+# Pointline Architecture v2
 
-**Status:** Target
+**Status:** Current
 **Scope:** Single-node offline market data lake for deterministic ingestion and research
+
+---
 
 ## 1) Philosophy
 
 Keep it clean, clear, and simple:
 
-- Schemas are code.
-- File ingestion is function-first.
-- Keep only mechanisms that protect PIT correctness and replay determinism.
+- **Schemas are code.** One canonical schema per table, versioned only by git history.
+- **Ingestion is function-first.** No heavy framework; just parsers, pipelines, and manifests.
+- **Keep only mechanisms that protect PIT correctness and replay determinism.**
+- **No backward compatibility.** Rebuild/re-ingest is the migration path.
+
+---
 
 ## 2) Canonical Stack
 
-- Storage: Delta Lake (`delta-rs`)
-- Compute: Polars
-- Runtime: local filesystem, single machine only
+| Layer | Technology |
+|-------|------------|
+| Storage | Delta Lake (`delta-rs`) |
+| Compute | Polars |
+| Runtime | Local filesystem, single machine only |
 
-No cloud/distributed assumptions.
+No cloud/distributed assumptions. No legacy adapter paths.
+
+---
 
 ## 3) Data Lake Model
 
-- **Bronze**: immutable raw vendor files and API captures
-- **Silver**: typed normalized event/dimension/control tables
-- **Gold**: optional derived tables
+### Bronze
+Immutable raw vendor files and API captures.
 
-Lineage fields in Silver event tables:
-- `file_id`
-- `file_seq`
+### Silver
+Typed, normalized event/dimension/control tables with deterministic lineage.
+
+### Gold
+Optional derived tables (user-defined, out of scope for core).
+
+### Lineage Fields (Silver Event Tables)
+Every event row carries:
+- `file_id` — stable identifier for the source Bronze file
+- `file_seq` — deterministic sequence within that file
+
+---
 
 ## 4) Partition Contract (Timezone Aware)
 
-Event table partitions are:
+Event tables are partitioned by:
 
-- `(exchange, trading_date)`
+```
+(exchange, trading_date)
+```
 
-`trading_date` is derived from event timestamp in exchange local timezone:
+`trading_date` is derived from `ts_event_us` converted to **exchange-local time**:
 
 1. `ts_event_us` is UTC microseconds.
 2. Convert using canonical `exchange -> timezone` mapping.
 3. `trading_date = local_datetime.date()`.
 
-Required initial mappings:
+**Timezone Mappings:**
 - Crypto exchanges: UTC (unless explicitly overridden)
-- China A-share exchanges (`sse`, `szse`): `Asia/Shanghai`
+- China A-share (`sse`, `szse`): `Asia/Shanghai`
+
+---
 
 ## 5) Ingestion Contract
 
-For each source file:
+Single-file flow (`ingest_file(meta) -> result`):
 
-1. Discover candidate Bronze files.
-2. Idempotency gate using manifest success state.
-3. Parse and canonicalize rows.
-4. Derive and validate `(exchange, trading_date)` partition alignment.
-5. Resolve/check PIT symbol coverage via `dim_symbol`.
-6. Apply validation and quarantine rules.
-7. Write Silver with deterministic lineage (`file_id`, `file_seq`).
-8. Record status and diagnostics in control tables.
+1. **Discover** candidate Bronze files.
+2. **Idempotency gate** via manifest success state.
+3. **Parse** and canonicalize rows.
+4. **Derive and validate** `(exchange, trading_date)` partition alignment.
+5. **Resolve/check** PIT symbol coverage via `dim_symbol`.
+6. **Apply validation** and quarantine rules.
+7. **Write Silver** with deterministic lineage (`file_id`, `file_seq`).
+8. **Record status** and diagnostics in control tables.
 
-Manifest identity key:
-`(vendor, data_type, bronze_path, file_hash)`.
+### Manifest Identity
+Key: `(vendor, data_type, bronze_path, file_hash)`
 
-Status model:
-`pending | success | failed | quarantined`.
+### Status Model
+```
+pending | success | failed | quarantined
+```
+
+### Failure Paths
+- Empty parse → `failed`
+- Exchange-timezone partition mismatch → `failed`
+- No PIT symbol coverage → `quarantined`
+- Validation removes all rows → `quarantined`
+
+---
 
 ## 6) Schema Contract
 
-- Event timestamps use `Int64` microseconds (`*_ts_us`).
-- Monetary/quantity fields use scaled `Int64` (no float in canonical storage).
-- `symbol_id` is deterministic and stable across reruns.
-- `dim_symbol` uses SCD2 validity windows:
-  `valid_from_ts_us <= ts < valid_until_ts_us`.
+- Event timestamps: `Int64` microseconds (`*_ts_us`)
+- Monetary/quantity fields: scaled `Int64` (no float in canonical storage)
+- `symbol_id`: deterministic and stable across reruns
+- `dim_symbol`: SCD2 validity windows (`valid_from_ts_us <= ts < valid_until_ts_us`)
 
-Canonical schema definitions live in code under `pointline/schemas/*`.
+Canonical schema definitions live in `pointline/schemas/`.
+
+---
 
 ## 7) Determinism Contract
 
 Replay ordering must be explicit and stable.
 
-Default tie-break keys:
-- trades/quotes: `(exchange, symbol_id, ts_event_us, file_id, file_seq)`
-- orderbook updates: `(exchange, symbol_id, ts_event_us, book_seq, file_id, file_seq)`
+**Default Tie-Break Keys:**
 
-## 8) Operational Defaults
+| Table Type | Tie-Break Order |
+|------------|-----------------|
+| trades, quotes | `(exchange, symbol_id, ts_event_us, file_id, file_seq)` |
+| orderbook updates | `(exchange, symbol_id, ts_event_us, book_seq, file_id, file_seq)` |
+
+---
+
+## 8) Module Layout
+
+```
+pointline/
+├── schemas/          # Canonical schema registry (types, events, dimensions, control)
+├── v2/               # v2 ingestion core
+│   └── ingestion/
+│       ├── pipeline.py       # ingest_file()
+│       ├── manifest.py       # Manifest ops
+│       ├── timezone.py       # Exchange-timezone derivation
+│       └── validators.py     # PIT checks, row validation
+└── io/               # Storage adapters (Delta, etc.)
+```
+
+---
+
+## 9) Operational Defaults
 
 - Correctness over throughput.
 - Explicit maintenance (`optimize`, `vacuum`) by operator choice.
 - No backward compatibility guarantee for legacy contracts.
-- No mandatory migration path for old schema versions; rebuild/reingest is acceptable.
+- No mandatory migration path for old schema versions; rebuild/re-ingest is acceptable.
 
-## 9) Design References
-
-- Ingestion design: `docs/architecture/simplified-ingestion-design-v2.md`
-- Schema design: `docs/architecture/schema-design-v4.md`
+---
 
 ## 10) Out of Scope
 
-- Live execution/routing.
-- Cloud object storage.
-- Distributed compute/storage backends.
+- Live execution/routing
+- Cloud object storage
+- Distributed compute/storage backends
+- CLI orchestration (separate concern)
+
+---
+
+## 11) References
+
+- Ingestion design: `docs/architecture/simplified-ingestion-design-v2.md`
+- Cutover plan: `docs/internal/execplan-v2-clean-cutover.md`

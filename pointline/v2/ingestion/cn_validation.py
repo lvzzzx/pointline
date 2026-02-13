@@ -15,13 +15,13 @@ def apply_cn_exchange_validations(
     if table_name == "cn_order_events":
         return _quarantine_missing_sse_indices(
             df,
-            required_cols=("exchange_seq", "exchange_order_index"),
+            required_cols=("channel_biz_seq", "symbol_order_seq"),
             reason="missing_sse_order_sequence_fields",
         )
     if table_name == "cn_tick_events":
         return _quarantine_missing_sse_indices(
             df,
-            required_cols=("exchange_seq", "exchange_trade_index"),
+            required_cols=("channel_biz_seq", "symbol_trade_seq"),
             reason="missing_sse_tick_sequence_fields",
         )
 

@@ -98,8 +98,16 @@ def _discover_jobs(source_dir: Path, bronze_root: Path, *, limit: int | None) ->
     return jobs
 
 
-def _read_raw_csv(path: Path) -> pl.DataFrame:
+def _read_raw_csv(path: Path, data_type: str = "") -> pl.DataFrame:
     try:
+        # SZSE data has mixed types (e.g., OrdType can be '1', '2', 'U')
+        # Read all as strings first, then let the stream parser handle conversion
+        if data_type in ("L2_new", "l2_new", "order_new", "tick_new"):
+            return pl.read_csv(
+                path,
+                infer_schema_length=0,  # Force all columns to string
+                try_parse_dates=False,
+            )
         return pl.read_csv(path, infer_schema_length=10_000, try_parse_dates=False)
     except pl.exceptions.NoDataError:
         return pl.DataFrame()
@@ -109,7 +117,7 @@ def _make_parser(job: FileJob):
     stream_parser = get_quant360_stream_parser(job.data_type)
 
     def _parser(_meta: BronzeFileMetadata) -> pl.DataFrame:
-        raw = _read_raw_csv(job.path)
+        raw = _read_raw_csv(job.path, data_type=job.data_type)
         if raw.is_empty():
             return raw
         return stream_parser(raw, exchange=job.exchange, symbol=job.symbol)

@@ -255,9 +255,81 @@ BidOrders:    "[300,1000,300,2000,500,500,6900,1700,30000,...]" (up to 50 elemen
 
 ---
 
-## 9. Timestamp Reference
+## 9. Aggressor Side (Trade Direction) Determination
 
-### 9.1 Timezone
+Both SSE and SZSE Level-2 data provide mechanisms to determine which side initiated (was the aggressor in) a trade.
+
+### 9.1 Core Rule (Both Exchanges)
+
+The aggressor side can be determined by comparing the order reference numbers of the two matched orders:
+
+```
+IF BuyOrderRef > SellOrderRef → BUYER is aggressor (主动买 / 外盘)
+IF SellOrderRef > BuyOrderRef → SELLER is aggressor (主动卖 / 内盘)
+```
+
+**Logic**: Higher sequence number indicates the later-arriving order, which is the taker/aggressor that crossed the spread to hit a resting order.
+
+### 9.2 Exchange-Specific Implementation
+
+#### SSE (Shanghai)
+
+| Field | Description | Canonical Name |
+| :--- | :--- | :--- |
+| `BuyNo` | Buy order ID | `bid_order_ref` |
+| `SellNo` | Sell order ID | `ask_order_ref` |
+| `TradeBSFlag` | Native aggressor flag (B=Buy, S=Sell, N=Unknown) | `aggressor_side` (derived) |
+
+**Note**: SSE provides `TradeBSFlag` directly in the raw data, but this can be cross-validated with the `BuyNo` vs `SellNo` comparison.
+
+#### SZSE (Shenzhen)
+
+| Field | Description | Canonical Name |
+| :--- | :--- | :--- |
+| `BidApplSeqNum` | Bid order ID (from Order Stream `ApplSeqNum`) | `bid_order_ref` |
+| `OfferApplSeqNum` | Ask order ID (from Order Stream `ApplSeqNum`) | `ask_order_ref` |
+
+**Note**: SZSE does **not** provide a native aggressor flag. The aggressor side **must** be inferred by comparing `BidApplSeqNum` vs `OfferApplSeqNum`.
+
+### 9.3 SQL Implementation
+
+To add aggressor side to your analysis:
+
+```sql
+SELECT
+    symbol,
+    ts_event_us,
+    price / 10000.0 AS price_yuan,
+    qty / 100.0 AS qty_shares,
+    CASE
+        WHEN bid_order_ref > ask_order_ref THEN 'BUY'
+        WHEN ask_order_ref > bid_order_ref THEN 'SELL'
+        ELSE 'UNKNOWN'
+    END AS aggressor_side
+FROM cn_tick_events
+WHERE event_kind = 'TRADE'
+```
+
+### 9.4 Important Notes
+
+| Consideration | Details |
+| :--- | :--- |
+| **Cancel Events** | `event_kind='CANCEL'` has `price=0`, `qty=0`; aggressor side is not meaningful for cancellations |
+| **Auction Trades** | Opening/closing auction trades may not have clear aggressor; marked as `UNKNOWN` |
+| **Sequence Gaps** | If one order reference is NULL (data quality issue), result is `UNKNOWN` |
+| **Validation** | SSE's `TradeBSFlag` can validate the inferred aggressor from order refs |
+
+### 9.5 References
+
+- **知乎技术分析**: [怎样判断深交所Level2逐笔数据的买卖方向？](https://www.zhihu.com/question/52064487)
+- **DolphinDB Orderbook Engine**: Industry-standard implementation using order reference comparison
+- **上交所数据重建规则**: "若主动买【买方订单号>卖方订单号】，将无法在逐笔委托中查找到买方的原始委托"
+
+---
+
+## 10. Timestamp Reference
+
+### 10.1 Timezone
 
 All timestamps and file dates use **China Standard Time (CST, UTC+8)**.
 
@@ -267,7 +339,7 @@ All timestamps and file dates use **China Standard Time (CST, UTC+8)**.
 - Files end at `15:00:00.000` (market close in China)
 - File date `<YYYYMMDD>` corresponds to the trading date in China timezone
 
-### 9.2 Format
+### 10.2 Format
 
 Timestamps use the format: `YYYYMMDDHHMMSSmmm`
 - 4 digits: Year
@@ -280,7 +352,7 @@ Timestamps use the format: `YYYYMMDDHHMMSSmmm`
 
 Example: `20240102093000123` = 2024-01-02 09:30:00.123
 
-### 9.3 Market Hours (China Standard Time)
+### 10.3 Market Hours (China Standard Time)
 
 | Phase | Time | Description |
 | :--- | :--- | :--- |
@@ -292,7 +364,7 @@ Example: `20240102093000123` = 2024-01-02 09:30:00.123
 
 ---
 
-## 10. Data Volume Reference
+## 11. Data Volume Reference
 
 Based on sample file analysis:
 
@@ -318,7 +390,7 @@ Based on sample file analysis:
 
 ---
 
-## 11. v2 Integration Plan (Clean Cut)
+## 12. v2 Integration Plan (Clean Cut)
 
 The active clean-cut implementation plan for integrating this data source into the new v2 core is:
 
@@ -330,7 +402,7 @@ Scope notes for that plan:
 - No CLI refactor/rewrite in this phase.
 - Quant360 ingestion and canonical schemas are implemented in v2 core modules only.
 
-## 12. v2 Upstream Adapter Contract
+## 13. v2 Upstream Adapter Contract
 
 For v2, archive handling is explicitly separated from ingestion core:
 
@@ -355,12 +427,12 @@ Examples:
 - `exchange=sse/type=tick_new/date=2024-01-02/symbol=600000/600000.csv.gz`
 - `exchange=szse/type=L2_new/date=2024-01-02/symbol=000001/000001.csv.gz`
 
-## 13. v2 Parser Intermediate Contract (Strict)
+## 14. v2 Parser Intermediate Contract (Strict)
 
 For v2 ingestion, parser output is a strict internal contract consumed by canonicalization.
 Canonicalization does not apply alias fallback for required parser fields.
 
-### 13.1 `order_new` parser output (required columns)
+### 14.1 `order_new` parser output (required columns)
 
 - `symbol`, `exchange`, `ts_event_us`
 - `appl_seq_num`, `channel_no`
@@ -368,7 +440,7 @@ Canonicalization does not apply alias fallback for required parser fields.
 - `price_raw`, `qty_raw`
 - `biz_index_raw`, `order_index_raw`
 
-### 13.2 `tick_new` parser output (required columns)
+### 14.2 `tick_new` parser output (required columns)
 
 - `symbol`, `exchange`, `ts_event_us`
 - `appl_seq_num`, `channel_no`
@@ -377,14 +449,14 @@ Canonicalization does not apply alias fallback for required parser fields.
 - `price_raw`, `qty_raw`
 - `biz_index_raw`, `trade_index_raw`
 
-### 13.3 `L2_new` parser output (required columns)
+### 14.3 `L2_new` parser output (required columns)
 
 - `symbol`, `exchange`, `ts_event_us`
 - `ts_local_us`, `msg_seq_num`
 - `image_status`, `trading_phase_code_raw`
 - `bid_price_levels`, `bid_qty_levels`, `ask_price_levels`, `ask_qty_levels`
 
-### 13.4 Contract behavior
+### 14.4 Contract behavior
 
 - Missing required parser columns fail fast with explicit missing-column errors.
 - SSE/SZSE raw schema differences are handled in parser modules only.
