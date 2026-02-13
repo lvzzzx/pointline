@@ -5,8 +5,10 @@ from __future__ import annotations
 from datetime import date, datetime, timezone
 
 import polars as pl
+import pytest
 
 from pointline.v2.dim_symbol import bootstrap, upsert, validate
+from pointline.v2.storage.delta.dimension_store import DeltaDimensionStore
 from pointline.v2.vendors.tushare.symbols import (
     CN_LOT_SIZE,
     CN_TICK_SIZE,
@@ -526,3 +528,93 @@ class TestIntegration:
         assert new.height == 1
         assert new["market_type"][0] == "创业板"
         assert new["is_current"][0] is True
+
+    def test_snapshot_not_saved_directly_but_bootstrap_result_is(self, tmp_path):
+        """Storage contract: snapshot is input to dim_symbol core, not persisted directly."""
+        raw = _raw_tushare(
+            [
+                {
+                    "ts_code": "000001.SZ",
+                    "symbol": "000001",
+                    "name": "A",
+                    "exchange": "SZSE",
+                    "market": "主板",
+                    "list_status": "L",
+                    "list_date": "20200101",
+                    "delist_date": None,
+                },
+            ]
+        )
+        snap = stock_basic_to_snapshot(raw)
+        store = DeltaDimensionStore(silver_root=tmp_path / "silver")
+
+        with pytest.raises(ValueError, match="missing columns"):
+            store.save_dim_symbol(snap)
+
+        dim = bootstrap(snap, effective_ts_us=1_000_000)
+        version = store.save_dim_symbol(dim)
+        loaded = store.load_dim_symbol()
+        validate(loaded)
+
+        assert version == 0
+        assert loaded.height == 1
+        assert loaded.item(0, "exchange_symbol") == "000001"
+
+    def test_upsert_result_roundtrip_with_expected_version(self, tmp_path):
+        raw_t0 = _raw_tushare(
+            [
+                {
+                    "ts_code": "000001.SZ",
+                    "symbol": "000001",
+                    "name": "A",
+                    "exchange": "SZSE",
+                    "market": "主板",
+                    "list_status": "L",
+                    "list_date": "20200101",
+                    "delist_date": None,
+                },
+            ]
+        )
+        raw_t1 = _raw_tushare(
+            [
+                {
+                    "ts_code": "000001.SZ",
+                    "symbol": "000001",
+                    "name": "A",
+                    "exchange": "SZSE",
+                    "market": "主板",
+                    "list_status": "L",
+                    "list_date": "20200101",
+                    "delist_date": None,
+                },
+                {
+                    "ts_code": "301999.SZ",
+                    "symbol": "301999",
+                    "name": "新股IPO",
+                    "exchange": "SZSE",
+                    "market": "创业板",
+                    "list_status": "L",
+                    "list_date": "20240601",
+                    "delist_date": None,
+                },
+            ]
+        )
+
+        store = DeltaDimensionStore(silver_root=tmp_path / "silver")
+
+        dim_t0 = bootstrap(stock_basic_to_snapshot(raw_t0), effective_ts_us=1_000_000)
+        v0 = store.save_dim_symbol(dim_t0)
+
+        dim_t1 = upsert(
+            dim_t0,
+            stock_basic_to_snapshot(raw_t1),
+            effective_ts_us=2_000_000,
+            delistings=stock_basic_to_delistings(raw_t1),
+        )
+        v1 = store.save_dim_symbol(dim_t1, expected_version=v0)
+        loaded = store.load_dim_symbol()
+        validate(loaded)
+
+        assert v1 > v0
+        assert loaded.filter(pl.col("is_current")).height == 2
+        assert loaded.filter(pl.col("exchange_symbol") == "301999").height == 1

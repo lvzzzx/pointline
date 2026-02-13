@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import polars as pl
+import pytest
 from deltalake import write_deltalake
 
 from pointline.schemas.dimensions import DIM_SYMBOL
@@ -49,3 +50,33 @@ def test_dimension_store_reads_dim_symbol(tmp_path: Path) -> None:
     df = store.load_dim_symbol()
     assert df.height == 1
     assert df.item(0, "exchange_symbol") == "BTCUSDT"
+
+
+def test_dimension_store_save_dim_symbol_roundtrip(tmp_path: Path) -> None:
+    store = DeltaDimensionStore(silver_root=tmp_path / "silver")
+    version = store.save_dim_symbol(_dim_symbol_row())
+
+    assert version == 0
+    assert store.current_version() == 0
+
+    loaded = store.load_dim_symbol()
+    assert loaded.height == 1
+    assert loaded.item(0, "exchange_symbol") == "BTCUSDT"
+
+
+def test_dimension_store_save_dim_symbol_checks_expected_version(tmp_path: Path) -> None:
+    store = DeltaDimensionStore(silver_root=tmp_path / "silver")
+    store.save_dim_symbol(_dim_symbol_row())
+
+    with pytest.raises(ValueError, match="version mismatch"):
+        store.save_dim_symbol(_dim_symbol_row(), expected_version=7)
+
+
+def test_dimension_store_save_dim_symbol_validates_invariants(tmp_path: Path) -> None:
+    store = DeltaDimensionStore(silver_root=tmp_path / "silver")
+    invalid = _dim_symbol_row().with_columns(
+        pl.lit(1_600_000_000_000_000).cast(pl.Int64).alias("valid_until_ts_us")
+    )
+
+    with pytest.raises(ValueError, match="valid_until_ts_us must be > valid_from_ts_us"):
+        store.save_dim_symbol(invalid)

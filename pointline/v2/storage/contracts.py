@@ -47,6 +47,17 @@ class DimensionStore(Protocol):
     def load_dim_symbol(self) -> pl.DataFrame:
         """Load `dim_symbol` for PIT coverage checks."""
 
+    def save_dim_symbol(
+        self,
+        df: pl.DataFrame,
+        *,
+        expected_version: int | None = None,
+    ) -> int:
+        """Atomically replace `dim_symbol` and return the new table version."""
+
+    def current_version(self) -> int | None:
+        """Return current `dim_symbol` Delta version, or None if table is missing."""
+
 
 @runtime_checkable
 class QuarantineStore(Protocol):

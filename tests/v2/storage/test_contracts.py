@@ -58,6 +58,18 @@ class _DimensionImpl:
             }
         )
 
+    def save_dim_symbol(
+        self,
+        df: pl.DataFrame,
+        *,
+        expected_version: int | None = None,
+    ) -> int:
+        del df, expected_version
+        return 0
+
+    def current_version(self) -> int | None:
+        return 0
+
 
 class _QuarantineImpl:
     def append(

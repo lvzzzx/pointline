@@ -5,15 +5,23 @@ from __future__ import annotations
 from pathlib import Path
 
 import polars as pl
+from deltalake import DeltaTable
+from deltalake.exceptions import TableNotFoundError
 
 from pointline.schemas.dimensions import DIM_SYMBOL
+from pointline.v2 import dim_symbol as dim_symbol_core
 from pointline.v2.storage.contracts import DimensionStore
-from pointline.v2.storage.delta._utils import read_delta_or_empty, validate_against_spec
+from pointline.v2.storage.delta._utils import (
+    normalize_to_spec,
+    overwrite_delta,
+    read_delta_or_empty,
+    validate_against_spec,
+)
 from pointline.v2.storage.delta.layout import table_path
 
 
 class DeltaDimensionStore(DimensionStore):
-    """Read dimension tables needed by v2 ingestion."""
+    """Delta-backed read/write dimension store for v2 ingestion."""
 
     def __init__(
         self,
@@ -33,3 +41,33 @@ class DeltaDimensionStore(DimensionStore):
         df = read_delta_or_empty(self.dim_symbol_path, spec=DIM_SYMBOL)
         validate_against_spec(df, DIM_SYMBOL)
         return df
+
+    def current_version(self) -> int | None:
+        if not self.dim_symbol_path.exists():
+            return None
+        try:
+            return int(DeltaTable(str(self.dim_symbol_path)).version())
+        except TableNotFoundError:
+            return None
+
+    def save_dim_symbol(
+        self,
+        df: pl.DataFrame,
+        *,
+        expected_version: int | None = None,
+    ) -> int:
+        current = self.current_version()
+        if expected_version is not None and current != expected_version:
+            raise ValueError(
+                f"dim_symbol version mismatch: expected {expected_version}, current {current}"
+            )
+
+        validate_against_spec(df, DIM_SYMBOL)
+        normalized = normalize_to_spec(df, DIM_SYMBOL)
+        dim_symbol_core.validate(normalized)
+        overwrite_delta(self.dim_symbol_path, df=normalized, partition_by=DIM_SYMBOL.partition_by)
+
+        new_version = self.current_version()
+        if new_version is None:
+            raise RuntimeError("dim_symbol write completed but version is unavailable")
+        return new_version
