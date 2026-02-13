@@ -2,7 +2,7 @@
 ## Implementation of Lu et al. (2023) arXiv:2302.09382
 
 **Persona:** Quant Researcher (MFT)
-**Data Source:** SZSE/SSE Level 3 (l3_ticks)
+**Data Source:** SZSE/SSE Level 3 (`cn_tick_events`)
 **Scope:** Cross-stock dependency modeling & covariance estimation
 **Reference:** Lu, Y., Reinert, G., & Cucuringu, M. (2023). Co-trading networks for modeling dynamic interdependency structures and estimating high-dimensional covariances in US equity markets. arXiv:2302.09382
 
@@ -10,7 +10,7 @@
 
 ## Executive Summary
 
-This guide adapts the **co-trading network methodology** from Lu et al. (2023) to Chinese A-share markets. The core insight is that **concurrent trading activity** (stocks trading at the same time) reveals latent dependency structures that:
+This guide adapts the **co-trading network methodology** from Lu et al. (2023) to Chinese A-share markets using Pointline v2 architecture. The core insight is that **concurrent trading activity** (stocks trading at the same time) reveals latent dependency structures that:
 
 1. **Precede return correlations** (lead-lag at microsecond scale)
 2. **Capture dynamic sector rotations** (beyond static industry classifications)
@@ -36,7 +36,7 @@ When two stocks trade **within milliseconds of each other**, this suggests:
 - **Market maker inventory management** (hedging across correlated names)
 
 **Why This Works for Chinese Stocks:**
-- L3 data provides microsecond timestamps
+- L3 data provides microsecond timestamps (`ts_event_us`)
 - Retail investors create synchronized reactions to news
 - T+1 creates predictable repositioning patterns
 - Sector ETFs drive co-movement through creation/redemption
@@ -50,7 +50,7 @@ similarity(i,j) = count(trades of i and j within δt milliseconds)
 ```
 
 **Chinese Market Adaptations:**
-- Use **microsecond precision** (`ts_local_us`)
+- Use **microsecond precision** (`ts_event_us` or `ts_local_us`)
 - Define **δt = 1-10ms** (market-specific calibration)
 - Apply **volume weighting** (large trades matter more)
 - Exclude **call auction periods** (synchronous by design)
@@ -58,46 +58,83 @@ similarity(i,j) = count(trades of i and j within δt milliseconds)
 
 ---
 
-## 2. Implementation Pipeline
+## 2. Implementation Pipeline (v2 Architecture)
 
 ### 2.1 Data Preparation
 
 ```python
+from pathlib import Path
 import polars as pl
 import numpy as np
 from scipy.sparse import csr_matrix
 from scipy.sparse.csgraph import connected_components
 from sklearn.cluster import SpectralClustering
-from pointline.research import query
+
+from pointline.research import query, discovery
+from pointline.research.cn_trading_phases import filter_by_phase, TradingPhase
 
 def load_universe_data(
-    universe: list[str],  # List of symbol_ids
-    date: str,
+    silver_root: Path,
+    universe: list[str],  # List of canonical symbols
+    exchange: str,         # "szse" or "sse"
+    trading_date: str,
     exclude_auctions: bool = True,
 ) -> dict[str, pl.DataFrame]:
     """
-    Load L3 tick data for universe of stocks.
+    Load L3 tick data for universe of stocks from cn_tick_events.
+
+    Uses v2 query API with ts_event_us timestamp filtering.
     """
     data = {}
 
-    for symbol in universe:
-        ticks = query.szse_l3_ticks("szse", symbol, date, date, decoded=True)
+    # Convert trading_date to microsecond timestamps
+    from datetime import datetime, timezone
+    date_dt = datetime.strptime(trading_date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+    day_start_us = int(date_dt.timestamp() * 1_000_000)
+    day_end_us = day_start_us + 86_400_000_000  # +24 hours
 
-        # Filter to continuous trading only (optional)
-        if exclude_auctions:
-            ticks = ticks.filter(
-                ~((pl.col("ts_exch_us").mod(86_400_000_000) >= 1_15_00_000_000) &
-                  (pl.col("ts_exch_us").mod(86_400_000_000) <= 1_25_00_000_000)) &  # Opening auction
-                ~((pl.col("ts_exch_us").mod(86_400_000_000) >= 6_57_00_000_000) &
-                  (pl.col("ts_exch_us").mod(86_400_000_000) <= 7_00_00_000_000))    # Closing auction
+    for symbol in universe:
+        # Load tick events using v2 query API
+        ticks = query.load_events(
+            silver_root=silver_root,
+            table="cn_tick_events",
+            exchange=exchange,
+            symbol=symbol,
+            start=day_start_us,
+            end=day_end_us,
+            columns=["ts_event_us", "ts_local_us", "price", "qty", "aggressor_side",
+                     "bid_order_ref", "ask_order_ref"],
+        )
+
+        # Filter to continuous trading only (exclude auctions)
+        if exclude_auctions and not ticks.is_empty():
+            ticks = filter_by_phase(
+                ticks,
+                exchange=exchange,
+                phases=[TradingPhase.MORNING, TradingPhase.AFTERNOON],
+                ts_col="ts_event_us",
             )
 
-        # Keep only fills
-        ticks = ticks.filter(pl.col("tick_type") == 0)
+        # Keep only trades with valid aggressor_side (actual fills)
+        ticks = ticks.filter(pl.col("aggressor_side").is_not_null())
 
-        data[symbol] = ticks.sort("ts_local_us")
+        data[symbol] = ticks.sort("ts_event_us")
 
     return data
+
+
+def discover_universe(
+    silver_root: Path,
+    exchange: str,
+    limit: int = 100,
+) -> list[str]:
+    """Discover available symbols from dim_symbol."""
+    df = discovery.discover_symbols(
+        silver_root=silver_root,
+        exchange=exchange,
+        limit=limit,
+    )
+    return df["canonical_symbol"].to_list()
 ```
 
 ---
@@ -116,6 +153,8 @@ def compute_cotrading_similarity(
     similarity(i,j) = sum(min(qty_i, qty_j) for concurrent trades)
                       / sqrt(total_qty_i * total_qty_j)
     """
+    import pandas as pd
+
     symbols = list(data.keys())
     n = len(symbols)
 
@@ -129,15 +168,15 @@ def compute_cotrading_similarity(
 
     # Compute pairwise co-trading
     for i, sym_i in enumerate(symbols):
-        df_i = data[sym_i].select(["ts_local_us", "qty"]).to_pandas()
+        df_i = data[sym_i].select(["ts_event_us", "qty"]).to_pandas()
 
         for j, sym_j in enumerate(symbols[i+1:], start=i+1):
-            df_j = data[sym_j].select(["ts_local_us", "qty"]).to_pandas()
+            df_j = data[sym_j].select(["ts_event_us", "qty"]).to_pandas()
 
             # Find concurrent trades using merge_asof
             concurrent = pd.merge_asof(
                 df_i, df_j,
-                on="ts_local_us",
+                on="ts_event_us",
                 direction="nearest",
                 tolerance=delta_t_us,
             )
@@ -169,7 +208,7 @@ def build_cotrading_network(
     similarity_matrix: pd.DataFrame,
     threshold: float = None,  # If None, use adaptive threshold
     k_nearest: int = 10,  # K-nearest neighbors
-) -> nx.Graph:
+) -> "nx.Graph":
     """
     Build network from similarity matrix.
     """
@@ -218,6 +257,8 @@ def spectral_cluster_stocks(
     """
     Apply spectral clustering to discover data-driven sectors.
     """
+    import pandas as pd
+
     # Convert similarity to affinity (Laplacian requires this)
     affinity_matrix = similarity_matrix.values.copy()
 
@@ -247,6 +288,8 @@ def spectral_cluster_stocks(
 
 ```python
 def analyze_cluster_stability(
+    silver_root: Path,
+    exchange: str,
     universe: list[str],
     start_date: str,
     end_date: str,
@@ -256,6 +299,7 @@ def analyze_cluster_stability(
     Analyze how clusters evolve over time.
     """
     from datetime import datetime, timedelta
+    import pandas as pd
 
     clusters_over_time = []
 
@@ -266,7 +310,7 @@ def analyze_cluster_stability(
         date_str = current.strftime("%Y-%m-%d")
 
         try:
-            data = load_universe_data(universe, date_str)
+            data = load_universe_data(silver_root, universe, exchange, date_str)
             sim = compute_cotrading_similarity(data)
             clusters = spectral_cluster_stocks(sim, n_clusters)
             clusters["date"] = date_str
@@ -282,8 +326,11 @@ def analyze_cluster_stability(
     persistence = {}
     for symbol in universe:
         sym_clusters = all_clusters[all_clusters["symbol"] == symbol].sort_values("date")
-        cluster_changes = (sym_clusters["cluster"].diff() != 0).sum()
-        persistence[symbol] = 1 - (cluster_changes / len(sym_clusters))
+        if len(sym_clusters) > 0:
+            cluster_changes = (sym_clusters["cluster"].diff() != 0).sum()
+            persistence[symbol] = 1 - (cluster_changes / len(sym_clusters))
+        else:
+            persistence[symbol] = 0.0
 
     return {
         "clusters_over_time": all_clusters,
@@ -481,9 +528,6 @@ def network_risk_parity(
     cluster_dict = clusters.set_index("symbol")["cluster"].to_dict()
     unique_clusters = clusters["cluster"].unique()
 
-    # Initial: equal weight within cluster, equal risk across clusters
-    # ... (simplified - full implementation needs iterative optimization)
-
     symbols = cov.index
     n = len(symbols)
 
@@ -546,12 +590,20 @@ def adjust_for_t1_effects(
 
             # If large long position from T-1, expect selling pressure at T open
             if position > 0:
+                # Add time-of-day column for filtering
+                from pointline.research.cn_trading_phases import add_phase_column
+
+                df = df.with_columns([
+                    ((pl.col("ts_event_us") % 86_400_000_000) < 5 * 3_600_000_000)
+                    .alias("is_morning")
+                ])
+
                 # Weight early session trades more heavily
                 df = df.with_columns([
-                    pl.when(pl.col("ts_exch_us").mod(86_400_000_000) < 5_00_00_000_000)
+                    pl.when(pl.col("is_morning"))
                     .then(pl.col("qty") * 1.5)  # Boost morning session
                     .otherwise(pl.col("qty"))
-                    .alias("qty"),
+                    .alias("qty_t1_adjusted"),
                 ])
 
             adjusted_data[symbol] = df
@@ -612,36 +664,39 @@ def handle_price_limits(
 ```python
 def separate_auction_cotrading(
     data: dict[str, pl.DataFrame],
+    exchange: str,
 ) -> tuple[dict, dict, dict]:
     """
-    Separate co-trading analysis by session type.
+    Separate co-trading analysis by session type using v2 trading phases.
 
     Returns:
         - continuous: 09:30-11:30, 13:00-14:57
         - open_auction: 09:15-09:25
-        - close_auction: 14:57-15:00
+        - close_auction: 14:57-15:00 (SZSE only)
     """
+    from pointline.research.cn_trading_phases import filter_by_phase, TradingPhase
+
     continuous_data = {}
     open_auction_data = {}
     close_auction_data = {}
 
     for symbol, df in data.items():
-        tod = df["ts_exch_us"] % 86_400_000_000
+        if df.is_empty():
+            continue
 
         # Continuous trading
-        continuous_data[symbol] = df.filter(
-            ((tod >= 1_30_00_000_000) & (tod <= 3_30_00_000_000)) |  # Morning
-            ((tod >= 5_00_00_000_000) & (tod <= 6_57_00_000_000))    # Afternoon
+        continuous_data[symbol] = filter_by_phase(
+            df, exchange=exchange, phases=[TradingPhase.MORNING, TradingPhase.AFTERNOON]
         )
 
         # Opening auction
-        open_auction_data[symbol] = df.filter(
-            (tod >= 1_15_00_000_000) & (tod <= 1_25_00_000_000)
+        open_auction_data[symbol] = filter_by_phase(
+            df, exchange=exchange, phases=[TradingPhase.PRE_OPEN]
         )
 
-        # Closing auction
-        close_auction_data[symbol] = df.filter(
-            (tod >= 6_57_00_000_000) & (tod <= 7_00_00_000_000)
+        # Closing auction (SZSE only)
+        close_auction_data[symbol] = filter_by_phase(
+            df, exchange=exchange, phases=[TradingPhase.CLOSING]
         )
 
     return continuous_data, open_auction_data, close_auction_data
@@ -655,6 +710,8 @@ def separate_auction_cotrading(
 
 ```python
 def validate_cotrading_predicts_correlation(
+    silver_root: Path,
+    exchange: str,
     universe: list[str],
     start_date: str,
     end_date: str,
@@ -664,6 +721,8 @@ def validate_cotrading_predicts_correlation(
     Test if co-trading similarity predicts future return correlation.
     """
     from datetime import datetime, timedelta
+    import pandas as pd
+    from scipy import stats
 
     results = []
 
@@ -676,11 +735,11 @@ def validate_cotrading_predicts_correlation(
 
         try:
             # Day T: compute co-trading similarity
-            data_t = load_universe_data(universe, date_t)
+            data_t = load_universe_data(silver_root, universe, exchange, date_t)
             sim_t = compute_cotrading_similarity(data_t, delta_t_us)
 
             # Day T+1: compute return correlation
-            returns_t1 = get_returns(universe, date_t1)  # Need to implement
+            returns_t1 = get_returns(silver_root, exchange, universe, date_t1)  # Need to implement
             corr_t1 = returns_t1.corr()
 
             # Compare
@@ -705,7 +764,6 @@ def validate_cotrading_predicts_correlation(
     correlation = results_df["cotrading_sim"].corr(results_df["return_corr"])
 
     # Regression: corr ~ alpha + beta * cotrading
-    from scipy import stats
     slope, intercept, r_value, p_value, std_err = stats.linregress(
         results_df["cotrading_sim"],
         results_df["return_corr"],
@@ -726,6 +784,8 @@ def validate_cotrading_predicts_correlation(
 
 ```python
 def backtest_cotrading_portfolios(
+    silver_root: Path,
+    exchange: str,
     universe: list[str],
     start_date: str,
     end_date: str,
@@ -735,6 +795,7 @@ def backtest_cotrading_portfolios(
     Backtest mean-variance portfolios using co-trading covariance.
     """
     from datetime import datetime, timedelta
+    import pandas as pd
 
     portfolio_values = []
 
@@ -758,15 +819,19 @@ def backtest_cotrading_portfolios(
 
         # Compute co-trading similarity using lookback
         lookback_start = period_start - timedelta(days=20)
-        data = load_universe_data(universe, lookback_start.strftime("%Y-%m-%d"))
+        data = load_universe_data(
+            silver_root, universe, exchange, lookback_start.strftime("%Y-%m-%d")
+        )
         sim = compute_cotrading_similarity(data)
 
         # Get expected returns (can use simple momentum or factor model)
-        expected_returns = get_expected_returns(universe, period_start.strftime("%Y-%m-%d"))
+        expected_returns = get_expected_returns(
+            silver_root, exchange, universe, period_start.strftime("%Y-%m-%d")
+        )
 
         # Get historical returns for covariance
         hist_returns = get_historical_returns(
-            universe,
+            silver_root, exchange, universe,
             (period_start - timedelta(days=60)).strftime("%Y-%m-%d"),
             period_start.strftime("%Y-%m-%d"),
         )
@@ -780,7 +845,7 @@ def backtest_cotrading_portfolios(
 
         # Simulate period performance
         period_returns = get_period_returns(
-            universe,
+            silver_root, exchange, universe,
             period_start.strftime("%Y-%m-%d"),
             period_end.strftime("%Y-%m-%d"),
         )
@@ -811,18 +876,22 @@ def backtest_cotrading_portfolios(
 | Co-trading predicts return correlation | Should work better due to retail synchronization |
 | Dynamic clusters outperform static sectors | More valuable given rapid sector rotation in China |
 | Network-shrunk covariance improves portfolios | Even more important given high dimensionality |
-| Microsecond-level timing matters | L3 data provides necessary precision |
+| Microsecond-level timing matters | L3 data provides necessary precision via `ts_event_us` |
 
-### 8.2 Expected Advantages in Chinese Markets
+### 8.2 v2 Architecture Benefits
 
-1. **Higher Predictive Power:** Retail-driven markets show stronger co-trading patterns
-2. **Faster Cluster Evolution:** Dynamic clustering captures rapid sector rotations
-3. **T+1 Inventory Effects:** Predictable repositioning creates stable co-trading patterns
-4. **Price Limit Impacts:** Network analysis identifies limit-hit contagion effects
+1. **Canonical Schema**: `cn_tick_events` with consistent column names across SSE/SZSE
+2. **Trading Phase Filtering**: Use `cn_trading_phases.filter_by_phase()` for clean session separation
+3. **Symbol Discovery**: `discovery.discover_symbols()` for dynamic universe selection
+4. **Timestamp Precision**: Microsecond `ts_event_us` for accurate co-trading detection
+5. **Order References**: `bid_order_ref`/`ask_order_ref` for aggressor analysis
 
 ### 8.3 Implementation Checklist
 
-- [ ] Build L3 tick data pipeline for universe
+- [ ] Set up `silver_root` Path and verify data availability
+- [ ] Use `discovery.discover_symbols()` to build universe
+- [ ] Load data via `query.load_events(table="cn_tick_events", ...)`
+- [ ] Filter to continuous trading with `filter_by_phase()`
 - [ ] Calibrate δt (1-10ms) for optimal similarity
 - [ ] Compare spectral clusters vs static sectors
 - [ ] Validate: co-trading similarity → future correlation
@@ -833,14 +902,14 @@ def backtest_cotrading_portfolios(
 
 ### 8.4 Potential Extensions
 
-1. **Lead-Lag Networks:** Directed co-trading (which stock leads?)
-2. **Sector ETFs:** Include ETF flows in co-trading calculation
-3. **News Events:** Conditional co-trading (before/after news)
-4. **Intraday Regimes:** Separate networks for morning/afternoon
-5. **Cross-Market:** Connect SZSE and SSE stocks via co-trading
+1. **Lead-Lag Networks**: Directed co-trading (which stock leads?)
+2. **Sector ETFs**: Include ETF flows in co-trading calculation
+3. **News Events**: Conditional co-trading (before/after news)
+4. **Intraday Regimes**: Separate networks for morning/afternoon
+5. **Cross-Market**: Connect SZSE and SSE stocks via co-trading
 
 ---
 
-**Document Version:** 1.0
+**Document Version:** 2.0 (Updated for Pointline v2 Architecture)
 **Reference:** Lu, Y., Reinert, G., & Cucuringu, M. (2023). Co-trading networks for modeling dynamic interdependency structures and estimating high-dimensional covariances in US equity markets. arXiv:2302.09382
-**Last Updated:** 2024
+**Last Updated:** 2026-02-13
