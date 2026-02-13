@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime, timezone
 from pathlib import Path
 
 import polars as pl
@@ -10,6 +10,7 @@ from deltalake import write_deltalake
 from pointline.schemas.dimensions import DIM_SYMBOL
 from pointline.schemas.events import TRADES
 from pointline.v2.research.discovery import discover_symbols
+from pointline.v2.research.metadata import load_symbol_meta
 from pointline.v2.research.query import load_events
 from pointline.v2.storage.delta.dimension_store import DeltaDimensionStore
 from pointline.v2.storage.delta.layout import table_path
@@ -63,6 +64,54 @@ def _seed_trades_table(silver_root: Path) -> None:
     )
 
 
+def _seed_sse_trades_timezone_boundary(silver_root: Path) -> tuple[int, int]:
+    ts_start = int(datetime(2024, 1, 1, 16, 0, 0, tzinfo=timezone.utc).timestamp() * 1_000_000)
+    ts_end = ts_start + 1_000_000
+    trades = pl.DataFrame(
+        {
+            "exchange": ["sse"],
+            "trading_date": [date(2024, 1, 2)],
+            "symbol": ["600000"],
+            "symbol_id": [999],
+            "ts_event_us": [ts_start + 500_000],
+            "ts_local_us": [ts_start + 500_000],
+            "file_id": [10],
+            "file_seq": [1],
+            "side": ["buy"],
+            "is_buyer_maker": [False],
+            "price": [123_000_000_000],
+            "qty": [1_000_000_000],
+        },
+        schema=TRADES.to_polars(),
+    )
+    path = table_path(silver_root=silver_root, table_name="trades")
+    write_deltalake(
+        str(path), trades.to_arrow(), mode="overwrite", partition_by=["exchange", "trading_date"]
+    )
+    return ts_start, ts_end
+
+
+def test_discover_symbols_contract_default_columns(tmp_path: Path) -> None:
+    silver_root = tmp_path / "silver"
+    _seed_dim_symbol(silver_root)
+
+    out = discover_symbols(
+        silver_root=silver_root,
+        exchange="binance-futures",
+        limit=10,
+    )
+
+    assert out.columns == [
+        "exchange",
+        "exchange_symbol",
+        "canonical_symbol",
+        "symbol_id",
+        "is_current",
+        "valid_from_ts_us",
+        "valid_until_ts_us",
+    ]
+
+
 def test_discover_symbols_current_without_meta(tmp_path: Path) -> None:
     silver_root = tmp_path / "silver"
     _seed_dim_symbol(silver_root)
@@ -94,6 +143,45 @@ def test_discover_symbols_as_of_with_meta(tmp_path: Path) -> None:
     assert out.height == 1
     assert out.item(0, "symbol_id") == 11
     assert out.item(0, "tick_size") == 100
+
+
+def test_load_events_contract_columns(tmp_path: Path) -> None:
+    silver_root = tmp_path / "silver"
+    _seed_dim_symbol(silver_root)
+    _seed_trades_table(silver_root)
+
+    out = load_events(
+        silver_root=silver_root,
+        table="trades",
+        exchange="binance-futures",
+        symbol="BTCUSDT",
+        start=2_000_000,
+        end=2_200_000,
+    )
+
+    assert out.columns == [
+        "exchange",
+        "trading_date",
+        "symbol",
+        "symbol_id",
+        "ts_event_us",
+        "ts_local_us",
+        "side",
+        "is_buyer_maker",
+        "price",
+        "qty",
+    ]
+
+    out_with_lineage = load_events(
+        silver_root=silver_root,
+        table="trades",
+        exchange="binance-futures",
+        symbol="BTCUSDT",
+        start=2_000_000,
+        end=2_200_000,
+        include_lineage=True,
+    )
+    assert out_with_lineage.columns == list(TRADES.to_polars())
 
 
 def test_load_events_no_implicit_symbol_meta_join(tmp_path: Path) -> None:
@@ -141,6 +229,23 @@ def test_load_events_with_explicit_symbol_meta_columns(tmp_path: Path) -> None:
     assert out["lot_size"].to_list() == [2_000, 2_000]
 
 
+def test_load_events_uses_exchange_timezone_for_date_bounds(tmp_path: Path) -> None:
+    silver_root = tmp_path / "silver"
+    ts_start, ts_end = _seed_sse_trades_timezone_boundary(silver_root)
+
+    out = load_events(
+        silver_root=silver_root,
+        table="trades",
+        exchange="sse",
+        symbol="600000",
+        start=ts_start,
+        end=ts_end,
+    )
+
+    assert out.height == 1
+    assert out.item(0, "trading_date") == date(2024, 1, 2)
+
+
 def test_load_events_rejects_non_event_table(tmp_path: Path) -> None:
     silver_root = tmp_path / "silver"
     _seed_dim_symbol(silver_root)
@@ -154,3 +259,34 @@ def test_load_events_rejects_non_event_table(tmp_path: Path) -> None:
             start=2_000_000,
             end=2_200_000,
         )
+
+
+def test_load_symbol_meta_current_default_contract(tmp_path: Path) -> None:
+    silver_root = tmp_path / "silver"
+    _seed_dim_symbol(silver_root)
+
+    out = load_symbol_meta(
+        silver_root=silver_root,
+        exchange="binance-futures",
+    )
+
+    assert out.columns == list(DIM_SYMBOL.to_polars())
+    assert out["symbol_id"].to_list() == [22, 33]
+
+
+def test_load_symbol_meta_as_of_and_projection(tmp_path: Path) -> None:
+    silver_root = tmp_path / "silver"
+    _seed_dim_symbol(silver_root)
+
+    out = load_symbol_meta(
+        silver_root=silver_root,
+        exchange="binance-futures",
+        symbols="BTCUSDT",
+        as_of=1_500_000,
+        columns=["symbol_id", "exchange_symbol", "tick_size", "lot_size"],
+    )
+
+    assert out.columns == ["symbol_id", "exchange_symbol", "tick_size", "lot_size"]
+    assert out.height == 1
+    assert out.item(0, "symbol_id") == 11
+    assert out.item(0, "tick_size") == 100
