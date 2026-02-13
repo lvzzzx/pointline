@@ -13,6 +13,7 @@ The user-visible outcome is that Tardis trades, quotes, and L2 updates become pr
 ## Progress
 
 - [x] (2026-02-13 12:29Z) Authored initial schema-first Tardis integration ExecPlan with phased delivery, file-level targets, and acceptance criteria.
+- [x] (2026-02-13) Refactored Tardis parsers to read exchange/symbol from CSV row data (grouped-symbol support). Removed path-level `exchange`/`symbol` kwargs from `parse_tardis_trades` and `parse_tardis_incremental_l2`. Unified all parsers to `(df) -> df` signature. Updated dispatch, tests, and ExecPlan. 169/169 tests pass.
 - [ ] Implement schema contracts for Tardis coverage tiers (completed: design decisions and table mapping in this plan; remaining: `pointline/schemas/*` and `tests/test_schema_contracts.py` updates).
 - [ ] Implement Tardis vendor adapters and parser dispatch (completed: target module layout and function signatures in this plan; remaining: `pointline/vendors/tardis/*` implementation and tests).
 - [ ] Integrate Tardis routing into ingestion pipeline and exchange timezone map (completed: contract-level behavior defined; remaining: pipeline alias wiring, parser binding, and timezone coverage updates).
@@ -48,6 +49,10 @@ The user-visible outcome is that Tardis trades, quotes, and L2 updates become pr
   Rationale: Current repo explicitly removed CLI scripts during v2 cleanup, and this plan should avoid coupling to command-surface churn.
   Date/Author: 2026-02-13 / Codex
 
+- Decision: Use Tardis grouped symbols as the bronze file unit. Bronze path uses `symbol=SPOT` (or `FUTURES`, `PERPETUALS`, `OPTIONS`) as a placeholder partition — not an actual instrument symbol. The CSV is self-contained: `exchange` and `symbol` are read from row data, not from the path. Parsers accept `(df: pl.DataFrame) -> pl.DataFrame` with no path-level `exchange`/`symbol` kwargs.
+  Rationale: Grouped-symbol files are the natural Tardis download unit (one file per exchange/data_type/date/market_type). Avoids splitting raw vendor files in bronze (bronze is immutable). The pipeline is already row-level for trading_date derivation, PIT checks, and lineage, so multi-symbol files work without core changes.
+  Date/Author: 2026-02-13
+
 ## Outcomes & Retrospective
 
 This initial version delivers a complete implementation roadmap but no code changes yet. The biggest risk is drifting further between docs and runtime contracts if schema expansion and parser wiring are done piecemeal. This plan mitigates that by requiring test-first schema additions, explicit table-by-table acceptance checks, and an active-doc cleanup milestone before completion.
@@ -63,12 +68,12 @@ Pointline currently uses a schema-registry ingestion model:
 
 Key terms used in this plan:
 
-- Bronze means immutable vendor files, typically in Hive-style partitions such as `bronze/tardis/exchange=binance-futures/type=trades/date=2024-05-01/symbol=BTCUSDT/*.csv.gz`.
+- Bronze means immutable vendor files in Hive-style partitions. Tardis uses grouped-symbol files: `bronze/tardis/exchange=binance-futures/type=trades/date=2024-05-01/symbol=PERPETUALS/binance-futures_trades_2024-05-01_PERPETUALS.csv.gz`. The `symbol=` partition is a placeholder for the grouped symbol name (e.g. `SPOT`, `FUTURES`, `PERPETUALS`, `OPTIONS`), not an instrument symbol; each CSV row carries its own `exchange` and `symbol` fields.
 - Silver means typed canonical Delta tables validated against `TableSpec`.
 - PIT (point in time) means symbol resolution uses the validity window `valid_from_ts_us <= ts_event_us < valid_until_ts_us`.
 - Tie-break keys mean deterministic ordering columns used for replay-safe sorting.
 
-Current gap: Tardis source semantics are documented in `docs/data_sources/tardis.md`, but there is no active Tardis parser/dispatch module in runtime code.
+Current gap: Tardis source semantics are documented in `docs/references/tardis.md`, but there is no active Tardis parser/dispatch module in runtime code.
 
 ## Plan of Work
 
@@ -177,16 +182,16 @@ New modules to define:
 - `pointline/vendors/tardis/dispatch.py`
 - `pointline/vendors/tardis/symbols.py`
 
-Required functions:
+Required functions (all parsers take a single DataFrame — exchange/symbol from row data):
 
-    parse_tardis_trades(df: pl.DataFrame, *, exchange: str, symbol: str) -> pl.DataFrame
-    parse_tardis_quotes(df: pl.DataFrame, *, exchange: str, symbol: str) -> pl.DataFrame
-    parse_tardis_incremental_l2(df: pl.DataFrame, *, exchange: str, symbol: str) -> pl.DataFrame
-    parse_tardis_book_snapshot_25(df: pl.DataFrame, *, exchange: str, symbol: str) -> pl.DataFrame
-    parse_tardis_derivative_ticker(df: pl.DataFrame, *, exchange: str, symbol: str) -> pl.DataFrame
-    parse_tardis_liquidations(df: pl.DataFrame, *, exchange: str, symbol: str) -> pl.DataFrame
-    parse_tardis_options_chain(df: pl.DataFrame, *, exchange: str, symbol: str) -> pl.DataFrame
-    get_tardis_parser(data_type: str) -> Callable[..., pl.DataFrame]
+    parse_tardis_trades(df: pl.DataFrame) -> pl.DataFrame
+    parse_tardis_quotes(df: pl.DataFrame) -> pl.DataFrame
+    parse_tardis_incremental_l2(df: pl.DataFrame) -> pl.DataFrame
+    parse_tardis_book_snapshot_25(df: pl.DataFrame) -> pl.DataFrame
+    parse_tardis_derivative_ticker(df: pl.DataFrame) -> pl.DataFrame
+    parse_tardis_liquidations(df: pl.DataFrame) -> pl.DataFrame
+    parse_tardis_options_chain(df: pl.DataFrame) -> pl.DataFrame
+    get_tardis_parser(data_type: str) -> Callable[[pl.DataFrame], pl.DataFrame]
     tardis_symbols_to_snapshot(raw: pl.DataFrame, *, effective_ts_us: int) -> pl.DataFrame
 
 Dependencies and constraints:

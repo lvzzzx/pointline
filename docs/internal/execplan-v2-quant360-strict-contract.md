@@ -31,7 +31,7 @@ User-visible outcome: if upstream data is valid, ingest succeeds deterministical
   Evidence: `pointline/schemas/events_cn.py`.
 
 - Observation: docs define deterministic raw CSV schemas by exchange/stream, so strict parser contracts are aligned with source reality and clean v2 design.
-  Evidence: `docs/data_sources/quant360_cn_l2.md`.
+  Evidence: `docs/references/quant360_cn_l2.md`.
 
 - Observation: removing fallback code exposed a null-dtype edge where string normalization needed explicit `cast(pl.Utf8)` before string transforms.
   Evidence: strict test run failure in `tests/v2/quant360/test_pipeline_cn_quant360.py` and subsequent fix in `pointline/v2/vendors/quant360/canonicalize.py`.
@@ -74,7 +74,7 @@ Relevant files:
 - `pointline/v2/ingestion/cn_validation.py`
 - `pointline/schemas/events_cn.py`
 - `tests/v2/quant360/*`
-- `docs/data_sources/quant360_cn_l2.md`
+- `docs/references/quant360_cn_l2.md`
 
 ## Strict Boundary Contract
 
@@ -125,7 +125,7 @@ Milestone 2 removes canonicalizer fallback behavior.
 
 Milestone 3 tightens docs and validation language.
 
-1. Update `docs/data_sources/quant360_cn_l2.md` with explicit parser contract appendix.
+1. Update `docs/references/quant360_cn_l2.md` with explicit parser contract appendix.
 2. Ensure error messages from parser/canonicalizer name missing columns clearly.
 3. Keep CN validation on canonical columns only.
 

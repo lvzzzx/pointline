@@ -95,7 +95,80 @@ Historical datasets for the **first day of each month** are available without AP
 
 ---
 
-## 4. Common Fields
+## 4. Grouped Symbols
+
+**Reference:** https://docs.tardis.dev/downloadable-csv-files#grouped-symbols
+
+Grouped symbols aggregate data across all instruments of a given market type into a single file per day. Instead of requesting individual symbols one by one, use a grouped symbol to download everything for that market category at once. This is especially useful for options, where enumerating each contract is impractical.
+
+### Available Grouped Symbols
+
+| Grouped Symbol | Description |
+| :--- | :--- |
+| `SPOT` | All spot market instruments |
+| `FUTURES` | All futures contracts |
+| `PERPETUALS` | All perpetual swap contracts |
+| `OPTIONS` | All options instruments |
+
+### Data Type Compatibility
+
+Not all data types support all grouped symbols:
+
+| Data Type | Supported Grouped Symbols |
+| :--- | :--- |
+| `trades` | `SPOT`, `FUTURES`, `OPTIONS`, `PERPETUALS` |
+| `incremental_book_L2` | `FUTURES` |
+| `derivative_ticker` | `FUTURES`, `PERPETUALS` |
+| `options_chain` | `OPTIONS` |
+| `quotes` | `OPTIONS` |
+| `liquidations` | `FUTURES`, `PERPETUALS`, `OPTIONS` |
+
+### Download Examples
+
+```
+https://datasets.tardis.dev/v1/binance/trades/2020/09/01/SPOT.csv.gz
+https://datasets.tardis.dev/v1/ftx/trades/2020/09/01/PERPETUALS.csv.gz
+https://datasets.tardis.dev/v1/deribit/options_chain/2020/09/01/OPTIONS.csv.gz
+https://datasets.tardis.dev/v1/deribit/liquidations/2021/09/01/PERPETUALS.csv.gz
+```
+
+### Discovery
+
+Available grouped symbols for each exchange are listed in the `/exchanges/:exchange` API endpoint: `https://api.tardis.dev/v1/exchanges`.
+
+### Notes
+
+- The `symbol` field in the downloaded CSV still contains the individual instrument symbol per row, not the grouped symbol name.
+- Symbol must be uppercase in the URL. Replace `/` and `:` characters with `-` for URL safety.
+
+### Pointline Bronze Layout Convention
+
+Pointline uses grouped-symbol files as the Tardis bronze unit. The bronze path uses a Hive-style `symbol=` partition where the value is the **grouped symbol name** (e.g. `SPOT`, `PERPETUALS`), not an individual instrument:
+
+```
+exchange={exchange}/type={data_type}/date={YYYY-MM-DD}/symbol={grouped_symbol}/{exchange}_{data_type}_{YYYY-MM-DD}_{grouped_symbol}.csv.gz
+```
+
+The filename uses the Tardis-native naming convention (`<exchange>_<data_type>_<date>_<symbol>.csv.gz`), which is what the SDK/HTTP download produces. The path partitions duplicate some filename fields — this is intentional (Hive discovery + unmodified vendor file).
+
+**Examples:**
+
+```
+exchange=binance/type=trades/date=2024-01-01/symbol=SPOT/binance_trades_2024-01-01_SPOT.csv.gz
+exchange=binance-futures/type=trades/date=2024-01-01/symbol=PERPETUALS/binance-futures_trades_2024-01-01_PERPETUALS.csv.gz
+exchange=deribit/type=options_chain/date=2024-01-01/symbol=OPTIONS/deribit_options_chain_2024-01-01_OPTIONS.csv.gz
+```
+
+**Key rules:**
+
+- The `symbol=` partition is a **placeholder** — it does not imply per-instrument or per-exchange granularity.
+- The CSV is **self-contained**: `exchange` and `symbol` are read from each row, not derived from the path.
+- Parsers accept a single `pl.DataFrame` argument with no path-level metadata kwargs.
+- One bronze file maps to one `file_id` in the manifest; `file_seq` provides row-level lineage within the grouped file.
+
+---
+
+## 5. Common Fields
 
 All data types share these common fields:
 
@@ -108,9 +181,9 @@ All data types share these common fields:
 
 ---
 
-## 5. Data Types
+## 6. Data Types
 
-### 5.1 incremental_book_L2
+### 6.1 incremental_book_L2
 
 **Reference:** https://docs.tardis.dev/downloadable-csv-files#incremental_book_l2
 
@@ -138,7 +211,7 @@ All data types share these common fields:
 
 ---
 
-### 5.2 book_snapshot_25
+### 6.2 book_snapshot_25
 
 **Reference:** https://docs.tardis.dev/downloadable-csv-files#book_snapshot_25
 
@@ -165,7 +238,7 @@ All data types share these common fields:
 
 ---
 
-### 5.3 book_snapshot_5
+### 6.3 book_snapshot_5
 
 **Reference:** https://docs.tardis.dev/downloadable-csv-files#book_snapshot_5
 
@@ -186,7 +259,7 @@ All data types share these common fields:
 
 ---
 
-### 5.4 trades
+### 6.4 trades
 
 **Reference:** https://docs.tardis.dev/downloadable-csv-files#trades
 
@@ -212,7 +285,7 @@ All data types share these common fields:
 
 ---
 
-### 5.5 quotes
+### 6.5 quotes
 
 **Reference:** https://docs.tardis.dev/downloadable-csv-files#quotes
 
@@ -233,7 +306,7 @@ All data types share these common fields:
 
 ---
 
-### 5.6 derivative_ticker
+### 6.6 derivative_ticker
 
 **Reference:** https://docs.tardis.dev/downloadable-csv-files#derivative_ticker
 
@@ -262,7 +335,7 @@ All data types share these common fields:
 
 ---
 
-### 5.7 liquidations
+### 6.7 liquidations
 
 **Reference:** https://docs.tardis.dev/downloadable-csv-files#liquidations
 
@@ -287,7 +360,7 @@ All data types share these common fields:
 
 ---
 
-### 5.8 options_chain
+### 6.8 options_chain
 
 **Reference:** https://docs.tardis.dev/downloadable-csv-files#options_chain
 
@@ -330,7 +403,7 @@ All data types share these common fields:
 
 ---
 
-## 6. Exchange Coverage
+## 7. Exchange Coverage
 
 ### Supported Exchanges (26+)
 
@@ -364,7 +437,7 @@ All data types share these common fields:
 
 ---
 
-## 7. Timestamp Semantics
+## 8. Timestamp Semantics
 
 ### Field Definitions
 
@@ -390,7 +463,7 @@ dt = datetime.datetime.fromtimestamp(ts_us / 1_000_000, tz=datetime.timezone.utc
 
 ---
 
-## 8. Data Availability and Scheduling
+## 9. Data Availability and Scheduling
 
 ### Update Schedule
 
@@ -408,7 +481,7 @@ dt = datetime.datetime.fromtimestamp(ts_us / 1_000_000, tz=datetime.timezone.utc
 
 ---
 
-## 9. Order Book Reconstruction Guide
+## 10. Order Book Reconstruction Guide
 
 ### From incremental_book_L2
 
@@ -454,7 +527,7 @@ for ts, group in grouped:
 
 ---
 
-## 10. Data Quality Notes
+## 11. Data Quality Notes
 
 ### Known Limitations
 
@@ -475,7 +548,7 @@ for ts, group in grouped:
 
 ---
 
-## Appendix: Sample Data URLs
+## 12. Appendix: Sample Data URLs
 
 ### Free Samples (First of Month)
 

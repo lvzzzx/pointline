@@ -43,6 +43,7 @@ def _seed_szse_phase_trades(silver_root: Path) -> dict[str, int]:
             "ts_local_us": ts_values,
             "file_id": [77] * len(ts_values),
             "file_seq": list(range(1, len(ts_values) + 1)),
+            "trade_id": [None] * len(ts_values),
             "side": ["buy"] * len(ts_values),
             "is_buyer_maker": [False] * len(ts_values),
             "price": [100_000_000_000] * len(ts_values),

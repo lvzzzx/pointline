@@ -54,11 +54,13 @@ class CapturingWriter:
         self.calls.append((table_name, df))
 
 
-def _meta() -> BronzeFileMetadata:
+def _meta(*, data_type: str = "trades", bronze_file_path: str | None = None) -> BronzeFileMetadata:
+    if bronze_file_path is None:
+        bronze_file_path = f"exchange=szse/type={data_type}/date=2024-09-30/file.csv.gz"
     return BronzeFileMetadata(
         vendor="tardis",
-        data_type="trades",
-        bronze_file_path="exchange=szse/type=trades/date=2024-09-30/file.csv.gz",
+        data_type=data_type,
+        bronze_file_path=bronze_file_path,
         file_size_bytes=123,
         last_modified_ts=1,
         sha256="a" * 64,
@@ -241,3 +243,132 @@ def test_ingest_file_fails_when_scaled_numeric_fields_are_not_pre_scaled() -> No
     assert result.error_message is not None
     assert "pre-scaled Int64" in result.error_message
     assert writer.calls == []
+
+
+def test_ingest_file_accepts_unknown_trade_side_with_nullable_maker_flag() -> None:
+    manifest = FakeManifestRepo()
+    writer = CapturingWriter()
+    event_ts = _ts_us(datetime(2024, 9, 29, 16, 30, tzinfo=ZoneInfo("UTC")))
+
+    def parser(_meta: BronzeFileMetadata) -> pl.DataFrame:
+        return pl.DataFrame(
+            {
+                "exchange": ["szse"],
+                "symbol": ["000001.SZ"],
+                "ts_event_us": [event_ts],
+                "side": ["unknown"],
+                "is_buyer_maker": [None],
+                "trade_id": ["abc-1"],
+                "price": [123_450_000],
+                "qty": [100_000_000],
+            }
+        )
+
+    dim_symbol = pl.DataFrame(
+        {
+            "exchange": ["szse"],
+            "exchange_symbol": ["000001.SZ"],
+            "symbol_id": [42],
+            "valid_from_ts_us": [event_ts - 1],
+            "valid_until_ts_us": [event_ts + 1],
+        }
+    )
+
+    result = ingest_file(
+        _meta(),
+        parser=parser,
+        manifest_repo=manifest,
+        writer=writer,
+        dim_symbol_df=dim_symbol,
+    )
+
+    assert result.status == "success"
+    assert len(writer.calls) == 1
+    _, written = writer.calls[0]
+    assert written["side"][0] == "unknown"
+    assert written["is_buyer_maker"][0] is None
+    assert written["trade_id"][0] == "abc-1"
+
+
+def test_ingest_file_quarantines_crossed_quotes() -> None:
+    manifest = FakeManifestRepo()
+    writer = CapturingWriter()
+    event_ts = _ts_us(datetime(2024, 9, 29, 16, 30, tzinfo=ZoneInfo("UTC")))
+
+    def parser(_meta: BronzeFileMetadata) -> pl.DataFrame:
+        return pl.DataFrame(
+            {
+                "exchange": ["szse"],
+                "symbol": ["000001.SZ"],
+                "ts_event_us": [event_ts],
+                "bid_price": [200_000_000_000],
+                "bid_qty": [100_000_000],
+                "ask_price": [100_000_000_000],
+                "ask_qty": [100_000_000],
+            }
+        )
+
+    dim_symbol = pl.DataFrame(
+        {
+            "exchange": ["szse"],
+            "exchange_symbol": ["000001.SZ"],
+            "symbol_id": [42],
+            "valid_from_ts_us": [event_ts - 1],
+            "valid_until_ts_us": [event_ts + 1],
+        }
+    )
+
+    result = ingest_file(
+        _meta(data_type="quotes"),
+        parser=parser,
+        manifest_repo=manifest,
+        writer=writer,
+        dim_symbol_df=dim_symbol,
+    )
+
+    assert result.status == "quarantined"
+    assert result.rows_quarantined == 1
+    assert result.failure_reason == "invalid_quote_top_of_book"
+    assert writer.calls == []
+
+
+def test_ingest_file_allows_orderbook_updates_without_book_seq() -> None:
+    manifest = FakeManifestRepo()
+    writer = CapturingWriter()
+    event_ts = _ts_us(datetime(2024, 9, 29, 16, 30, tzinfo=ZoneInfo("UTC")))
+
+    def parser(_meta: BronzeFileMetadata) -> pl.DataFrame:
+        return pl.DataFrame(
+            {
+                "exchange": ["szse"],
+                "symbol": ["000001.SZ"],
+                "ts_event_us": [event_ts],
+                "side": ["bid"],
+                "price": [123_450_000],
+                "qty": [100_000_000],
+                "is_snapshot": [False],
+            }
+        )
+
+    dim_symbol = pl.DataFrame(
+        {
+            "exchange": ["szse"],
+            "exchange_symbol": ["000001.SZ"],
+            "symbol_id": [42],
+            "valid_from_ts_us": [event_ts - 1],
+            "valid_until_ts_us": [event_ts + 1],
+        }
+    )
+
+    result = ingest_file(
+        _meta(data_type="orderbook_updates"),
+        parser=parser,
+        manifest_repo=manifest,
+        writer=writer,
+        dim_symbol_df=dim_symbol,
+    )
+
+    assert result.status == "success"
+    assert len(writer.calls) == 1
+    _, written = writer.calls[0]
+    assert written["book_seq"][0] is None

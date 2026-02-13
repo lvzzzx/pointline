@@ -23,6 +23,7 @@ def _trades_row(*, trading_date: date, file_id: int, file_seq: int) -> pl.DataFr
             "ts_local_us": [1_700_000_000_000_000 + file_seq],
             "file_id": [file_id],
             "file_seq": [file_seq],
+            "trade_id": [""],
             "side": ["buy"],
             "is_buyer_maker": [False],
             "price": [123_000_000_000],

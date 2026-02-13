@@ -23,16 +23,16 @@ The user-visible result is simple: given Quant360 `.7z` files and a populated `d
 ## Surprises & Discoveries
 
 - Observation: The Quant360 data source combines three materially different streams (order events, tick events, and snapshot arrays) that cannot be represented cleanly by forcing everything into existing generic `trades`/`orderbook_updates` schemas.
-  Evidence: `/Users/zjx/Documents/pointline/docs/data_sources/quant360_cn_l2.md` sections 3, 4, and 7 define distinct semantics and payload shapes.
+  Evidence: `/Users/zjx/Documents/pointline/docs/references/quant360_cn_l2.md` sections 3, 4, and 7 define distinct semantics and payload shapes.
 
 - Observation: Current Quant360 runtime path is coupled to legacy plugin and table-domain modules (`l3_orders`, `l3_ticks`) and uses `date` + `file_line_number` conventions that differ from new v2 core contracts (`trading_date`, `file_seq`).
   Evidence: `/Users/zjx/Documents/pointline/pointline/io/vendors/quant360/plugin.py`, `/Users/zjx/Documents/pointline/pointline/tables/l3_orders.py`, `/Users/zjx/Documents/pointline/pointline/tables/l3_ticks.py`.
 
 - Observation: SZSE files omit symbol in CSV columns while SSE includes `SecurityID`; a robust adapter must normalize symbol sourcing from both file path and payload with explicit consistency checks.
-  Evidence: `/Users/zjx/Documents/pointline/docs/data_sources/quant360_cn_l2.md` sections 3.1, 5.1, 6.1, and 8.
+  Evidence: `/Users/zjx/Documents/pointline/docs/references/quant360_cn_l2.md` sections 3.1, 5.1, 6.1, and 8.
 
 - Observation: SSE tick stream does not provide `ExecType`; every row is an execution and must be normalized with an explicit synthetic fill marker to keep downstream logic deterministic.
-  Evidence: `/Users/zjx/Documents/pointline/docs/data_sources/quant360_cn_l2.md` section 4 and adapter test `tests/v2/quant360/test_parsers_cn_streams.py`.
+  Evidence: `/Users/zjx/Documents/pointline/docs/references/quant360_cn_l2.md` section 4 and adapter test `tests/v2/quant360/test_parsers_cn_streams.py`.
 
 ## Decision Log
 
@@ -110,7 +110,7 @@ Milestone 5 adds tests and fixtures under `/Users/zjx/Documents/pointline/tests/
 - SZSE L2 snapshot files with valid array fields.
 - Invalid timestamp format, invalid enum values, malformed arrays, missing required columns.
 
-Milestone 6 updates docs and removes active-doc ambiguity. Update `/Users/zjx/Documents/pointline/docs/data_sources/quant360_cn_l2.md` with canonical v2 mapping summary and point active implementation docs to this plan and v2 modules. Keep historical legacy design docs in archive only.
+Milestone 6 updates docs and removes active-doc ambiguity. Update `/Users/zjx/Documents/pointline/docs/references/quant360_cn_l2.md` with canonical v2 mapping summary and point active implementation docs to this plan and v2 modules. Keep historical legacy design docs in archive only.
 
 ## Concrete Steps
 

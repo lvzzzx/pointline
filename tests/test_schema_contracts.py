@@ -44,3 +44,12 @@ def test_scaled_numeric_columns_are_explicitly_annotated() -> None:
     assert quotes.scale_for("bid_qty") == QTY_SCALE
     assert quotes.scale_for("ask_price") == PRICE_SCALE
     assert quotes.scale_for("ask_qty") == QTY_SCALE
+
+
+def test_tardis_compat_nullable_fields() -> None:
+    trades = get_table_spec("trades")
+    assert trades.get_column("trade_id").nullable is True
+    assert trades.get_column("is_buyer_maker").nullable is True
+
+    orderbook = get_table_spec("orderbook_updates")
+    assert orderbook.get_column("book_seq").nullable is True
