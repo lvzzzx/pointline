@@ -103,22 +103,24 @@ def main():
     snapshot = stock_basic_to_snapshot(all_raw, effective_ts_us=effective_ts_us)
     print(f"  Snapshot rows: {len(snapshot)}")
 
-    # Merge with existing dim_symbol (preserve other vendors)
+    # Merge with existing dim_symbol (preserve exchanges not in snapshot)
     print("Merging with existing dim_symbol")
-    tushare_exchanges = ["sse", "szse"]
+    snapshot_exchanges = snapshot["exchange"].unique().to_list()
+    print(f"  Exchanges in snapshot: {snapshot_exchanges}")
 
     if dim.is_empty():
         # First run - just use Tushare data
         merged = snapshot
         print("  Existing dim_symbol is empty, using Tushare data only")
     else:
-        # Preserve non-Tushare exchanges
-        other_exchanges = dim.filter(~pl.col("exchange").is_in(tushare_exchanges))
-        print(f"  Preserving {len(other_exchanges)} rows from other exchanges")
-        print(f"    Exchanges: {other_exchanges['exchange'].unique().to_list()}")
+        # Preserve exchanges NOT in the snapshot (including other Tushare exchanges)
+        preserved = dim.filter(~pl.col("exchange").is_in(snapshot_exchanges))
+        print(f"  Preserving {len(preserved)} rows from other exchanges")
+        if len(preserved) > 0:
+            print(f"    Exchanges: {preserved['exchange'].unique().to_list()}")
 
-        # Combine: other exchanges + new Tushare data
-        merged = pl.concat([other_exchanges, snapshot], how="diagonal")
+        # Combine: preserved exchanges + new snapshot data
+        merged = pl.concat([preserved, snapshot], how="diagonal")
         print(f"  Combined: {len(merged)} rows")
 
     # Assign symbol_ids
@@ -138,9 +140,9 @@ def main():
     for row in exch_summary.iter_rows(named=True):
         print(f"    {row['exchange']}: {row['count']}")
 
-    print("  By market type:")
+    print("  By market type (snapshot exchanges only):")
     market_summary = (
-        result.filter(pl.col("exchange").is_in(tushare_exchanges))
+        result.filter(pl.col("exchange").is_in(snapshot_exchanges))
         .group_by("market_type")
         .agg(pl.len().alias("count"))
         .sort("count", descending=True)
