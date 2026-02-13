@@ -209,10 +209,13 @@ def parse_tick_stream(df: pl.DataFrame, *, exchange: str, symbol: str) -> pl.Dat
                 pl.lit(exchange).alias("exchange"),
                 pl.lit(symbol).alias("symbol"),
                 _parse_ts_expr("TradeTime").alias("ts_event_us"),
-                pl.col("ApplSeqNum")
-                .cast(pl.Int64)
-                .fill_null(pl.col("TradeIndex").cast(pl.Int64))
-                .alias("appl_seq_num"),
+                (
+                    pl.col("ApplSeqNum")
+                    .cast(pl.Int64)
+                    .fill_null(pl.col("TradeIndex").cast(pl.Int64))
+                    if "ApplSeqNum" in df.columns
+                    else pl.col("TradeIndex").cast(pl.Int64)
+                ).alias("appl_seq_num"),
                 pl.col("ChannelNo").cast(pl.Int32).alias("channel_no"),
                 pl.col("BuyNo").cast(pl.Int64).alias("bid_appl_seq_num"),
                 pl.col("SellNo").cast(pl.Int64).alias("offer_appl_seq_num"),
