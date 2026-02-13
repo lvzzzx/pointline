@@ -154,7 +154,7 @@ def extract_archive(
 
     import py7zr
 
-    from pointline.v2.vendors.quant360.filenames import (
+    from pointline.vendors.quant360.filenames import (
         parse_archive_filename,
         parse_symbol_from_member_path,
     )

@@ -18,16 +18,16 @@ from pathlib import Path
 from time import perf_counter
 
 import polars as pl
-
 from pointline.io.protocols import BronzeFileMetadata
-from pointline.v2.ingestion.pipeline import ingest_file
-from pointline.v2.storage.delta import (
+
+from pointline.ingestion.pipeline import ingest_file
+from pointline.storage.delta import (
     DeltaDimensionStore,
     DeltaEventStore,
     DeltaManifestStore,
     DeltaQuarantineStore,
 )
-from pointline.v2.vendors.quant360 import get_quant360_stream_parser
+from pointline.vendors.quant360 import get_quant360_stream_parser
 
 _PARTITION_RE = re.compile(
     r"exchange=(?P<exchange>[^/]+)/type=(?P<data_type>[^/]+)/date=(?P<trading_date>\d{4}-\d{2}-\d{2})/symbol=(?P<symbol>[^/]+)/"

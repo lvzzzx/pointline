@@ -13,8 +13,8 @@ from typing import Literal
 
 import polars as pl
 
-from pointline.v2.dim_symbol import assign_symbol_ids, validate
-from pointline.v2.vendors.tushare.symbols import stock_basic_to_snapshot
+from pointline.dim_symbol import assign_symbol_ids, validate
+from pointline.vendors.tushare.symbols import stock_basic_to_snapshot
 
 
 def configure_tushare(token: str, http_url: str = "http://lianghua.nanyangqiankun.top"):
@@ -76,7 +76,7 @@ def main():
     pro = configure_tushare(args.token, args.http_url)
 
     print(f"Loading existing dim_symbol from {args.silver_root}")
-    from pointline.v2.storage.delta.dimension_store import DeltaDimensionStore
+    from pointline.storage.delta.dimension_store import DeltaDimensionStore
 
     store = DeltaDimensionStore(silver_root=args.silver_root)
     dim = store.load_dim_symbol()

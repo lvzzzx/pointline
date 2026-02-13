@@ -1,26 +1,21 @@
-"""Pointline data lake ETL utilities."""
+"""Pointline v2 - Clean market data lake."""
 
-from __future__ import annotations
+from pointline.protocols import BronzeFileMetadata
+from pointline.schemas import (
+    DIM_SYMBOL,
+    ORDERBOOK_UPDATES,
+    QUOTES,
+    TRADES,
+    get_table_spec,
+    list_table_specs,
+)
 
-from typing import Any
-
-
-def get_schema(*args: Any, **kwargs: Any) -> Any:
-    from pointline.introspection import get_schema as _get_schema
-
-    return _get_schema(*args, **kwargs)
-
-
-def list_columns(*args: Any, **kwargs: Any) -> Any:
-    from pointline.introspection import list_columns as _list_columns
-
-    return _list_columns(*args, **kwargs)
-
-
-def get_schema_info(*args: Any, **kwargs: Any) -> Any:
-    from pointline.introspection import get_schema_info as _get_schema_info
-
-    return _get_schema_info(*args, **kwargs)
-
-
-__all__ = ["get_schema", "list_columns", "get_schema_info"]
+__all__ = [
+    "TRADES",
+    "QUOTES",
+    "ORDERBOOK_UPDATES",
+    "DIM_SYMBOL",
+    "get_table_spec",
+    "list_table_specs",
+    "BronzeFileMetadata",
+]

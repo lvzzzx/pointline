@@ -1,7 +1,7 @@
 # Chinese Stock L3 MFT Feature Engineering Guide
 
 **Persona:** Quant Researcher (MFT)
-**Data Source:** SZSE/SSE Level 3 (l3_orders, l3_ticks)
+**Data Source:** SZSE/SSE Level 3 (`cn_order_events`, `cn_tick_events`)
 **Scope:** Opening/Closing Call Auctions + Continuous Trading
 **Version:** 1.0
 
@@ -53,7 +53,7 @@ This guide provides a comprehensive feature engineering framework for mid-freque
 
 ### 1.3 Channel Architecture & Deterministic Sequencing
 
-L3 data from SZSE/SSE is organized into **independent channels**. Each channel carries a distinct instrument class and maintains its own sequence numbering.
+L3 data from SZSE/SSE is organized into **independent channels**. Each channel carries a distinct instrument class and maintains its own sequence numbering. In v2 schema, this is captured in `channel_id`.
 
 | Exchange | Channel Scope | Notes |
 |----------|--------------|-------|
