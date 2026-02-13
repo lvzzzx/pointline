@@ -198,3 +198,136 @@ def test_ingest_tardis_incremental_l2_alias_routes_to_orderbook_updates() -> Non
     assert written["book_seq"][0] == 555
     assert written["qty"][0] == int(round(1.5 * QTY_SCALE))
     assert written["is_snapshot"][0] is False
+
+
+def test_ingest_tardis_derivative_ticker_succeeds() -> None:
+    manifest = FakeManifestRepo()
+    writer = CapturingWriter()
+
+    def parser(meta: BronzeFileMetadata) -> pl.DataFrame:
+        stream_parser = get_tardis_parser(meta.data_type)
+        raw = pl.DataFrame(
+            {
+                "exchange": ["binance-futures"],
+                "symbol": ["BTCUSDT"],
+                "timestamp": [1_700_000_000_000_100],
+                "local_timestamp": [1_700_000_000_000_200],
+                "mark_price": [43_210.5],
+                "index_price": [43_200.0],
+                "last_price": [43_215.0],
+                "open_interest": [1234.5],
+                "funding_rate": [0.0001],
+                "predicted_funding_rate": [0.00012],
+                "funding_timestamp": [1_700_003_600_000_000],
+            }
+        )
+        return stream_parser(raw)
+
+    result = ingest_file(
+        _meta("derivative_ticker"),
+        parser=parser,
+        manifest_repo=manifest,
+        writer=writer,
+        dim_symbol_df=_dim_symbol(),
+    )
+
+    assert result.status == "success"
+    assert len(writer.calls) == 1
+    table_name, written = writer.calls[0]
+    assert table_name == "derivative_ticker"
+    assert written["mark_price"][0] == int(round(43_210.5 * PRICE_SCALE))
+    assert written["funding_rate"][0] == 0.0001
+    assert written["open_interest"][0] == int(round(1234.5 * QTY_SCALE))
+
+
+def test_ingest_tardis_liquidations_succeeds() -> None:
+    manifest = FakeManifestRepo()
+    writer = CapturingWriter()
+
+    def parser(meta: BronzeFileMetadata) -> pl.DataFrame:
+        stream_parser = get_tardis_parser(meta.data_type)
+        raw = pl.DataFrame(
+            {
+                "exchange": ["binance-futures"],
+                "symbol": ["BTCUSDT"],
+                "timestamp": [1_700_000_000_000_100],
+                "local_timestamp": [1_700_000_000_000_200],
+                "id": ["liq-1"],
+                "side": ["sell"],
+                "price": [42_500.0],
+                "amount": [0.1],
+            }
+        )
+        return stream_parser(raw)
+
+    result = ingest_file(
+        _meta("liquidations"),
+        parser=parser,
+        manifest_repo=manifest,
+        writer=writer,
+        dim_symbol_df=_dim_symbol(),
+    )
+
+    assert result.status == "success"
+    assert len(writer.calls) == 1
+    table_name, written = writer.calls[0]
+    assert table_name == "liquidations"
+    assert written["liquidation_id"][0] == "liq-1"
+    assert written["side"][0] == "sell"
+    assert written["price"][0] == int(round(42_500.0 * PRICE_SCALE))
+    assert written["qty"][0] == int(round(0.1 * QTY_SCALE))
+
+
+def test_ingest_tardis_options_chain_succeeds() -> None:
+    manifest = FakeManifestRepo()
+    writer = CapturingWriter()
+
+    def parser(meta: BronzeFileMetadata) -> pl.DataFrame:
+        stream_parser = get_tardis_parser(meta.data_type)
+        raw = pl.DataFrame(
+            {
+                "exchange": ["binance-futures"],
+                "symbol": ["BTCUSDT"],
+                "timestamp": [1_700_000_000_000_100],
+                "local_timestamp": [1_700_000_000_000_200],
+                "type": ["call"],
+                "strike_price": [42_000.0],
+                "expiration": [1_706_284_800_000_000],
+                "open_interest": [500.0],
+                "last_price": [0.05],
+                "bid_price": [0.045],
+                "bid_amount": [10.0],
+                "bid_iv": [0.55],
+                "ask_price": [0.055],
+                "ask_amount": [8.0],
+                "ask_iv": [0.58],
+                "mark_price": [0.05],
+                "mark_iv": [0.56],
+                "underlying_index": ["BTC"],
+                "underlying_price": [43_000.0],
+                "delta": [0.45],
+                "gamma": [0.0001],
+                "vega": [15.5],
+                "theta": [-20.3],
+                "rho": [0.5],
+            }
+        )
+        return stream_parser(raw)
+
+    result = ingest_file(
+        _meta("options_chain"),
+        parser=parser,
+        manifest_repo=manifest,
+        writer=writer,
+        dim_symbol_df=_dim_symbol(),
+    )
+
+    assert result.status == "success"
+    assert len(writer.calls) == 1
+    table_name, written = writer.calls[0]
+    assert table_name == "options_chain"
+    assert written["option_type"][0] == "call"
+    assert written["strike"][0] == int(round(42_000.0 * PRICE_SCALE))
+    assert written["expiration_ts_us"][0] == 1_706_284_800_000_000
+    assert written["delta"][0] == 0.45
+    assert written["mark_iv"][0] == 0.56
