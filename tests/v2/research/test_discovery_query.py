@@ -11,6 +11,7 @@ from pointline.schemas.dimensions import DIM_SYMBOL
 from pointline.schemas.events import TRADES
 from pointline.v2.research.discovery import discover_symbols
 from pointline.v2.research.metadata import load_symbol_meta
+from pointline.v2.research.primitives import join_symbol_meta
 from pointline.v2.research.query import load_events
 from pointline.v2.storage.delta.dimension_store import DeltaDimensionStore
 from pointline.v2.storage.delta.layout import table_path
@@ -204,12 +205,12 @@ def test_load_events_no_implicit_symbol_meta_join(tmp_path: Path) -> None:
     assert "lot_size" not in out.columns
 
 
-def test_load_events_with_explicit_symbol_meta_columns(tmp_path: Path) -> None:
+def test_join_symbol_meta_explicit_primitive(tmp_path: Path) -> None:
     silver_root = tmp_path / "silver"
     _seed_dim_symbol(silver_root)
     _seed_trades_table(silver_root)
 
-    out = load_events(
+    events = load_events(
         silver_root=silver_root,
         table="trades",
         exchange="binance-futures",
@@ -217,7 +218,11 @@ def test_load_events_with_explicit_symbol_meta_columns(tmp_path: Path) -> None:
         start=2_000_000,
         end=2_200_000,
         include_lineage=True,
-        symbol_meta_columns=["tick_size", "lot_size"],
+    )
+    out = join_symbol_meta(
+        events,
+        silver_root=silver_root,
+        columns=["tick_size", "lot_size"],
     )
 
     assert out.height == 2
@@ -227,6 +232,23 @@ def test_load_events_with_explicit_symbol_meta_columns(tmp_path: Path) -> None:
     assert "lot_size" in out.columns
     assert out["tick_size"].to_list() == [200, 200]
     assert out["lot_size"].to_list() == [2_000, 2_000]
+
+
+def test_join_symbol_meta_rejects_unknown_columns(tmp_path: Path) -> None:
+    silver_root = tmp_path / "silver"
+    _seed_dim_symbol(silver_root)
+    _seed_trades_table(silver_root)
+    events = load_events(
+        silver_root=silver_root,
+        table="trades",
+        exchange="binance-futures",
+        symbol="BTCUSDT",
+        start=2_000_000,
+        end=2_200_000,
+    )
+
+    with pytest.raises(ValueError, match="Unknown symbol metadata columns"):
+        join_symbol_meta(events, silver_root=silver_root, columns=["not_a_real_meta"])
 
 
 def test_load_events_uses_exchange_timezone_for_date_bounds(tmp_path: Path) -> None:
