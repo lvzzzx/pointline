@@ -14,12 +14,14 @@ from pointline.schemas.types import (
     INGEST_STATUS_QUARANTINED,
     INGEST_STATUS_SUCCESS,
 )
+from pointline.v2.ingestion.cn_validation import apply_cn_exchange_validations
 from pointline.v2.ingestion.lineage import assign_lineage
 from pointline.v2.ingestion.manifest import update_manifest_status
 from pointline.v2.ingestion.models import IngestionResult
 from pointline.v2.ingestion.normalize import normalize_to_table_spec
 from pointline.v2.ingestion.pit import check_pit_coverage
 from pointline.v2.ingestion.timezone import derive_trading_date_frame
+from pointline.v2.vendors.quant360 import canonicalize_quant360_frame
 
 Parser = Callable[[BronzeFileMetadata], pl.DataFrame]
 Writer = Callable[[str, pl.DataFrame], None]
@@ -28,6 +30,15 @@ _TABLE_ALIASES: dict[str, str] = {
     "trades": "trades",
     "quotes": "quotes",
     "orderbook_updates": "orderbook_updates",
+    "cn_order_events": "cn_order_events",
+    "order_new": "cn_order_events",
+    "l3_orders": "cn_order_events",
+    "cn_tick_events": "cn_tick_events",
+    "tick_new": "cn_tick_events",
+    "l3_ticks": "cn_tick_events",
+    "cn_l2_snapshots": "cn_l2_snapshots",
+    "L2_new": "cn_l2_snapshots",
+    "l2_new": "cn_l2_snapshots",
 }
 
 
@@ -63,6 +74,13 @@ def _result(
         trading_date_min=trading_date_min,
         trading_date_max=trading_date_max,
     )
+
+
+def _combine_reasons(*reasons: str | None) -> str | None:
+    ordered = list(dict.fromkeys(reason for reason in reasons if reason))
+    if not ordered:
+        return None
+    return "+".join(ordered)
 
 
 def ingest_file(
@@ -123,11 +141,41 @@ def ingest_file(
         return result
 
     try:
-        with_trading_date = derive_trading_date_frame(parsed)
-        valid_rows, quarantined_rows, quarantine_reason = check_pit_coverage(
-            with_trading_date,
+        canonicalized = (
+            canonicalize_quant360_frame(parsed, table_name=table_name)
+            if meta.vendor == "quant360"
+            else parsed
+        )
+        with_trading_date = derive_trading_date_frame(canonicalized)
+
+        validated_rows, rule_quarantined_rows, rule_quarantine_reason = (
+            apply_cn_exchange_validations(
+                with_trading_date,
+                table_name=table_name,
+            )
+        )
+        if validated_rows.is_empty():
+            result = _result(
+                status=INGEST_STATUS_QUARANTINED,
+                file_id=file_id,
+                row_count=with_trading_date.height,
+                rows_written=0,
+                rows_quarantined=rule_quarantined_rows.height,
+                failure_reason=rule_quarantine_reason,
+                error_message="All rows quarantined by v2 validation rules",
+            )
+            if not dry_run:
+                update_manifest_status(
+                    manifest_repo, meta, file_id, INGEST_STATUS_QUARANTINED, result
+                )
+            return result
+
+        valid_rows, pit_quarantined_rows, pit_quarantine_reason = check_pit_coverage(
+            validated_rows,
             dim_symbol_df,
         )
+        total_quarantined = rule_quarantined_rows.height + pit_quarantined_rows.height
+        quarantine_reason = _combine_reasons(rule_quarantine_reason, pit_quarantine_reason)
 
         if valid_rows.is_empty():
             result = _result(
@@ -135,9 +183,9 @@ def ingest_file(
                 file_id=file_id,
                 row_count=with_trading_date.height,
                 rows_written=0,
-                rows_quarantined=quarantined_rows.height,
+                rows_quarantined=total_quarantined,
                 failure_reason=quarantine_reason,
-                error_message="All rows quarantined by PIT coverage",
+                error_message="All rows quarantined by v2 validation/PIT coverage",
             )
             if not dry_run:
                 update_manifest_status(
@@ -156,7 +204,7 @@ def ingest_file(
             file_id=file_id,
             row_count=with_trading_date.height,
             rows_written=normalized.height,
-            rows_quarantined=quarantined_rows.height,
+            rows_quarantined=total_quarantined,
             trading_date_min=normalized.get_column("trading_date").min(),
             trading_date_max=normalized.get_column("trading_date").max(),
         )

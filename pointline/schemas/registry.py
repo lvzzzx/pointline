@@ -5,10 +5,11 @@ from __future__ import annotations
 from pointline.schemas.control import CONTROL_SPECS
 from pointline.schemas.dimensions import DIMENSION_SPECS
 from pointline.schemas.events import EVENT_SPECS
+from pointline.schemas.events_cn import CN_EVENT_SPECS
 from pointline.schemas.types import TableSpec
 
 TABLE_SPECS: dict[str, TableSpec] = {
-    spec.name: spec for spec in (*EVENT_SPECS, *DIMENSION_SPECS, *CONTROL_SPECS)
+    spec.name: spec for spec in (*EVENT_SPECS, *CN_EVENT_SPECS, *DIMENSION_SPECS, *CONTROL_SPECS)
 }
 
 

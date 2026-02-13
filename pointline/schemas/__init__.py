@@ -3,6 +3,7 @@
 from pointline.schemas.control import INGEST_MANIFEST, VALIDATION_LOG
 from pointline.schemas.dimensions import DIM_SYMBOL
 from pointline.schemas.events import ORDERBOOK_UPDATES, QUOTES, TRADES
+from pointline.schemas.events_cn import CN_L2_SNAPSHOTS, CN_ORDER_EVENTS, CN_TICK_EVENTS
 from pointline.schemas.registry import get_table_spec, list_specs, list_table_specs
 from pointline.schemas.types import (
     INGEST_STATUS_FAILED,
@@ -18,6 +19,9 @@ from pointline.schemas.types import (
 
 __all__ = [
     "ColumnSpec",
+    "CN_L2_SNAPSHOTS",
+    "CN_ORDER_EVENTS",
+    "CN_TICK_EVENTS",
     "DIM_SYMBOL",
     "INGEST_MANIFEST",
     "INGEST_STATUS_FAILED",

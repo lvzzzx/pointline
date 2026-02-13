@@ -315,3 +315,42 @@ Based on sample file analysis:
 | **SZSE** | 000001 - 009999 | Main Board (主板) |
 | **SZSE** | 300000 - 309999 | ChiNext (创业板) |
 | **SZSE** | 159000 - 159999 | ETFs |
+
+---
+
+## 11. v2 Integration Plan (Clean Cut)
+
+The active clean-cut implementation plan for integrating this data source into the new v2 core is:
+
+- `docs/internal/execplan-v2-quant360-cn-l2-integration.md`
+
+Scope notes for that plan:
+
+- No backward compatibility path.
+- No CLI refactor/rewrite in this phase.
+- Quant360 ingestion and canonical schemas are implemented in v2 core modules only.
+
+## 12. v2 Upstream Adapter Contract
+
+For v2, archive handling is explicitly separated from ingestion core:
+
+- Upstream adapter package: `pointline/v2/vendors/quant360/upstream/`
+- Ingestion core package: `pointline/v2/ingestion/`
+
+Contract boundary:
+
+- Upstream adapter input: raw Quant360 `.7z` archives.
+- Upstream adapter output: extracted per-symbol `.csv.gz` files in deterministic Bronze layout.
+- Ingestion core input: extracted files only (no `.7z` parsing in core).
+
+Current extracted layout contract:
+
+```
+exchange=<exchange>/type=<stream_type>/date=<YYYY-MM-DD>/symbol=<symbol>/<symbol>.csv.gz
+```
+
+Examples:
+
+- `exchange=szse/type=order_new/date=2024-01-02/symbol=000001/000001.csv.gz`
+- `exchange=sse/type=tick_new/date=2024-01-02/symbol=600000/600000.csv.gz`
+- `exchange=szse/type=L2_new/date=2024-01-02/symbol=000001/000001.csv.gz`
