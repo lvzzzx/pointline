@@ -52,18 +52,42 @@ def stock_basic_to_snapshot(
     *,
     effective_ts_us: int | None = None,
 ) -> pl.DataFrame:
-    """Convert Tushare stock_basic to a v2 dim_symbol snapshot with SCD2 metadata.
+    """Convert Tushare stock_basic to a full historical SCD2 load.
 
-    Includes listed (L), paused (P), and delisted (D) stocks with proper
-    validity windows for PIT correctness.
+    Unlike a traditional SCD2 "snapshot" (which contains only current active
+    symbols), this function creates a **complete historical view** including:
+    - Listed (L) and Paused (P) stocks: is_current=True, valid_until=MAX
+    - Delisted (D) stocks: is_current=False, valid_until=delist_date
+
+    This design supports "full refresh" workflows where the entire symbol
+    history is fetched and replaced on each run, rather than incremental
+    updates. The output is ready for direct storage without additional
+    bootstrap/upsert logic.
+
+    Key properties:
+    - Symbol IDs are stable (derived from exchange|symbol|list_date)
+    - Re-running with same data produces identical SCD2 state
+    - PIT queries work correctly for any historical date
+    - Only updated_at_ts_us changes between runs
 
     Args:
-        raw: Raw DataFrame from Tushare stock_basic API
-        effective_ts_us: Effective timestamp for new records (defaults to now)
+        raw: Raw DataFrame from Tushare stock_basic API (should include
+            list_status=L/P/D for complete history)
+        effective_ts_us: Timestamp for updated_at_ts_us (defaults to now)
 
     Returns:
-        DataFrame with snapshot columns plus SCD2 metadata (valid_from_ts_us,
-        valid_until_ts_us, is_current) ready for direct storage.
+        DataFrame with all dim_symbol columns including SCD2 metadata
+        (valid_from_ts_us, valid_until_ts_us, is_current, symbol_id).
+        Ready for direct save to DeltaDimensionStore.
+
+    Example:
+        >>> # Full historical refresh workflow
+        >>> listed = fetch_stock_basic(list_status="L")  # current symbols
+        >>> delisted = fetch_stock_basic(list_status="D")  # historical symbols
+        >>> all_raw = pl.concat([listed, delisted])
+        >>> snapshot = stock_basic_to_snapshot(all_raw)
+        >>> result = assign_symbol_ids(snapshot)  # adds symbol_id
+        >>> store.save_dim_symbol(result)  # ready to save
     """
     from datetime import datetime
 
@@ -117,10 +141,29 @@ def stock_basic_to_snapshot(
 
 
 def stock_basic_to_delistings(raw: pl.DataFrame) -> pl.DataFrame:
-    """Extract delistings from Tushare stock_basic.
+    """Extract delistings for incremental SCD2 workflows.
 
-    Filters to ``list_status == "D"`` with a non-null ``delist_date``.
-    Returns ``(exchange, exchange_symbol, delisted_at_ts_us)``.
+    This function is used for **incremental updates** (not full refreshes).
+    When doing daily syncs with only current data, use this to identify
+    symbols that should be closed in the existing dim_symbol table.
+
+    For full historical loads, use stock_basic_to_snapshot() instead,
+    which handles delisted stocks directly with proper validity windows.
+
+    Args:
+        raw: Raw DataFrame from Tushare stock_basic API
+
+    Returns:
+        DataFrame with (exchange, exchange_symbol, delisted_at_ts_us)
+        for use with dim_symbol.upsert(delistings=...).
+
+    Example:
+        >>> # Incremental workflow (daily sync)
+        >>> current = fetch_stock_basic(list_status="L")  # today's snapshot
+        >>> snap = stock_basic_to_snapshot(current)  # L/P only, no SCD2 cols
+        >>> delisted_today = fetch_stock_basic(list_status="D")  # newly delisted
+        >>> dl = stock_basic_to_delistings(delisted_today)
+        >>> dim = upsert(existing_dim, snap, delistings=dl)  # close delisted
     """
     df = raw.filter((pl.col("list_status") == "D") & pl.col("delist_date").is_not_null())
 
