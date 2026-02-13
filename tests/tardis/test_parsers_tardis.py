@@ -321,7 +321,7 @@ def test_parse_tardis_liquidations_handles_optional_id() -> None:
 def test_parse_tardis_options_chain_scales_and_maps_fields() -> None:
     """
     Validate that parse_tardis_options_chain maps input columns to the expected output schema and applies price/quantity scaling.
-    
+
     Asserts that the output contains the expected columns and that:
     - exchange and symbol values are passed through,
     - `type` is normalized to lowercase as `option_type`,

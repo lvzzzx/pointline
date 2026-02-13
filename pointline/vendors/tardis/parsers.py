@@ -52,10 +52,10 @@ def _optional_utf8(df: pl.DataFrame, *, column: str) -> pl.Expr:
 def _first_present_int64(df: pl.DataFrame, *, candidates: tuple[str, ...]) -> pl.Expr:
     """
     Select the first column from `candidates` that exists in `df` and return it as an Int64 expression.
-    
+
     Parameters:
         candidates (tuple[str, ...]): Candidate column names in priority order.
-    
+
     Returns:
         pl.Expr: An expression referencing the first existing candidate column cast to Int64, or a `None` literal of type Int64 if none are present.
     """
@@ -68,10 +68,10 @@ def _first_present_int64(df: pl.DataFrame, *, candidates: tuple[str, ...]) -> pl
 def _optional_float64(df: pl.DataFrame, *, column: str) -> pl.Expr:
     """
     Return a Float64 expression for the given column, or a None literal of type Float64 if the column is absent.
-    
+
     Parameters:
         column (str): Name of the column to retrieve and cast to Float64.
-    
+
     Returns:
         pl.Expr: The column cast to `pl.Float64` when present, otherwise `None` as a `pl.Float64` literal.
     """
@@ -83,12 +83,12 @@ def _optional_float64(df: pl.DataFrame, *, column: str) -> pl.Expr:
 def _optional_scaled(df: pl.DataFrame, *, column: str, scale: int) -> pl.Expr:
     """
     Provide a scaled Int64 expression for an optional column, or a typed None if the column is absent.
-    
+
     Parameters:
         df (pl.DataFrame): DataFrame to check for the column's presence.
         column (str): Column name to scale if present.
         scale (int): Scaling factor to apply to the column.
-    
+
     Returns:
         pl.Expr: An expression that scales the named column to Int64 when it exists, or a `None` literal of type Int64 when it does not.
     """
@@ -100,11 +100,11 @@ def _optional_scaled(df: pl.DataFrame, *, column: str, scale: int) -> pl.Expr:
 def _optional_int64(df: pl.DataFrame, *, column: str) -> pl.Expr:
     """
     Create an expression that yields the specified column cast to Int64, or an Int64-typed null literal if the column is absent.
-    
+
     Parameters:
         df (pl.DataFrame): DataFrame to inspect for the column.
         column (str): Name of the column to cast.
-    
+
     Returns:
         pl.Expr: An expression for the column cast to Int64 if present, otherwise a `None` literal typed as Int64.
     """
@@ -116,11 +116,11 @@ def _optional_int64(df: pl.DataFrame, *, column: str) -> pl.Expr:
 def _require_non_null_ts_event(df: pl.DataFrame, *, context: str) -> None:
     """
     Ensure the parsed DataFrame contains a non-null `ts_event_us` column.
-    
+
     Parameters:
         df (pl.DataFrame): Parsed dataframe to validate.
         context (str): Context string included in raised error messages to identify the parsing source.
-    
+
     Raises:
         ValueError: If the `ts_event_us` column is missing or contains any null values.
     """
@@ -216,7 +216,7 @@ def parse_tardis_quotes(df: pl.DataFrame) -> pl.DataFrame:
 def parse_tardis_incremental_l2(df: pl.DataFrame) -> pl.DataFrame:
     """
     Parse Tardis incremental L2 CSV rows into canonical orderbook_updates rows.
-    
+
     The returned DataFrame contains these columns:
     - symbol: trimmed instrument symbol (Utf8).
     - exchange: lowercased, trimmed exchange name (Utf8).
@@ -227,7 +227,7 @@ def parse_tardis_incremental_l2(df: pl.DataFrame) -> pl.DataFrame:
     - price: price scaled by PRICE_SCALE and represented as Int64.
     - qty: quantity scaled by QTY_SCALE and represented as Int64.
     - is_snapshot: boolean indicating whether the row is a snapshot.
-    
+
     Returns:
         pl.DataFrame: Parsed DataFrame mapped to the canonical orderbook_updates schema.
     """
@@ -273,12 +273,12 @@ def parse_tardis_incremental_l2(df: pl.DataFrame) -> pl.DataFrame:
 def parse_tardis_derivative_ticker(df: pl.DataFrame) -> pl.DataFrame:
     """
     Convert Tardis `derivative_ticker` CSV rows into the canonical derivative ticker schema.
-    
+
     Resolves event and local timestamps, normalizes `exchange` and `symbol`, scales price fields and `open_interest` using the module scaling constants, preserves funding rate fields as Float64, and validates required columns and non-null event timestamps.
-    
+
     Parameters:
         df (pl.DataFrame): Polars DataFrame containing raw Tardis `derivative_ticker` CSV rows.
-    
+
     Returns:
         pl.DataFrame: Parsed DataFrame with columns:
             symbol, exchange, ts_event_us, ts_local_us, mark_price, index_price,
@@ -325,12 +325,12 @@ def parse_tardis_derivative_ticker(df: pl.DataFrame) -> pl.DataFrame:
 def parse_tardis_liquidations(df: pl.DataFrame) -> pl.DataFrame:
     """
     Parse Tardis liquidations CSV rows into a canonical liquidations DataFrame.
-    
+
     Transforms and validates required columns, resolves event/local timestamps, normalizes text fields, scales numeric price/quantity fields, and exposes optional liquidation id.
-    
+
     Parameters:
         df (pl.DataFrame): Input Tardis CSV rows to parse.
-    
+
     Returns:
         pl.DataFrame: DataFrame with canonical liquidations columns:
             - symbol (Utf8): trimmed symbol
@@ -377,21 +377,21 @@ def parse_tardis_liquidations(df: pl.DataFrame) -> pl.DataFrame:
 def parse_tardis_options_chain(df: pl.DataFrame) -> pl.DataFrame:
     """
     Parse Tardis `options_chain` CSV rows into a canonical options DataFrame.
-    
+
     Validates required input columns, resolves event and local timestamps, maps `type` → `option_type`,
     scales price and strike fields by PRICE_SCALE, scales quantity-like fields by QTY_SCALE, and
     preserves IVs and Greeks as Float64. Optional fields are included when present; missing optionals
     produce typed nulls.
-    
+
     Parameters:
         df (pl.DataFrame): Polars DataFrame of raw Tardis `options_chain` CSV rows.
-    
+
     Returns:
         pl.DataFrame: Parsed DataFrame with canonical columns:
             symbol, exchange, ts_event_us, ts_local_us, option_type, strike, expiration_ts_us,
             open_interest, last_price, bid_price, bid_qty, bid_iv, ask_price, ask_qty, ask_iv,
             mark_price, mark_iv, underlying_index, underlying_price, delta, gamma, vega, theta, rho.
-    
+
     Raises:
         ValueError: If required columns are missing or if `ts_event_us` contains nulls after parsing.
     """
