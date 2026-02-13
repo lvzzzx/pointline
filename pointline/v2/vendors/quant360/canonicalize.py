@@ -28,23 +28,22 @@ def _canonicalize_order_events(df: pl.DataFrame) -> pl.DataFrame:
             "ts_event_us",
             "appl_seq_num",
             "channel_no",
+            "side_raw",
+            "ord_type_raw",
+            "order_action_raw",
             "price_raw",
             "qty_raw",
+            "biz_index_raw",
+            "order_index_raw",
         ],
         context="cn_order_events",
     )
 
     prepared = df.with_columns(
         [
-            _source_or_null(df, candidates=("event_seq", "appl_seq_num"), dtype=pl.Int64).alias(
-                "event_seq"
-            ),
-            _source_or_null(df, candidates=("channel_id", "channel_no"), dtype=pl.Int32).alias(
-                "channel_id"
-            ),
-            _source_or_null(df, candidates=("order_ref", "appl_seq_num"), dtype=pl.Int64).alias(
-                "order_ref"
-            ),
+            pl.col("appl_seq_num").cast(pl.Int64).alias("event_seq"),
+            pl.col("channel_no").cast(pl.Int32).alias("channel_id"),
+            pl.col("appl_seq_num").cast(pl.Int64).alias("order_ref"),
             pl.col("price_raw")
             .cast(pl.Float64)
             .mul(PRICE_SCALE)
@@ -52,39 +51,35 @@ def _canonicalize_order_events(df: pl.DataFrame) -> pl.DataFrame:
             .cast(pl.Int64)
             .alias("price"),
             pl.col("qty_raw").cast(pl.Float64).mul(QTY_SCALE).round().cast(pl.Int64).alias("qty"),
-            _source_or_null(df, candidates=("source_side_raw", "side_raw"), dtype=pl.Utf8).alias(
-                "source_side_raw"
-            ),
-            _source_or_null(
-                df, candidates=("source_ord_type_raw", "ord_type_raw"), dtype=pl.Utf8
-            ).alias("source_ord_type_raw"),
-            _source_or_null(
-                df, candidates=("source_order_action_raw", "order_action_raw"), dtype=pl.Utf8
-            ).alias("source_order_action_raw"),
-            _source_or_null(
-                df, candidates=("source_exchange_seq", "biz_index", "biz_index_raw"), dtype=pl.Int64
-            ).alias("source_exchange_seq"),
-            _source_or_null(
-                df,
-                candidates=(
-                    "source_exchange_order_index",
-                    "order_index",
-                    "order_index_raw",
-                ),
-                dtype=pl.Int64,
-            ).alias("source_exchange_order_index"),
+            pl.col("biz_index_raw").cast(pl.Int64).alias("exchange_seq"),
+            pl.col("order_index_raw").cast(pl.Int64).alias("exchange_order_index"),
+            pl.col("side_raw")
+            .cast(pl.Utf8)
+            .str.strip_chars()
+            .str.to_uppercase()
+            .alias("__side_code"),
+            pl.col("ord_type_raw")
+            .cast(pl.Utf8)
+            .str.strip_chars()
+            .str.to_uppercase()
+            .alias("__ord_type_code"),
+            pl.col("order_action_raw")
+            .cast(pl.Utf8)
+            .str.strip_chars()
+            .str.to_uppercase()
+            .alias("__order_action_code"),
         ]
     )
     return prepared.with_columns(
         [
-            _canonical_side_expr("source_side_raw").alias("side"),
+            _canonical_side_expr("__side_code").alias("side"),
             _canonical_order_kind_expr(
                 exchange_col="exchange",
-                source_order_action_col="source_order_action_raw",
-                source_ord_type_col="source_ord_type_raw",
+                source_order_action_col="__order_action_code",
+                source_ord_type_col="__ord_type_code",
             ).alias("event_kind"),
             _canonical_order_type_expr(
-                exchange_col="exchange", source_ord_type_col="source_ord_type_raw"
+                exchange_col="exchange", source_ord_type_col="__ord_type_code"
             ).alias("order_type"),
         ]
     )
@@ -99,16 +94,22 @@ def _canonicalize_tick_events(df: pl.DataFrame) -> pl.DataFrame:
             "ts_event_us",
             "appl_seq_num",
             "channel_no",
+            "bid_appl_seq_num",
+            "offer_appl_seq_num",
             "exec_type_raw",
+            "trade_bs_flag_raw",
             "price_raw",
             "qty_raw",
+            "biz_index_raw",
+            "trade_index_raw",
         ],
         context="cn_tick_events",
     )
 
     exec_types = (
         df.select(
-            _source_or_null(df, candidates=("source_exec_type_raw", "exec_type_raw"), dtype=pl.Utf8)
+            pl.col("exec_type_raw")
+            .cast(pl.Utf8)
             .str.strip_chars()
             .str.to_uppercase()
             .alias("__exec")
@@ -123,28 +124,20 @@ def _canonicalize_tick_events(df: pl.DataFrame) -> pl.DataFrame:
 
     prepared = df.with_columns(
         [
-            _source_or_null(df, candidates=("event_seq", "appl_seq_num"), dtype=pl.Int64).alias(
-                "event_seq"
-            ),
-            _source_or_null(df, candidates=("channel_id", "channel_no"), dtype=pl.Int32).alias(
-                "channel_id"
-            ),
-            _source_or_null(
-                df, candidates=("bid_order_ref", "bid_appl_seq_num"), dtype=pl.Int64
-            ).alias("bid_order_ref"),
-            _source_or_null(
-                df, candidates=("ask_order_ref", "offer_appl_seq_num"), dtype=pl.Int64
-            ).alias("ask_order_ref"),
-            _source_or_null(df, candidates=("source_exec_type_raw", "exec_type_raw"), dtype=pl.Utf8)
+            pl.col("appl_seq_num").cast(pl.Int64).alias("event_seq"),
+            pl.col("channel_no").cast(pl.Int32).alias("channel_id"),
+            pl.col("bid_appl_seq_num").cast(pl.Int64).alias("bid_order_ref"),
+            pl.col("offer_appl_seq_num").cast(pl.Int64).alias("ask_order_ref"),
+            pl.col("exec_type_raw")
+            .cast(pl.Utf8)
             .str.strip_chars()
             .str.to_uppercase()
-            .alias("source_exec_type_raw"),
-            _source_or_null(
-                df, candidates=("source_trade_side_raw", "trade_bs_flag_raw"), dtype=pl.Utf8
-            )
+            .alias("__exec_type_code"),
+            pl.col("trade_bs_flag_raw")
+            .cast(pl.Utf8)
             .str.strip_chars()
             .str.to_uppercase()
-            .alias("source_trade_side_raw"),
+            .alias("__trade_side_code"),
             pl.col("price_raw")
             .cast(pl.Float64)
             .mul(PRICE_SCALE)
@@ -152,35 +145,25 @@ def _canonicalize_tick_events(df: pl.DataFrame) -> pl.DataFrame:
             .cast(pl.Int64)
             .alias("price"),
             pl.col("qty_raw").cast(pl.Float64).mul(QTY_SCALE).round().cast(pl.Int64).alias("qty"),
-            _source_or_null(
-                df, candidates=("source_exchange_seq", "biz_index", "biz_index_raw"), dtype=pl.Int64
-            ).alias("source_exchange_seq"),
-            _source_or_null(
-                df,
-                candidates=(
-                    "source_exchange_trade_index",
-                    "trade_index",
-                    "trade_index_raw",
-                ),
-                dtype=pl.Int64,
-            ).alias("source_exchange_trade_index"),
+            pl.col("biz_index_raw").cast(pl.Int64).alias("exchange_seq"),
+            pl.col("trade_index_raw").cast(pl.Int64).alias("exchange_trade_index"),
         ]
     )
     return prepared.with_columns(
         [
-            pl.when(pl.col("source_exec_type_raw").eq("F"))
+            pl.when(pl.col("__exec_type_code").eq("F"))
             .then(pl.lit("TRADE"))
-            .when(pl.col("source_exec_type_raw").eq("4"))
+            .when(pl.col("__exec_type_code").eq("4"))
             .then(pl.lit("CANCEL"))
             .otherwise(pl.lit("UNKNOWN"))
             .alias("event_kind"),
-            pl.when(pl.col("source_trade_side_raw").is_null())
+            pl.when(pl.col("__trade_side_code").is_null())
             .then(pl.lit(None, dtype=pl.Utf8))
-            .when(pl.col("source_trade_side_raw").eq("B"))
+            .when(pl.col("__trade_side_code").eq("B"))
             .then(pl.lit("BUY"))
-            .when(pl.col("source_trade_side_raw").eq("S"))
+            .when(pl.col("__trade_side_code").eq("S"))
             .then(pl.lit("SELL"))
-            .when(pl.col("source_trade_side_raw").eq("N"))
+            .when(pl.col("__trade_side_code").eq("N"))
             .then(pl.lit("UNKNOWN"))
             .otherwise(pl.lit("UNKNOWN"))
             .alias("aggressor_side"),
@@ -195,6 +178,10 @@ def _canonicalize_l2_snapshots(df: pl.DataFrame) -> pl.DataFrame:
             "exchange",
             "symbol",
             "ts_event_us",
+            "ts_local_us",
+            "msg_seq_num",
+            "image_status",
+            "trading_phase_code_raw",
             "bid_price_levels",
             "bid_qty_levels",
             "ask_price_levels",
@@ -202,35 +189,15 @@ def _canonicalize_l2_snapshots(df: pl.DataFrame) -> pl.DataFrame:
         ],
         context="cn_l2_snapshots",
     )
-    if not any(col in df.columns for col in ("snapshot_seq", "msg_seq_num")):
-        raise ValueError("cn_l2_snapshots: missing required columns: ['snapshot_seq|msg_seq_num']")
 
     return df.with_columns(
         [
-            _source_or_null(df, candidates=("snapshot_seq", "msg_seq_num"), dtype=pl.Int64).alias(
-                "snapshot_seq"
-            ),
-            _source_or_null(
-                df, candidates=("source_image_status_raw", "image_status"), dtype=pl.Utf8
-            ).alias("source_image_status_raw"),
-            _source_or_null(
-                df,
-                candidates=("source_trading_phase_raw", "trading_phase_code_raw"),
-                dtype=pl.Utf8,
-            ).alias("source_trading_phase_raw"),
-            _source_or_null(
-                df,
-                candidates=("bid_order_count_levels", "bid_num_orders_levels"),
-                dtype=pl.List(pl.Int64),
-            ).alias("bid_order_count_levels"),
-            _source_or_null(
-                df,
-                candidates=("ask_order_count_levels", "ask_num_orders_levels"),
-                dtype=pl.List(pl.Int64),
-            ).alias("ask_order_count_levels"),
-            _source_or_null(
-                df, candidates=("total_ask_qty", "total_offer_qty"), dtype=pl.Int64
-            ).alias("total_ask_qty"),
+            pl.col("msg_seq_num").cast(pl.Int64).alias("snapshot_seq"),
+            pl.col("image_status").cast(pl.Utf8).alias("image_status"),
+            pl.col("trading_phase_code_raw").cast(pl.Utf8).alias("trading_phase_code"),
+            _optional_col(df, name="bid_order_count_levels", dtype=pl.List(pl.Int64)),
+            _optional_col(df, name="ask_order_count_levels", dtype=pl.List(pl.Int64)),
+            _optional_col(df, name="total_ask_qty", dtype=pl.Int64),
             pl.col("bid_price_levels")
             .map_elements(
                 lambda xs: [int(round(float(x) * PRICE_SCALE)) for x in xs],
@@ -315,10 +282,7 @@ def _canonical_order_type_expr(*, exchange_col: str, source_ord_type_col: str) -
     )
 
 
-def _source_or_null(
-    df: pl.DataFrame, *, candidates: tuple[str, ...], dtype: pl.DataType
-) -> pl.Expr:
-    for candidate in candidates:
-        if candidate in df.columns:
-            return pl.col(candidate).cast(dtype)
-    return pl.lit(None, dtype=dtype)
+def _optional_col(df: pl.DataFrame, *, name: str, dtype: pl.DataType) -> pl.Expr:
+    if name in df.columns:
+        return pl.col(name).cast(dtype).alias(name)
+    return pl.lit(None, dtype=dtype).alias(name)

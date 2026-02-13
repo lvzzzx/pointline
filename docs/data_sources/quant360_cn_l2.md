@@ -354,3 +354,38 @@ Examples:
 - `exchange=szse/type=order_new/date=2024-01-02/symbol=000001/000001.csv.gz`
 - `exchange=sse/type=tick_new/date=2024-01-02/symbol=600000/600000.csv.gz`
 - `exchange=szse/type=L2_new/date=2024-01-02/symbol=000001/000001.csv.gz`
+
+## 13. v2 Parser Intermediate Contract (Strict)
+
+For v2 ingestion, parser output is a strict internal contract consumed by canonicalization.
+Canonicalization does not apply alias fallback for required parser fields.
+
+### 13.1 `order_new` parser output (required columns)
+
+- `symbol`, `exchange`, `ts_event_us`
+- `appl_seq_num`, `channel_no`
+- `side_raw`, `ord_type_raw`, `order_action_raw`
+- `price_raw`, `qty_raw`
+- `biz_index_raw`, `order_index_raw`
+
+### 13.2 `tick_new` parser output (required columns)
+
+- `symbol`, `exchange`, `ts_event_us`
+- `appl_seq_num`, `channel_no`
+- `bid_appl_seq_num`, `offer_appl_seq_num`
+- `exec_type_raw`, `trade_bs_flag_raw`
+- `price_raw`, `qty_raw`
+- `biz_index_raw`, `trade_index_raw`
+
+### 13.3 `L2_new` parser output (required columns)
+
+- `symbol`, `exchange`, `ts_event_us`
+- `ts_local_us`, `msg_seq_num`
+- `image_status`, `trading_phase_code_raw`
+- `bid_price_levels`, `bid_qty_levels`, `ask_price_levels`, `ask_qty_levels`
+
+### 13.4 Contract behavior
+
+- Missing required parser columns fail fast with explicit missing-column errors.
+- SSE/SZSE raw schema differences are handled in parser modules only.
+- Canonical table definitions remain in `pointline/schemas/events_cn.py`.

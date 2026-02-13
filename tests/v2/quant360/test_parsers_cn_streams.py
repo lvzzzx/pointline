@@ -24,6 +24,20 @@ def test_parse_order_stream_szse() -> None:
     )
     out = parse_order_stream(raw, exchange="szse", symbol="000001")
 
+    assert out.columns == [
+        "symbol",
+        "exchange",
+        "ts_event_us",
+        "appl_seq_num",
+        "channel_no",
+        "side_raw",
+        "ord_type_raw",
+        "order_action_raw",
+        "price_raw",
+        "qty_raw",
+        "biz_index_raw",
+        "order_index_raw",
+    ]
     assert out["symbol"][0] == "000001"
     assert out["appl_seq_num"][0] == 10
     assert out["side_raw"][0] == "1"
@@ -69,6 +83,21 @@ def test_parse_tick_stream_sse_sets_exec_type_fill() -> None:
     )
     out = parse_tick_stream(raw, exchange="sse", symbol="600000")
 
+    assert out.columns == [
+        "symbol",
+        "exchange",
+        "ts_event_us",
+        "appl_seq_num",
+        "channel_no",
+        "bid_appl_seq_num",
+        "offer_appl_seq_num",
+        "exec_type_raw",
+        "trade_bs_flag_raw",
+        "price_raw",
+        "qty_raw",
+        "biz_index_raw",
+        "trade_index_raw",
+    ]
     assert out["exec_type_raw"][0] == "F"
     assert out["trade_bs_flag_raw"][0] == "B"
     assert out["bid_appl_seq_num"][0] == 1001
@@ -89,6 +118,21 @@ def test_parse_tick_stream_szse_uses_exec_type_field() -> None:
         }
     )
     out = parse_tick_stream(raw, exchange="szse", symbol="000001")
+    assert out.columns == [
+        "symbol",
+        "exchange",
+        "ts_event_us",
+        "appl_seq_num",
+        "channel_no",
+        "bid_appl_seq_num",
+        "offer_appl_seq_num",
+        "exec_type_raw",
+        "trade_bs_flag_raw",
+        "price_raw",
+        "qty_raw",
+        "biz_index_raw",
+        "trade_index_raw",
+    ]
     assert out["exec_type_raw"][0] == "4"
     assert out["qty_raw"][0] == 50
 
@@ -111,6 +155,19 @@ def test_parse_l2_snapshot_stream_parses_levels() -> None:
     )
 
     out = parse_l2_snapshot_stream(raw, exchange="szse", symbol="000001")
+    assert out.columns == [
+        "symbol",
+        "exchange",
+        "ts_event_us",
+        "ts_local_us",
+        "msg_seq_num",
+        "image_status",
+        "trading_phase_code_raw",
+        "bid_price_levels",
+        "bid_qty_levels",
+        "ask_price_levels",
+        "ask_qty_levels",
+    ]
     assert out["msg_seq_num"][0] == 999
     assert len(out["bid_price_levels"][0]) == 10
     assert len(out["ask_qty_levels"][0]) == 10

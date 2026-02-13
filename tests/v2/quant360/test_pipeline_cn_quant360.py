@@ -80,7 +80,7 @@ def _dim_symbol(
     )
 
 
-def test_ingest_quant360_order_alias_routes_and_scales() -> None:
+def test_ingest_quant360_order_contract_routes_and_scales() -> None:
     manifest = FakeManifestRepo()
     writer = CapturingWriter()
     ts_event_us = 1_704_580_200_123_000
@@ -126,7 +126,7 @@ def test_ingest_quant360_order_alias_routes_and_scales() -> None:
     assert written["qty"][0] == int(round(100 * QTY_SCALE))
 
 
-def test_ingest_quant360_l2_alias_routes_and_scales_price_levels() -> None:
+def test_ingest_quant360_l2_contract_routes_and_scales_price_levels() -> None:
     manifest = FakeManifestRepo()
     writer = CapturingWriter()
     ts_event_us = 1_704_580_200_123_000
@@ -165,8 +165,8 @@ def test_ingest_quant360_l2_alias_routes_and_scales_price_levels() -> None:
     table_name, written = writer.calls[0]
     assert table_name == "cn_l2_snapshots"
     assert written["snapshot_seq"][0] == 100
-    assert written["source_image_status_raw"][0] == "0"
-    assert written["source_trading_phase_raw"][0] == "T0"
+    assert written["image_status"][0] == "0"
+    assert written["trading_phase_code"][0] == "T0"
     assert written["bid_price_levels"][0][0] == int(round(11.63 * PRICE_SCALE))
 
 
@@ -248,8 +248,8 @@ def test_ingest_quant360_sse_order_missing_aux_indices_partially_quarantines() -
 
     table_name, written = writer.calls[0]
     assert table_name == "cn_order_events"
-    assert written["source_exchange_seq"][0] == 1001
-    assert written["source_exchange_order_index"][0] == 101
+    assert written["exchange_seq"][0] == 1001
+    assert written["exchange_order_index"][0] == 101
 
 
 def test_ingest_quant360_sse_tick_missing_aux_indices_quarantines_all() -> None:
@@ -288,4 +288,125 @@ def test_ingest_quant360_sse_tick_missing_aux_indices_quarantines_all() -> None:
     assert result.row_count == 1
     assert result.rows_quarantined == 1
     assert result.failure_reason == "missing_sse_tick_sequence_fields"
+    assert writer.calls == []
+
+
+def test_ingest_quant360_order_rejects_alias_only_side_columns() -> None:
+    manifest = FakeManifestRepo()
+    writer = CapturingWriter()
+    ts_event_us = 1_704_580_200_123_000
+
+    def parser(_meta: BronzeFileMetadata) -> pl.DataFrame:
+        return pl.DataFrame(
+            {
+                "exchange": ["szse"],
+                "symbol": ["000001"],
+                "ts_event_us": [ts_event_us],
+                "appl_seq_num": [10],
+                "channel_no": [3],
+                "side_code": ["1"],
+                "order_type_code": ["2"],
+                "order_action_code": [None],
+                "price_raw": [10.23],
+                "qty_raw": [100],
+                "biz_index_raw": [None],
+                "order_index_raw": [None],
+            }
+        )
+
+    result = ingest_file(
+        _meta("order_new"),
+        parser=parser,
+        manifest_repo=manifest,
+        writer=writer,
+        dim_symbol_df=_dim_symbol(ts_event_us),
+    )
+
+    assert result.status == "failed"
+    assert result.failure_reason == "pipeline_error"
+    assert result.error_message is not None
+    assert "missing required columns" in result.error_message
+    assert "side_raw" in result.error_message
+    assert writer.calls == []
+
+
+def test_ingest_quant360_tick_rejects_alias_only_exchange_seq_columns() -> None:
+    manifest = FakeManifestRepo()
+    writer = CapturingWriter()
+    ts_event_us = 1_704_580_200_123_000
+
+    def parser(_meta: BronzeFileMetadata) -> pl.DataFrame:
+        return pl.DataFrame(
+            {
+                "exchange": ["sse"],
+                "symbol": ["600000"],
+                "ts_event_us": [ts_event_us],
+                "appl_seq_num": [10],
+                "channel_no": [3],
+                "bid_appl_seq_num": [1],
+                "offer_appl_seq_num": [2],
+                "exec_type_raw": ["F"],
+                "trade_bs_flag_raw": ["B"],
+                "price_raw": [10.23],
+                "qty_raw": [100],
+                "biz_index": [1001],
+                "trade_index": [9],
+            }
+        )
+
+    result = ingest_file(
+        _meta("tick_new"),
+        parser=parser,
+        manifest_repo=manifest,
+        writer=writer,
+        dim_symbol_df=_dim_symbol(ts_event_us, exchange="sse", symbol="600000"),
+    )
+
+    assert result.status == "failed"
+    assert result.failure_reason == "pipeline_error"
+    assert result.error_message is not None
+    assert "missing required columns" in result.error_message
+    assert "biz_index_raw" in result.error_message
+    assert writer.calls == []
+
+
+def test_ingest_quant360_l2_rejects_alias_only_snapshot_columns() -> None:
+    manifest = FakeManifestRepo()
+    writer = CapturingWriter()
+    ts_event_us = 1_704_580_200_123_000
+
+    def parser(_meta: BronzeFileMetadata) -> pl.DataFrame:
+        return pl.DataFrame(
+            {
+                "exchange": ["szse"],
+                "symbol": ["000001"],
+                "ts_event_us": [ts_event_us],
+                "ts_local_us": [ts_event_us],
+                "snapshot_seq": [100],
+                "bid_price_levels": [
+                    [11.63, 11.62, 11.61, 11.6, 11.59, 11.58, 11.57, 11.56, 11.55, 11.54]
+                ],
+                "bid_qty_levels": [[100, 90, 80, 70, 60, 50, 40, 30, 20, 10]],
+                "ask_price_levels": [
+                    [11.64, 11.65, 11.66, 11.67, 11.68, 11.69, 11.7, 11.71, 11.72, 11.73]
+                ],
+                "ask_qty_levels": [[110, 120, 130, 140, 150, 160, 170, 180, 190, 200]],
+                "image_status": ["0"],
+                "trading_phase_code": ["T0"],
+            }
+        )
+
+    result = ingest_file(
+        _meta("L2_new"),
+        parser=parser,
+        manifest_repo=manifest,
+        writer=writer,
+        dim_symbol_df=_dim_symbol(ts_event_us),
+    )
+
+    assert result.status == "failed"
+    assert result.failure_reason == "pipeline_error"
+    assert result.error_message is not None
+    assert "missing required columns" in result.error_message
+    assert "msg_seq_num" in result.error_message
     assert writer.calls == []
