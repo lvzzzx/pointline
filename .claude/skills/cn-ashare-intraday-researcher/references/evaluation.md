@@ -39,7 +39,7 @@
 ## Strategy Performance Metrics
 
 ### Return-Based
-- **Sharpe ratio:** `mean(r) / std(r) * sqrt(N)`. Annualize: `sqrt(242 * bars_per_day)` for CN (242 trading days/year, ~240min/day).
+- **Sharpe ratio:** `mean(r) / std(r) * sqrt(N)`. Annualize: `sqrt(T * bars_per_day)` for CN (T ~ 242-245 trading days/year, ~240min/day).
 - **Sortino ratio:** Penalizes only downside vol.
 - **Calmar ratio:** `annualized_return / max_drawdown`.
 
@@ -107,7 +107,7 @@
 
 | Component | Rate | Notes |
 |---|---|---|
-| **Commission** | 0.02-0.03% (each way) | Negotiable. Minimum 5 CNY per trade for retail. Institutional can be lower. |
+| **Commission** | 0.02-0.03% (each way) | Negotiable. Retail: minimum 5 CNY/trade floor, typically 0.025%. Institutional: no floor, can negotiate 0.01-0.015%. |
 | **Stamp duty** | 0.05% (sell-side only) | Reduced from 0.1% in Aug 2023. Only on sells. |
 | **Transfer fee** | 0.001% | SSE only. Negligible. |
 | **Spread cost** | 1-10 bps per side | Depends on stock liquidity. Use median quoted half-spread. |

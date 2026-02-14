@@ -1,8 +1,8 @@
 # Feature Engineering Catalog for CN A-Share Intraday
 
 ## Table of Contents
-1. [Order Book / LOB Features](#order-book--lob-features)
-2. [Trade Flow Features](#trade-flow-features)
+1. [Book State Features](#book-state-features)
+2. [Event Stream Features](#event-stream-features)
 3. [Auction Features](#auction-features)
 4. [Price Limit Features](#price-limit-features)
 5. [Intraday Volume & Liquidity Features](#intraday-volume--liquidity-features)
@@ -15,9 +15,11 @@
 
 ---
 
-## Order Book / LOB Features
+## Book State Features
 
-### From L2 Snapshots (SSE & SZSE, ~3s intervals, 10-level depth)
+Features computed from periodic book snapshots (L2) or continuously reconstructed book state (L3).
+
+### From L2 Snapshots (10-level depth, SSE ~3s / SZSE ~3s but may vary by subscription tier)
 - **Book imbalance (BIR):** `(bid_qty_top_k - ask_qty_top_k) / (bid_qty_top_k + ask_qty_top_k)` at levels k=1,3,5,10. Deeper levels more informative at 1min+ horizons.
 - **Weighted mid-price:** `P_wmid = P_ask * Q_bid / (Q_bid + Q_ask) + P_bid * Q_ask / (Q_bid + Q_ask)`. Deviation from raw mid is a feature.
 - **Depth ratio:** `sum(bid_qty[1:k]) / sum(ask_qty[1:k])` for k=5,10. Log-transform recommended.
@@ -26,50 +28,77 @@
 - **Depth decay profile:** Exponential fit to `qty(level)`. Steeper = thinner book, more impact.
 - **Snapshot-to-snapshot depth change:** Since L2 snapshots are ~3s intervals, delta between consecutive snapshots captures fast book changes.
 
-### From L3 Order-by-Order (Full Order Stream)
+### From L3-Reconstructed Book
+Reconstructing the book from L3 order events (new orders + cancels) provides continuous book state at event-level resolution, not limited to snapshot intervals.
+- **Sub-snapshot book imbalance:** BIR computed from reconstructed book at every order/trade event. Captures fast imbalance shifts missed by ~3s L2 snapshots.
+- **Event-resolution depth changes:** Track depth additions and withdrawals at each price level between L2 snapshots. Reveals transient liquidity that snapshots miss entirely.
+- **Reconstruction drift:** Divergence between L3-reconstructed book and next L2 snapshot. Large drift = missed events or data quality issue. Use as data-quality filter.
+- **Cross-validation:** Periodically align reconstructed book to L2 snapshots. Required for correctness. Discard features from intervals with reconstruction errors.
+
+## Event Stream Features
+
+Features computed from L3 order events and/or tick-by-tick trade events. Both streams share a single timeline and are linked via order references (`OrderNo`/`ApplSeqNum`). Source stream tagged per feature.
+
+### Data Stream Notes
+
+**Three event types on a single timeline:**
+- **New orders [L3 order stream]:** Order placement events. Fields: order ID, price, qty, side, timestamp.
+- **Cancellations:** SSE: `OrdType='D'` in **order stream**. SZSE: `ExecType='4'` in **tick stream**. Cancel location differs by exchange — this is a key reason to process both streams together.
+- **Trades [tick stream]:** Execution events with `BuyNo`/`SellNo` (SSE) or `BidApplSeqNum`/`OfferApplSeqNum` (SZSE) linking back to the two matched orders.
+
+**Aggressor determination:** Higher order sequence number = later-arriving order = aggressor (crossed the spread). SSE also provides explicit `TradeBSFlag` (B/S/N). Auction trades have no meaningful aggressor.
+
+**Why unified:** SZSE cancels are in the tick stream, both streams share order ID linkage, and the most valuable features require joining both. Process on a single timeline.
+
+### Order Flow [L3]
 - **Order flow imbalance (OFI):** Net signed order flow from new orders: `sum(buy_new_qty - sell_new_qty)` over window.
 - **Cancel imbalance:** `(bid_cancel_qty - ask_cancel_qty) / total_cancel_qty`. High one-sided cancellation = potential manipulation or informed withdrawal.
 - **Add-cancel ratio:** `new_order_count / cancel_count` per side over window. Low ratio (heavy cancellation) = spoofing signal.
 - **Order size distribution:** Entropy or Gini of order sizes. Low entropy = concentrated (institutional-like).
 - **Large order detection:** Orders > N*median_size. Count and direction. Institutional footprint.
 - **Queue position dynamics:** For a given price level, track queue depth changes. Rapid queue shortening = imminent level consumption.
-- **Order-to-trade ratio:** `order_count / trade_count` over window. High ratio = low conversion, HFT activity. CN regulators monitor this metric.
-- **Passive fill rate:** Fraction of limit orders that get filled vs cancelled. Low fill rate near touch = fleeting liquidity.
-- **Hidden order detection:** Trades executing at prices with no visible L2 depth (iceberg/hidden orders). SSE supports hidden orders.
+- **Order arrival rate asymmetry:** `buy_order_rate / sell_order_rate` over window. Directional pressure from order placement alone, before any executions occur.
+- **Fleeting liquidity detection:** Orders cancelled within very short time after placement (< N events or < X ms). High fleeting rate at touch = unreliable depth, HFT quoting activity.
+- **Order size surprise:** `(median_order_size_window - EMA_median_order_size) / std`. Detects shifts in participant mix (e.g., sudden institutional entry into a retail-dominated name).
 
-### Data Stream Notes
-Both SSE and SZSE provide three streams:
-- **L2 snapshots (~3s intervals, 10-level depth):** Pre-built book state. Good for depth/imbalance features without book reconstruction.
-- **L3 order-by-order:** Individual order events (adds, cancels). Required for order flow features (OFI, cancel imbalance, add-cancel ratio, queue dynamics). Enables full book reconstruction.
-- **Tick-by-tick (trade stream):** Individual trade executions with aggressor side linkage. Required for trade flow features, VPIN, price impact.
-- **Book reconstruction from L3:** Apply new orders and cancel events sequentially. Cross-validate reconstructed book against L2 snapshots.
-
-## Trade Flow Features
-
-### Volume Features
+### Trade Flow [Tick-by-Tick]
 - **Aggressor-signed volume:** Use quant360 aggressor rules (higher sequence number = aggressor). `buy_aggressor_vol`, `sell_aggressor_vol`, `net_aggressor_vol`.
 - **Volume bars:** Aggregate by fixed volume threshold (not time). More uniform information per bar.
 - **Dollar bars:** Aggregate by fixed CNY value. Normalizes across price levels.
 - **Volume acceleration:** `d(volume)/dt` over exponential window. Detects sudden activity surges.
 - **Relative volume:** Current volume / rolling median intraday volume for same time-of-day. Detects unusual activity.
 - **Intraday cumulative volume ratio:** Actual cumulative volume / expected (from historical intraday profile). >1 = above-average activity.
+- **Trade direction runs:** Length of consecutive same-side aggressor trades. Long buy-runs = persistent buying pressure. Run breaks signal potential reversal points.
+- **Signed trade autocorrelation:** `corr(sign_t, sign_{t-k})` for lags k=1,5,10 trades. Positive autocorrelation = trending flow. Negative = mean-reverting. Regime indicator.
+- **Trade arrival intensity (Hawkes):** Self-excitation parameter from Hawkes process fit. High self-excitation = trades beget trades (cascade/liquidation-like dynamics). Low = independent arrivals.
 
-### Price Impact
-- **Kyle's lambda:** Slope of `delta_P ~ delta_OFI` regression over rolling window. Price impact per unit flow. Higher = less liquid.
-- **Amihud illiquidity:** `|return| / CNY_volume` over window.
-- **Realized spread:** `2 * sign * (trade_price - mid_at_t+delta)`. Measures adverse selection.
-- **Effective spread:** `2 * |trade_price - mid| / mid`. Actual cost of taking liquidity.
-
-### Trade Size Analysis
+### Trade Size Analysis [Tick-by-Tick]
 - **Large trade ratio:** Volume from trades > 95th percentile / total volume. Institutional proxy.
 - **Trade size entropy:** Shannon entropy of trade size distribution. Low entropy = concentrated, likely institutional.
 - **Small trade intensity:** Count of minimum-lot (100 or 200 shares) trades / total count. Retail activity proxy. CN market is ~60% retail.
 - **Trade clustering:** Count of trades within X ms. Detects algo/iceberg patterns.
 
-### VPIN (Volume-Synchronized Probability of Informed Trading)
-- Bucket trades by volume (not time). Classify buy/sell via aggressor flag (L3) or tick rule.
+### VPIN [Tick-by-Tick, Enhanced with L3]
+- Bucket trades by volume (not time). Classify buy/sell via aggressor flag or tick rule.
 - `VPIN = mean(|buy_vol - sell_vol| / total_vol)` over N buckets.
 - Elevated VPIN predicts short-term volatility. Particularly useful pre-announcement.
+- **L3 enhancement:** When L3 order refs are available, use true aggressor classification instead of tick rule. Tick rule misclassifies ~15% of trades; L3 aggressor flags are exact (higher sequence number = aggressor). More accurate VPIN especially during fast markets where tick rule degrades.
+
+### Order-Trade Joint Features [L3 + Tick-by-Tick]
+These features capture the conversion from intention (orders) to execution (trades) — often the most informative for MFT horizons.
+- **Order-to-trade ratio:** `order_count / trade_count` over window. High ratio = low conversion, HFT activity. CN regulators monitor this metric.
+- **Passive fill rate:** Fraction of limit orders that get filled vs cancelled. Low fill rate near touch = fleeting liquidity. Requires joining L3 order IDs with tick-stream trade references.
+- **Hidden order detection:** Trades executing at prices with no visible depth in L2 snapshots or reconstructed book. Indicates iceberg/hidden orders. SSE supports hidden orders.
+- **Order-to-fill conversion rate:** At best bid/ask, what fraction of resting order volume converts to trades within window? High conversion = genuine liquidity being consumed. Low = quote stuffing or flickering depth.
+- **Trade-order flow divergence:** `sign(net_trade_aggressor) != sign(net_new_order_flow)`. When net new orders are buy-biased but trades are sell-aggressor-dominated, signals passive institutional accumulation (placing buy limits, not crossing spread).
+- **Informed order detection:** Orders placed within N events before a significant price move (> X bps). Track by order size and timing. Clusters of informed orders reveal detectable institutional footprint.
+
+### Price Impact [Tick + Book State]
+- **Kyle's lambda:** Slope of `delta_P ~ delta_OFI` regression over rolling window. Uses OFI from L3 and price changes from tick stream. Price impact per unit flow. Higher = less liquid.
+- **Amihud illiquidity:** `|return| / CNY_volume` over window. Tick-by-tick trades only.
+- **Realized spread:** `2 * sign * (trade_price - mid_at_t+delta)`. Measures adverse selection. Requires trade price (tick) + mid-price (L2 or reconstructed book).
+- **Effective spread:** `2 * |trade_price - mid| / mid`. Actual cost of taking liquidity. Same source requirement as realized spread.
+- **Price impact asymmetry:** `lambda_buy / lambda_sell` where lambda is estimated separately for buy-aggressor and sell-aggressor trades. Asymmetry signals directional pressure: higher buy-side impact = thin ask side, bullish setup.
 
 ## Auction Features
 
@@ -144,6 +173,11 @@ Price limits create discontinuities and non-linear dynamics unique to CN A-share
 - **Beta-adjusted return:** `return(stock) - beta * return(CSI300)`. Intraday alpha component.
 - **Rank return:** Percentile rank of stock's intraday return within its sector. Cross-sectional momentum/reversal.
 - **Correlated pair spread:** For highly correlated pairs (e.g., Ping An / China Life), track spread deviation. Mean-reversion at intraday horizon.
+
+### Northbound (Stock Connect) Flow
+- **Northbound net buy/sell:** Real-time intraday cumulative net foreign buy via Stock Connect (沪深港通). Extreme values tend to mean-revert. Strong sentiment indicator widely used in CN quant.
+- **Northbound stock-level flow:** Per-stock foreign holding changes (delayed T+1 disclosure). Persistent buying/selling signals institutional conviction.
+- **Northbound flow acceleration:** `d(cumulative_net_buy)/dt` over window. Detects surges in foreign flow.
 
 ### ETF/Index Signals
 - **ETF premium/discount:** `(ETF_price - NAV) / NAV`. For SSE 50 ETF, CSI 300 ETF. Arb signal and sentiment proxy.
@@ -228,6 +262,6 @@ Index futures (CFFEX) and ETF options provide market-level sentiment and hedging
 - **Auction contamination:** Opening/closing auction mechanics differ from continuous trading. Features computed during 09:25-09:30 or 14:57-15:00 (SZSE) are different regimes.
 - **Price limit truncation:** At limit price, spread=0, imbalance=max, many features degenerate. Detect and handle.
 - **Tick size effects:** 0.01 CNY tick creates dramatically different microstructure for 3 CNY vs 300 CNY stocks. Normalize features by tick-size-relative metrics.
-- **Stale L2 snapshots:** L2 snapshots are ~3s intervals. Features may be stale if computed from last snapshot vs current trade price.
+- **Stale L2 snapshots:** L2 snapshots are ~3s intervals (SSE; SZSE may vary by tier). Features may be stale if computed from last snapshot vs current trade price.
 - **T+1 constraint:** Cannot sell same-day purchases. Affects feature-label alignment for short signals (must already hold).
 - **Board differences:** ChiNext/STAR have wider limits (+/-20%), different lot sizes (STAR: 200), and often different microstructure than Main Board. Consider board as a categorical feature or train separate models.

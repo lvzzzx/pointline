@@ -76,7 +76,7 @@ T+1 is the single most important structural constraint for CN A-share intraday r
 | Lunch break | 11:30-13:00 | 11:30-13:00 | No trading (90 minutes) |
 | PM continuous | 13:00-14:57 (SSE: to 15:00) | 13:00-14:57 | Normal continuous trading |
 | Closing auction | N/A | 14:57-15:00 | SZSE only: closing call auction |
-| SSE close | 15:00 | N/A | SSE: last trade in continuous is close |
+| SSE close | 14:59-15:00 | N/A | SSE: closing price = VWAP of last minute (14:59:00-15:00:00) |
 
 ### Session-Specific Dynamics
 - **First 30 minutes (09:30-10:00):** Highest volatility, widest spreads, most volume. Overnight information gets priced in. Gap fill/continuation dynamics.
@@ -95,10 +95,11 @@ T+1 is the single most important structural constraint for CN A-share intraday r
 ## Price Limit Dynamics
 
 ### Limit Rules by Board
-| Board | Daily Limit | New Listing (First 5 Days) | ST Stocks |
+| Board | Daily Limit | New Listing | ST Stocks |
 |---|---|---|---|
-| SSE/SZSE Main | +/-10% | +44%/-36% day 1, then +/-10% | +/-5% |
-| ChiNext | +/-20% | +44%/-36% day 1 (ChiNext registration), then +/-20% | +/-20% |
+| SSE/SZSE Main (registration) | +/-10% | +44%/-36% day 1, then +/-10% | +/-5% |
+| SSE/SZSE Main (legacy approval) | +/-10% | +44%/-36% day 1, then +/-10% | +/-5% |
+| ChiNext | +/-20% | No limit for first 5 days, then +/-20% | +/-20% |
 | STAR | +/-20% | No limit for first 5 days, then +/-20% | +/-20% |
 | BSE | +/-30% | No limit for first day, then +/-30% | +/-30% |
 

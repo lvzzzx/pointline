@@ -1,6 +1,6 @@
 ---
 name: cn-ashare-intraday-researcher
-description: "ML-driven Chinese A-share intraday quant research assistant using L2/L3 market data. Covers feature engineering (LOB, order flow, auction signals, price limit dynamics, cross-sectional), ML model training, and evaluation for 1min-2hr holding periods on SSE/SZSE stocks. Use when: (1) designing or reviewing alpha signals for CN A-share intraday trading, (2) building ML pipelines from L2 snapshots or L3 order-by-order data, (3) engineering features from order book, trade flow, auction mechanics, or price limit dynamics, (4) evaluating signal quality (IC, decay, overfitting) with CN-specific cost models (commission + stamp duty), (5) discussing CN A-share market microstructure for trading research, (6) planning intraday research programs accounting for T+1 settlement, price limits, and session structure, (7) working with cross-sectional intraday features or index futures/ETF options signals."
+description: "ML-driven CN A-share intraday quant research using L2/L3 data. Feature engineering, ML training, and evaluation for 1min-2hr horizons on SSE/SZSE stocks."
 ---
 
 # CN A-Share Intraday Researcher
@@ -22,12 +22,14 @@ For L2/L3 data format schemas, field definitions, and exchange-specific parsing 
 
 | Category | Source | Typical IC | Decay Half-Life | Reference |
 |---|---|---|---|---|
-| **Order book / LOB** | **L2 snapshots, L3 order-by-order** | **0.02-0.06** | **1-10min** | [features.md#order-book](references/features.md#order-book--lob-features) |
-| Trade flow | Tick trades, aggressor side | 0.02-0.05 | 1-15min | [features.md#trade-flow](references/features.md#trade-flow-features) |
+| **Book state** | **L2 snapshots, L3-reconstructed** | **0.02-0.06** | **1-10min** | [features.md#book-state](references/features.md#book-state-features) |
+| Event stream: order flow | L3 order events | 0.02-0.06 | 1-10min | [features.md#order-flow](references/features.md#order-flow-l3) |
+| Event stream: trade flow | Tick-by-tick trades | 0.02-0.05 | 1-15min | [features.md#trade-flow](references/features.md#trade-flow-tick-by-tick) |
+| Event stream: order-trade joint | L3 + tick-by-tick | 0.03-0.06 | 1-15min | [features.md#joint](references/features.md#order-trade-joint-features-l3--tick-by-tick) |
 | Auction signals | Opening/closing call auction | 0.03-0.06 | 5-30min | [features.md#auction](references/features.md#auction-features) |
 | Price limit dynamics | Distance to limit, limit board | 0.02-0.05 | 10min-2hr | [features.md#price-limit](references/features.md#price-limit-features) |
 | Volume & liquidity | Intraday volume profile, turnover | 0.01-0.03 | 10min-1hr | [features.md#volume](references/features.md#intraday-volume--liquidity-features) |
-| Cross-sectional | Sector flow, relative strength | 0.02-0.04 | 15min-2hr | [features.md#cross-sectional](references/features.md#cross-sectional-features) |
+| Cross-sectional | Sector flow, relative strength, northbound | 0.02-0.04 | 15min-2hr | [features.md#cross-sectional](references/features.md#cross-sectional-features) |
 | Microstructure | Spread, impact, noise | 0.01-0.04 | 1-5min | [features.md#microstructure](references/features.md#microstructure-features) |
 | Index futures & options | Basis, put-call ratio, GEX | 0.02-0.04 | 5min-1hr | [features.md#futures](references/features.md#index-futures--etf-options-features) |
 | Temporal / calendar | Session, phase, events | 0.01-0.02 | N/A | [features.md#temporal](references/features.md#temporal--calendar-features) |

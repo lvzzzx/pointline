@@ -169,6 +169,12 @@ Train: [-------]  gap  Test: [---]
 - **Uniqueness weight:** For overlapping labels, weight by average uniqueness (de Prado).
 - **Session weight:** Optionally upweight AM (more volume/signal) or equalize AM/PM.
 
+### Online Learning & Warm-Starting
+- **Incremental LightGBM:** Use `init_model` to warm-start from previous model on new data. Avoids full retrain between walk-forward windows.
+- **Adaptive Ridge:** Update coefficients incrementally with exponential decay on older samples. Near-zero cost retraining.
+- **Use case:** Between full retrains (e.g., weekly), warm-start daily to adapt to regime shifts without full CV.
+- **Risk:** Warm-starting can accumulate drift. Periodically validate warm-started model against full retrain.
+
 ### Hyperparameter Optimization
 - **Optuna** with walk-forward IC as objective. Median pruner for efficiency.
 - **Key insight:** Optimize for IC or cost-adjusted Sharpe, not MSE/accuracy.
