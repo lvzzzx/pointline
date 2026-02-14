@@ -1,121 +1,85 @@
 ---
 name: tushare
 description: >-
-  Tushare Pro API reference and Pointline integration patterns for Chinese A-share
-  (SSE/SZSE) market data. Use when: (1) writing or modifying Tushare API queries,
-  (2) building or updating CN stock symbol ingestion (dim_symbol), (3) adding new
-  Tushare data types to the Pointline pipeline, (4) debugging Tushare field mappings
-  or SCD2 symbol lifecycle, (5) working with CN A-share reference data, valuation
-  metrics, financials, or money flow APIs.
+  Tushare Pro API reference for Chinese A-share (SSE/SZSE) market data. Use when:
+  (1) writing Tushare API queries for stock prices, financials, or valuation data,
+  (2) looking up Tushare API parameters, return fields, or rate limits,
+  (3) working with CN A-share reference data, daily bars, adjustment factors,
+  money flow, or limit up/down lists, (4) handling PIT-correct financial data
+  queries with Tushare, (5) any task involving tushare Python SDK.
 ---
 
-# Tushare Pro API — Pointline Integration
+# Tushare Pro API
 
-## Quick Reference
+Tushare is a Python SDK-based data platform for Chinese A-share market data (SSE, SZSE, BSE). It provides reference data, OHLCV prices, valuation metrics, financial statements, and market behavior data via a simple Python API.
 
-- **SDK:** `import tushare as ts; pro = ts.pro_api(token)`
-- **API docs:** See [references/tushare_cn.md](references/tushare_cn.md) for full API specs (parameters, return fields, rate limits)
-- **Pointline adapter:** `pointline/vendors/tushare/symbols.py` — pure-function transforms
-- **Sync script:** `scripts/sync_tushare_dim_symbol.py`
-- **Tests:** `tests/tushare/test_symbol_snapshot.py`
-
-## Pointline Integration Architecture
-
-Tushare is used **only for reference/dimension data** (dim_symbol), not event data.
-
-```
-Tushare API (pro.stock_basic)
-  → pandas DataFrame
-  → pl.from_pandas()
-  → stock_basic_to_snapshot(raw)     # Pure function, no I/O
-  → dim_symbol.upsert() / bootstrap()
-  → dim_symbol.assign_symbol_ids()
-  → DeltaDimensionStore.save_dim_symbol()
-  → Silver: /silver/dim_symbol/
-```
-
-## Schema Mapping: Tushare → dim_symbol
-
-| Tushare Field | Pointline Field | Notes |
-|---|---|---|
-| `exchange` | `exchange` | Normalized to lowercase (szse/sse) |
-| `symbol` | `exchange_symbol` | Exchange-native (000001) |
-| `ts_code` | `canonical_symbol` | Tushare format (000001.SZ) |
-| `market` | `market_type` | 主板, 创业板, 科创板 |
-| `name` | `base_asset` | Company name |
-| — | `quote_asset` | Hard-coded "CNY" |
-| — | `tick_size` | CN_TICK_SIZE = 10_000_000 (0.01 CNY * 1e9) |
-| `market` | `lot_size` | 科创板: 200e9, else: 100e9 (shares * QTY_SCALE) |
-| `list_date` | `valid_from_ts_us` | YYYYMMDD → UTC midnight microseconds |
-| `delist_date` | `valid_until_ts_us` | D: delist_date, L/P: MAX (2^63-1) |
-| `list_status` | `is_current` | L/P → True, D → False |
-
-## Key Constants
+## Setup
 
 ```python
-CN_TICK_SIZE = 10_000_000          # 0.01 CNY × PRICE_SCALE (1e9)
-CN_LOT_SIZE = 100_000_000_000      # 100 shares × QTY_SCALE (1e9)
-STAR_MARKET_LOT_SIZE = 200_000_000_000  # 200 shares (科创板)
+import tushare as ts
+
+ts.set_token('YOUR_TOKEN')
+pro = ts.pro_api()
+
+# Query data — all APIs return pandas DataFrames
+df = pro.stock_basic(exchange='SZSE', list_status='L')
 ```
 
-## Critical Rules
+## API Quick Reference
 
-1. **BSE filtered out.** Only SSE/SZSE are in scope; Beijing Stock Exchange rows are dropped.
-2. **Delisted stocks included.** SCD2 requires explicit close dates for PIT correctness.
-3. **Pure functions only.** No API calls inside `pointline/vendors/tushare/`. I/O lives in scripts.
-4. **Preserve other vendors.** Sync script must not delete crypto/other-vendor symbols from dim_symbol.
-5. **Timestamps as Int64 microseconds.** Parse YYYYMMDD to UTC midnight via `_parse_yyyymmdd_us()`.
-6. **Fixed-point integers.** Prices/quantities are scaled Int64; never use floats mid-pipeline.
+| API | Description | Points | Rate |
+|---|---|---|---|
+| `stock_basic` | Listed stock info (name, industry, status) | 2000+ | 500/min |
+| `trade_cal` | Exchange trading calendar | 2000+ | 500/min |
+| `daily` | Daily OHLCV (unadjusted) | 2000+ | 200/min |
+| `adj_factor` | Split/dividend adjustment factors | 2000+ | 200/min |
+| `daily_basic` | Valuation (PE/PB/market cap) | 2000+ | 200/min |
+| `pro_bar` | Unified bars (daily/weekly/minute, with adj) | 600+ | 200/min |
+| `fina_indicator` | Quarterly financial indicators | 3000+ | 200/min |
+| `income` / `balance_sheet` / `cashflow` | Financial statements | 3000+ | 100/min |
+| `moneyflow` | Capital flow by order size | 2000+ | 200/min |
+| `limit_list` | Limit up/down stocks | 2000+ | 200/min |
 
-## Workflow Patterns
+## Common Patterns
 
-### Full-Historical Load (First Run)
+### Daily prices with forward adjustment
 
 ```python
-raw = pl.concat([
-    pl.from_pandas(pro.stock_basic(exchange=ex, list_status="L")),
-    pl.from_pandas(pro.stock_basic(exchange=ex, list_status="D")),
-])
-snapshot = stock_basic_to_snapshot(raw, effective_ts_us=now_us)
-result = assign_symbol_ids(snapshot)
-store.save_dim_symbol(result)
+df = ts.pro_bar(ts_code='000001.SZ', adj='qfq',
+                start_date='20240101', end_date='20240131')
 ```
 
-### Incremental Daily Sync
+### All stocks for a single date
 
 ```python
-current = pl.from_pandas(pro.stock_basic(list_status="L"))
-delisted = pl.from_pandas(pro.stock_basic(list_status="D"))
-snap = stock_basic_to_snapshot(current)
-dl = stock_basic_to_delistings(delisted)
-dim = upsert(existing_dim, snap, effective_ts_us, delistings=dl)
-result = assign_symbol_ids(dim)
-store.save_dim_symbol(result, expected_version=old_v)
+df = pro.daily(trade_date='20240102')
 ```
 
-## Adding New Tushare Data Types
-
-When extending Pointline to ingest new Tushare APIs (daily prices, financials, money flow, etc.):
-
-1. Read the API spec in [references/tushare_cn.md](references/tushare_cn.md) for parameters, return fields, and rate limits
-2. Create a new module under `pointline/vendors/tushare/` (pure functions, no I/O)
-3. Define the canonical schema in `pointline/schemas/` following existing patterns
-4. Use `ann_date` (not `end_date`) for PIT-correct financial data filtering
-5. Handle rate limits: check points requirements (2000+ for most, 6000+ for minute bars)
-6. Write tests in `tests/tushare/` covering field mapping and edge cases
-
-### PIT Gotcha for Financial Data
+### Valuation metrics
 
 ```python
-# WRONG: uses data before it was publicly available
+df = pro.daily_basic(ts_code='000001.SZ',
+                     start_date='20240101', end_date='20240131')
+# Returns: pe, pb, ps, dv_ratio, total_mv, circ_mv, turnover_rate, etc.
+```
+
+### Financial indicators
+
+```python
 df = pro.fina_indicator(ts_code='000001.SZ', period='20231231')
-
-# CORRECT: filter by announcement date for PIT
-df = pro.fina_indicator(ts_code='000001.SZ')
-df = df[df['ann_date'] <= query_date]  # Only data known at query_date
+# Returns: eps, roe, roa, gross_margin, revenue_yoy, netprofit_yoy, etc.
 ```
 
-## Symbol Code Format
+### Manual price adjustment
+
+```python
+daily = pro.daily(ts_code='000001.SZ', start_date='20240101', end_date='20240131')
+adj = pro.adj_factor(ts_code='000001.SZ', start_date='20240101', end_date='20240131')
+df = daily.merge(adj, on=['ts_code', 'trade_date'])
+df['close_adj'] = df['close'] * df['adj_factor']
+```
+
+## Symbol Codes
 
 | Suffix | Exchange | Code Range | Market |
 |---|---|---|---|
@@ -123,14 +87,36 @@ df = df[df['ann_date'] <= query_date]  # Only data known at query_date
 | `.SH` | SSE | 680000-689999 | STAR Market (科创板) |
 | `.SZ` | SZSE | 000001-009999 | Main Board |
 | `.SZ` | SZSE | 300000-309999 | ChiNext (创业板) |
+| `.BJ` | BSE | 430000-899999 | Beijing Stock Exchange |
 
-## API Reference
+## PIT (Point-in-Time) for Financial Data
 
-For full API specifications (all parameters, return fields, rate limits, error codes), read [references/tushare_cn.md](references/tushare_cn.md). Key sections:
+Financial data has two dates — `end_date` (reporting period) and `ann_date` (public announcement). For backtesting, always filter by `ann_date` to avoid lookahead bias:
+
+```python
+# WRONG: Q4 data may not be public until April
+df = pro.fina_indicator(ts_code='000001.SZ', period='20231231')
+
+# CORRECT: only use data announced by your query date
+df = pro.fina_indicator(ts_code='000001.SZ')
+df = df[df['ann_date'] <= '20240315']
+```
+
+## Key Gotchas
+
+1. **`daily` returns unadjusted prices.** Use `pro_bar` with `adj='qfq'` for forward-adjusted, or `adj='hfq'` for backward-adjusted.
+2. **Must provide either `trade_date` or `start_date`+`end_date`** for most market data APIs.
+3. **Minute bars require 6000+ points** (account level). Daily only needs 600+.
+4. **`vol` is in shares, `amount` is in CNY** (not lots or 万元).
+5. **Rate limits are per-minute** and vary by API and account level.
+
+## Full API Reference
+
+For complete parameter lists, return field definitions, rate limits, and error codes, read [references/tushare.md](references/tushare.md):
 
 - **Section 3:** Reference data (stock_basic, trade_cal)
 - **Section 4:** Market data (daily, adj_factor, daily_basic, pro_bar)
 - **Section 5:** Financial data (fina_indicator, income, balance_sheet, cashflow)
 - **Section 6:** Market behavior (moneyflow, limit_list)
 - **Section 8:** Rate limits and points requirements
-- **Section 10:** PIT considerations for backtesting
+- **Section 10:** PIT considerations

@@ -39,6 +39,7 @@
 
 ## Architecture & Workflow Notes
 - Read `docs/architecture/design.md` before changing schema or ETL semantics.
+- For research ideas (especially feature/signal proposals), draft a proposal per `.agent/PROPOSALS.md` and ask clarifying questions before implementation.
 - For larger features/refactors, create an ExecPlan per `PLANS.md`.
 - Before pushing, run `pre-commit run --all-files`.
 
