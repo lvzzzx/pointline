@@ -109,7 +109,7 @@ Full market structure reference: [references/market-structure.md](references/mar
 
 ## Key Principles
 
-- **Strategy structure first.** Signal prediction horizon != holding period. T+1 settlement, 融券 access, and hedging determine effective holding period. Match signal type to viable strategy structure.
+- **Strategy structure first.** Signal prediction horizon != holding period. T+1 settlement, 融券 access, and hedging determine effective holding period. Match signal type to viable strategy structure. Fast-decay microstructure signals require transformation for T+1 (aggregation, regime classification, entry timing). See [strategy-structure.md#decay-structure-mismatch](references/strategy-structure.md#decay-structure-mismatch).
 - **Cost-awareness.** CN round-trip costs are ~15-30 bps (T+1) or ~25-50 bps (融券T+0 with lending fee). Signal must clear the relevant cost hurdle.
 - **Session-aware.** AM and PM are different markets. Handle lunch break as a discontinuity. Report results by session.
 - **Limit-aware.** Price limits create non-linear dynamics. Detect limit-proximity regime and either adapt features or use separate models.

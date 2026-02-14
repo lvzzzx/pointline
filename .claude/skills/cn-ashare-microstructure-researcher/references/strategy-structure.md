@@ -5,11 +5,12 @@
 2. [Strategy Architectures](#strategy-architectures)
 3. [Signal → Position Translation](#signal--position-translation)
 4. [T+1 Rotation Strategy](#t1-rotation-strategy)
-5. [融券T+0 Intraday Strategy](#融券t0-intraday-strategy)
-6. [Execution Layer](#execution-layer)
-7. [Risk Management](#risk-management)
-8. [Performance Attribution](#performance-attribution)
-9. [Practical Starting Points](#practical-starting-points)
+5. [Decay-Structure Mismatch](#decay-structure-mismatch)
+6. [融券T+0 Intraday Strategy](#融券t0-intraday-strategy)
+7. [Execution Layer](#execution-layer)
+8. [Risk Management](#risk-management)
+9. [Performance Attribution](#performance-attribution)
+10. [Practical Starting Points](#practical-starting-points)
 
 ---
 
@@ -253,6 +254,129 @@ Example: 1% max loss tolerance, 2% gap std, 2-sigma
   max_position = 0.01 / (0.02 * 2) = 25% of portfolio per stock
   → diversify across 10-20 stocks to reduce concentration
 ```
+
+## Decay-Structure Mismatch
+
+The central contradiction of microstructure + T+1: microstructure signals decay in minutes, but T+1 rotation holds overnight.
+
+```
+Microstructure signal half-life:  1-10 min (LOB imbalance, order flow)
+T+1 minimum holding period:       ~18-20 hours (buy PM → sell next AM)
+Gap:                               ~100x longer than signal life
+```
+
+Raw microstructure signals are dead before T+1 can act. This does not mean microstructure data is useless for T+1 — it means the usage must be **transformed**.
+
+### Bridge 1: Daily Aggregation → Slow-Decay Derived Signals
+
+Aggregate microstructure features over the full session to capture structural state:
+
+| Instantaneous (fast decay, useless for T+1) | Daily Aggregate (slow decay, T+1 viable) |
+|---|---|
+| 5-level bid-ask imbalance at 10:32 | Session-average imbalance, imbalance trend slope |
+| Net order flow in last 3 min | Cumulative daily net order flow / volume |
+| Trade arrival intensity now | Daily Hawkes process baseline intensity |
+| Current spread | Intraday spread regime duration ratio |
+| Kyle's lambda this minute | Daily average Kyle's lambda, lambda trend |
+
+**Why it works:** Daily aggregates capture the stock's structural state — accumulation, distribution, informed activity. These states persist overnight because the underlying cause (institutional positioning, information asymmetry) hasn't resolved.
+
+**Typical IC:** 0.02-0.04 for next-day returns.
+
+### Bridge 2: Informed Trading Detection → Information Half-Life
+
+Microstructure's unique value: detecting **informed trading** that hasn't fully priced in.
+
+```
+L3 order flow → detect unusual patterns:
+  - Abnormal large-order splitting (iceberg detection)
+  - Persistent directional aggression (one side absorbing)
+  - Order-to-cancel ratio anomaly (informed traders don't cancel)
+  - Toxicity spike (VPIN > threshold)
+```
+
+The microstructure *signal* decays in minutes, but the *information* driving it may take 1-3 days to fully disseminate — especially in retail-dominated CN markets where information diffusion is slow. Trade the **unresolved information**, not the microstructure pattern itself.
+
+### Bridge 3: End-of-Day → Next-Day Open (Shortest Bridge)
+
+Last 30 minutes (14:30-15:00) have the shortest gap to next-day trading (~18 hours):
+
+```
+14:30-15:00 features ──→ overnight gap ──→ 09:30 next day
+```
+
+Late-session microstructure predicts next-day open because:
+- Closing auction order imbalance (SZSE 14:57-15:00) reveals positioning pressure
+- Last-30min aggressive buying/selling reflects institutional flows that continue next day
+- MOC order flow imbalance predicts overnight gap direction
+
+**Best starting point** for microstructure → T+1. Focus feature engineering on the last session window.
+
+### Bridge 4: Microstructure Regime Classification
+
+Classify the stock's regime instead of predicting returns directly:
+
+```
+Microstructure features → Regime classifier → Regime label
+  ├─ "Accumulation" (persistent buy-side aggression, hidden liquidity)
+  ├─ "Distribution" (persistent sell-side, iceberg selling)
+  ├─ "Informed arrival" (toxicity spike, spread widening)
+  ├─ "Noise/neutral" (balanced flow, normal spread)
+  └─ "Exhaustion" (declining volume, narrowing range)
+```
+
+Regimes persist **much longer** than individual signals — an accumulation phase may last days. The regime label becomes a slow-decay feature for a T+1 stock selection model.
+
+### Bridge 5: Entry Timing (Microstructure for Execution, Not Selection)
+
+Separate stock selection from entry timing:
+
+```
+Stock selection: Cross-sectional alpha (slow decay, overnight-viable)
+  → "Which stocks to buy?"
+  → Sector momentum, earnings surprise, northbound flow, etc.
+
+Entry timing: Microstructure alpha (fast decay, intraday)
+  → "When during the day to buy?"
+  → Buy when LOB shows dislocation, spread compression, selling exhaustion
+```
+
+Alpha comes from the slow signal. Microstructure captures 5-30 bps of **execution improvement** by timing entry within the day. Compounds over 242 trading days.
+
+### T+1 Rotation Architecture with Microstructure
+
+```
+                    ┌─────────────────────────┐
+                    │   Stock Selection Model  │  ← slow-decay features
+                    │   (daily frequency)      │     (aggregated microstructure
+                    │                          │      + cross-sectional + fundamental)
+                    └──────────┬──────────────┘
+                               │ ranked stock list
+                    ┌──────────▼──────────────┐
+                    │   Entry Timing Model     │  ← fast-decay features
+                    │   (intraday frequency)   │     (raw LOB, order flow, spread)
+                    └──────────┬──────────────┘
+                               │ entry signal + limit price
+                    ┌──────────▼──────────────┐
+                    │   Execution              │
+                    └─────────────────────────┘
+```
+
+Two models, two time scales, one strategy.
+
+### Practical Viability Assessment
+
+| Bridge Approach | Difficulty | Expected Edge | Verdict |
+|---|---|---|---|
+| Daily-aggregated microstructure | Medium | IC 0.02-0.04 | Marginal alone, good as ensemble input |
+| EOD → next-day prediction | Medium | IC 0.03-0.05 | **Best starting point** |
+| Informed trading detection | Hard | IC 0.02-0.04 (sparse) | High alpha when triggered, low frequency |
+| Regime classification | Hard | Variable | Research-intensive, durable if done right |
+| Entry timing (execution improvement) | Low-Medium | 5-30 bps/trade | **Most reliable, complements any alpha** |
+
+**Bottom line:** Pure microstructure → T+1 is hard because signal decays ~100x faster than holding period. Practical answer: use microstructure in **two ways simultaneously** — (1) aggregated/regime features as one input to a multi-source stock selection model, and (2) raw microstructure for entry timing. Neither alone justifies L2/L3 data costs; together they can.
+
+To fully exploit fast-decay microstructure signals, a fast-exit strategy structure is required: T+0 ETF or 融券T+0 (see below). For T+1 rotation, microstructure is a supporting actor, not the lead.
 
 ## 融券T+0 Intraday Strategy
 
