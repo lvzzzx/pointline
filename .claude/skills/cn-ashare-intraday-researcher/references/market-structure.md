@@ -19,8 +19,8 @@ This reference covers market structure aspects relevant to **research design and
 ### Exchanges
 | Exchange | Abbrev | Boards | Notes |
 |---|---|---|---|
-| Shanghai Stock Exchange | SSE | Main Board, STAR Market (科创板) | No closing auction. L3 order-by-order available. |
-| Shenzhen Stock Exchange | SZSE | Main Board, ChiNext (创业板) | Closing auction 14:57-15:00. L2 snapshots + L3 order-by-order. |
+| Shanghai Stock Exchange | SSE | Main Board, STAR Market (科创板) | No closing auction. L2 snapshots + L3 order-by-order + tick-by-tick. |
+| Shenzhen Stock Exchange | SZSE | Main Board, ChiNext (创业板) | Closing auction 14:57-15:00. L2 snapshots + L3 order-by-order + tick-by-tick. |
 | Beijing Stock Exchange | BSE | Main Board | Smaller, less liquid. +/-30% limits. Less relevant for MFT. |
 
 ### Board Characteristics

@@ -17,14 +17,14 @@
 
 ## Order Book / LOB Features
 
-### From L2 Snapshots (SZSE ~3s intervals, 10-level depth)
+### From L2 Snapshots (SSE & SZSE, ~3s intervals, 10-level depth)
 - **Book imbalance (BIR):** `(bid_qty_top_k - ask_qty_top_k) / (bid_qty_top_k + ask_qty_top_k)` at levels k=1,3,5,10. Deeper levels more informative at 1min+ horizons.
 - **Weighted mid-price:** `P_wmid = P_ask * Q_bid / (Q_bid + Q_ask) + P_bid * Q_ask / (Q_bid + Q_ask)`. Deviation from raw mid is a feature.
 - **Depth ratio:** `sum(bid_qty[1:k]) / sum(ask_qty[1:k])` for k=5,10. Log-transform recommended.
 - **Cumulative depth delta:** Change in total depth at k levels over window. Captures refill/pull.
 - **Book slope:** `sum(qty[i] * (i - 1)) / sum(qty[i])` for each side. Measures how concentrated liquidity is near top.
 - **Depth decay profile:** Exponential fit to `qty(level)`. Steeper = thinner book, more impact.
-- **Snapshot-to-snapshot depth change:** Since SZSE L2 is ~3s intervals, delta between consecutive snapshots captures fast changes.
+- **Snapshot-to-snapshot depth change:** Since L2 snapshots are ~3s intervals, delta between consecutive snapshots captures fast book changes.
 
 ### From L3 Order-by-Order (Full Order Stream)
 - **Order flow imbalance (OFI):** Net signed order flow from new orders: `sum(buy_new_qty - sell_new_qty)` over window.
@@ -37,10 +37,12 @@
 - **Passive fill rate:** Fraction of limit orders that get filled vs cancelled. Low fill rate near touch = fleeting liquidity.
 - **Hidden order detection:** Trades executing at prices with no visible L2 depth (iceberg/hidden orders). SSE supports hidden orders.
 
-### L2 vs L3 Feature Notes
-- **SSE:** No L2 snapshots available. Must reconstruct book from L3 order stream. Full order-by-order gives richer features but requires book reconstruction.
-- **SZSE:** L2 snapshots (~3s) provide pre-built depth. L3 order stream adds order-level granularity.
-- **Book reconstruction from L3:** Apply new orders and cancel events sequentially. Cross-validate reconstructed book against L2 snapshots (SZSE only).
+### Data Stream Notes
+Both SSE and SZSE provide three streams:
+- **L2 snapshots (~3s intervals, 10-level depth):** Pre-built book state. Good for depth/imbalance features without book reconstruction.
+- **L3 order-by-order:** Individual order events (adds, cancels). Required for order flow features (OFI, cancel imbalance, add-cancel ratio, queue dynamics). Enables full book reconstruction.
+- **Tick-by-tick (trade stream):** Individual trade executions with aggressor side linkage. Required for trade flow features, VPIN, price impact.
+- **Book reconstruction from L3:** Apply new orders and cancel events sequentially. Cross-validate reconstructed book against L2 snapshots.
 
 ## Trade Flow Features
 
@@ -226,6 +228,6 @@ Index futures (CFFEX) and ETF options provide market-level sentiment and hedging
 - **Auction contamination:** Opening/closing auction mechanics differ from continuous trading. Features computed during 09:25-09:30 or 14:57-15:00 (SZSE) are different regimes.
 - **Price limit truncation:** At limit price, spread=0, imbalance=max, many features degenerate. Detect and handle.
 - **Tick size effects:** 0.01 CNY tick creates dramatically different microstructure for 3 CNY vs 300 CNY stocks. Normalize features by tick-size-relative metrics.
-- **Stale L2 snapshots:** SZSE L2 is ~3s intervals. Features may be stale if computed from last snapshot vs current trade price.
+- **Stale L2 snapshots:** L2 snapshots are ~3s intervals. Features may be stale if computed from last snapshot vs current trade price.
 - **T+1 constraint:** Cannot sell same-day purchases. Affects feature-label alignment for short signals (must already hold).
 - **Board differences:** ChiNext/STAR have wider limits (+/-20%), different lot sizes (STAR: 200), and often different microstructure than Main Board. Consider board as a categorical feature or train separate models.

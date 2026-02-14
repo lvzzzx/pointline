@@ -170,7 +170,7 @@
 - **Lookahead bias:** Using future data. Most common: global normalization (min/max from full dataset), using closing auction price for continuous-session features.
 - **Survivorship bias:** Only testing on currently listed stocks. Must include delisted and suspended stocks.
 - **Suspension handling:** CN stocks can be suspended for days/months. Exclude suspended periods from both features and labels.
-- **L2 snapshot timing:** SZSE snapshots are ~3s intervals, not exact. Feature timestamp may not align exactly with label timestamp. Handle with nearest-prior-snapshot logic.
+- **L2 snapshot timing:** L2 snapshots are ~3s intervals, not exact. Feature timestamp may not align exactly with label timestamp. Handle with nearest-prior-snapshot logic.
 - **Opening/closing auction data mixing:** Auction-phase data has different properties than continuous trading. Don't mix.
 
 ### Methodological Issues
