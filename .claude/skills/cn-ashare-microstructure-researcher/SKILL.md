@@ -1,11 +1,13 @@
 ---
-name: cn-ashare-intraday-researcher
-description: "ML-driven CN A-share intraday quant research using L2/L3 data. Feature engineering, ML training, and evaluation for 1min-2hr horizons on SSE/SZSE stocks."
+name: cn-ashare-microstructure-researcher
+description: "ML-driven CN A-share microstructure research using L2/L3 data. Bridges from data sources (L2 snapshots, tick-by-tick, order-by-order) through ML to tradable strategy structures on SSE/SZSE stocks."
 ---
 
-# CN A-Share Intraday Researcher
+# CN A-Share Microstructure Researcher
 
-ML-driven quant research for Chinese A-share intraday trading. Target: 1min-2hr holding period on SSE/SZSE stocks using L2/L3 data. Key structural constraints: T+1 settlement (cannot sell same-day purchases), price limits (+/-10% Main Board, +/-20% ChiNext/STAR), and 90-minute lunch break.
+ML-driven quant research for Chinese A-share markets using L2/L3 microstructure data. Bridges from data sources (L2 snapshots, tick-by-tick trades, order-by-order events) through ML signal generation to tradable strategy structures adapted to CN market constraints.
+
+**Signal prediction horizon:** 1min-2hr. **Effective holding period:** depends on strategy structure — 5min-2hr (融券T+0, T+0 ETF), overnight minimum (T+1 rotation), overnight market-hedged (stock + futures). See [references/strategy-structure.md](references/strategy-structure.md).
 
 For L2/L3 data format schemas, field definitions, and exchange-specific parsing rules, see the **quant360** skill.
 
@@ -17,6 +19,36 @@ For L2/L3 data format schemas, field definitions, and exchange-specific parsing 
 4. **Train model** — LightGBM default, walk-forward CV. See [references/ml-models.md](references/ml-models.md)
 5. **Evaluate** — IC, decay curve, cost-adjusted Sharpe. See [references/evaluation.md](references/evaluation.md)
 6. **Validate** — Hold-out test, deflated Sharpe, T+1-realistic backtest. See [references/evaluation.md](references/evaluation.md#overfitting-detection)
+7. **Strategy structure** — Signal → position → execution → risk. See [references/strategy-structure.md](references/strategy-structure.md)
+
+## Strategy Structures
+
+| Architecture | Effective Holding Period | Overnight Risk | 融券 Required | Signal Decay Usable |
+|---|---|---|---|---|
+| **T+1 rotation** | Overnight + next-day exit | Yes, unavoidable | No | Slow (>overnight) |
+| Sell-side overlay | 1min-2hr (sell existing) | Reduced | No | Fast (1min-2hr) |
+| T+0 ETF intraday | 5min-2hr (true intraday) | None | No | Fast (1min-2hr) |
+| Hedged stock + futures | Overnight, market-neutral | Idiosyncratic only | No | Slow (>overnight) |
+| 融券T+0 intraday | 5min-2hr (true intraday) | None (flatten EOD) | Yes (regulatory risk) | Fast (1min-2hr) |
+
+Strategy structure determines which signal types are viable: fast-decay microstructure signals (LOB, trade flow) require 融券T+0 or T+0 ETF; slow-decay signals (cross-sectional, fundamental) work with T+1 rotation.
+
+Full details: [references/strategy-structure.md](references/strategy-structure.md)
+
+## Data Sources → Features → Signals → Strategy
+
+```
+L2 Snapshots ──→ Book State Features ──┐
+                                       │
+L3 Order-by-Order ──→ Order Flow ──────┤
+                      Joint Features ──┤──→ ML Model ──→ Signal ──→ Strategy Structure
+Tick-by-Tick Trades ──→ Trade Flow ────┤                              │
+                       Price Impact ───┘                              ├─ T+1 rotation
+                                                                      ├─ 融券T+0
+Cross-Sectional ──→ Sector/breadth/northbound ──→ ML Model ──→        ├─ T+0 ETF
+Index Futures/Options ──→ Basis/IV/GEX ──→ ML Model ──→               ├─ Hedged
+                                                                      └─ Sell-side overlay
+```
 
 ## Feature Categories
 
@@ -63,21 +95,22 @@ Full evaluation methodology: [references/evaluation.md](references/evaluation.md
 
 ## CN A-Share Structural Constraints
 
-These constraints fundamentally shape research design. They are not afterthoughts.
+These constraints fundamentally shape both research design and strategy structure. They are not afterthoughts.
 
-- **T+1 settlement** — Cannot sell same-day purchases. Intraday signals must survive overnight holding. Use index futures (IF/IH/IC/IM) to hedge overnight gap risk. Some ETFs allow T+0.
+- **T+1 settlement** — Cannot sell same-day purchases. Determines which strategy structures are viable and which signal decay rates are usable. See [strategy-structure.md](references/strategy-structure.md).
+- **融券T+0 (securities lending)** — Bypasses T+1 via borrowed shares, enabling true intraday round-trips. Severely constrained by 券源 availability and post-2023 regulatory tightening.
 - **Price limits** — Main Board +/-10%, ChiNext/STAR +/-20%. Truncate return distributions. Create magnet effects, limit-up board dynamics, and feature degeneracy at limit.
 - **Lunch break (90min)** — Never compute features across 11:30-13:00. Treat AM and PM as quasi-independent sessions. Post-lunch behaves like a mini-open.
 - **Retail-dominated (~65% turnover)** — Behavioral alpha from herding, overreaction, momentum-chasing. Different microstructure than institutional markets.
-- **No effective short selling** — Most stocks cannot be shorted. Market is structurally long-biased.
+- **No effective short selling** — Most stocks cannot be shorted (融券 is limited). Market is structurally long-biased.
 - **Session structure** — Opening auction (09:15-09:25), AM continuous (09:30-11:30), PM continuous (13:00-14:57/15:00), closing auction (SZSE 14:57-15:00 only). Each phase has different dynamics.
 
 Full market structure reference: [references/market-structure.md](references/market-structure.md)
 
 ## Key Principles
 
-- **T+1 realism first.** No signal matters if it can't survive overnight holding. Always compare T+0 (idealized) vs T+1 (realistic) backtest.
-- **Cost-awareness.** CN round-trip costs are ~15-30 bps (commission + stamp duty + spread + slippage). Signal must clear this hurdle.
+- **Strategy structure first.** Signal prediction horizon != holding period. T+1 settlement, 融券 access, and hedging determine effective holding period. Match signal type to viable strategy structure.
+- **Cost-awareness.** CN round-trip costs are ~15-30 bps (T+1) or ~25-50 bps (融券T+0 with lending fee). Signal must clear the relevant cost hurdle.
 - **Session-aware.** AM and PM are different markets. Handle lunch break as a discontinuity. Report results by session.
 - **Limit-aware.** Price limits create non-linear dynamics. Detect limit-proximity regime and either adapt features or use separate models.
 - **Walk-forward only.** CN regimes shift hard (bull 2020 vs bear 2022 vs recovery 2024). Rolling-window CV preferred.
