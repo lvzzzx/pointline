@@ -58,12 +58,6 @@ class MemberJob:
 
 
 @dataclass(frozen=True)
-class MemberPayload:
-    member_job: MemberJob
-    csv_bytes: bytes
-
-
-@dataclass(frozen=True)
 class PublishedFile:
     bronze_rel_path: str
     output_path: Path

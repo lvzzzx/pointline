@@ -64,10 +64,10 @@ def test_runner_reprocesses_failed_archive_on_rerun(tmp_path: Path, monkeypatch)
     real_publish = upstream_runner.publish
     fail_once = {"enabled": True}
 
-    def flaky_publish(payload, *, bronze_root):
-        if payload.member_job.symbol == "000002" and fail_once["enabled"]:
+    def flaky_publish(member_job, *, gz_path, bronze_root):
+        if member_job.symbol == "000002" and fail_once["enabled"]:
             raise RuntimeError("simulated publish failure")
-        return real_publish(payload, bronze_root=bronze_root)
+        return real_publish(member_job, gz_path=gz_path, bronze_root=bronze_root)
 
     monkeypatch.setattr(upstream_runner, "publish", flaky_publish)
 

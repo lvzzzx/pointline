@@ -8,12 +8,11 @@ from pointline.vendors.quant360.types import Quant360ArchiveMeta
 from pointline.vendors.quant360.upstream.models import (
     ArchiveJob,
     MemberJob,
-    MemberPayload,
 )
 from pointline.vendors.quant360.upstream.publish import publish
 
 
-def _payload(csv_content: bytes) -> MemberPayload:
+def _member_job() -> MemberJob:
     archive_meta = Quant360ArchiveMeta(
         source_filename="order_new_STK_SZ_20240102.7z",
         stream_type="order_new",
@@ -32,12 +31,21 @@ def _payload(csv_content: bytes) -> MemberPayload:
         member_path="order_new_STK_SZ_20240102/000001.csv",
         symbol="000001",
     )
-    return MemberPayload(member_job=member_job, csv_bytes=csv_content)
+    return member_job
+
+
+def _staged_gz(tmp_path: Path, csv_content: bytes) -> Path:
+    staged = tmp_path / "staged" / "000001.csv.gz"
+    staged.parent.mkdir(parents=True, exist_ok=True)
+    with gzip.open(staged, mode="wb") as f:
+        f.write(csv_content)
+    return staged
 
 
 def test_publish_writes_expected_path_and_content(tmp_path: Path) -> None:
-    payload = _payload(b"col1,col2\n1,2\n")
-    published = publish(payload, bronze_root=tmp_path)
+    member_job = _member_job()
+    staged = _staged_gz(tmp_path, b"col1,col2\n1,2\n")
+    published = publish(member_job, gz_path=staged, bronze_root=tmp_path)
 
     assert published.bronze_rel_path == (
         "exchange=szse/type=order_new/date=2024-01-02/symbol=000001/000001.csv.gz"
@@ -51,8 +59,9 @@ def test_publish_writes_expected_path_and_content(tmp_path: Path) -> None:
 
 def test_publish_overwrites_existing_file(tmp_path: Path) -> None:
     """Publish always overwrites existing files (for re-processing)."""
-    first = publish(_payload(b"x,y\n1,2\n"), bronze_root=tmp_path)
-    second = publish(_payload(b"x,y\n9,9\n"), bronze_root=tmp_path)
+    member_job = _member_job()
+    first = publish(member_job, gz_path=_staged_gz(tmp_path, b"x,y\n1,2\n"), bronze_root=tmp_path)
+    second = publish(member_job, gz_path=_staged_gz(tmp_path, b"x,y\n9,9\n"), bronze_root=tmp_path)
 
     assert first.output_path == second.output_path
     assert second.already_exists is True  # Flag indicates file existed before
@@ -63,7 +72,9 @@ def test_publish_overwrites_existing_file(tmp_path: Path) -> None:
 
 
 def test_publish_handoff_to_bronze_metadata(tmp_path: Path) -> None:
-    published = publish(_payload(b"c,d\n7,8\n"), bronze_root=tmp_path)
+    member_job = _member_job()
+    staged = _staged_gz(tmp_path, b"c,d\n7,8\n")
+    published = publish(member_job, gz_path=staged, bronze_root=tmp_path)
     meta = published.to_metadata()
     assert meta.vendor == "quant360"
     assert meta.data_type == "order_new"

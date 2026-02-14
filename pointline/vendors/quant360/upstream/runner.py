@@ -61,13 +61,13 @@ def process_archive(
 
     try:
         # Extract and validate against expected members
-        for payload in iter_members(
+        for member_job, gz_path in iter_members(
             archive_job,
             member_jobs=members,
             expected_members=expected_member_paths,
         ):
             try:
-                result = publish(payload, bronze_root=bronze_root)
+                result = publish(member_job, gz_path=gz_path, bronze_root=bronze_root)
             except Exception as e:
                 last_error = e
                 failure_reason = "publish_error"
@@ -214,3 +214,14 @@ def run(
         published_files=published_files,
         failure_states=failure_states,
     )
+
+
+def run_quant360_upstream(
+    source_dir: Path,
+    bronze_root: Path,
+    ledger_path: Path,
+    *,
+    dry_run: bool = False,
+) -> RunResult:
+    """Compatibility alias for callers expecting run_quant360_upstream."""
+    return run(source_dir, bronze_root, ledger_path, dry_run=dry_run)

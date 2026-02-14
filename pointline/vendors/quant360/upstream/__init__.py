@@ -7,7 +7,6 @@ from pointline.vendors.quant360.upstream.discover import (
 )
 from pointline.vendors.quant360.upstream.extract import (
     ExtractionError,
-    extract_member,
     iter_members,
 )
 from pointline.vendors.quant360.upstream.ledger import Ledger
@@ -16,12 +15,11 @@ from pointline.vendors.quant360.upstream.models import (
     ArchiveKey,
     ArchiveState,
     MemberJob,
-    MemberPayload,
     PublishedFile,
     RunResult,
 )
 from pointline.vendors.quant360.upstream.publish import build_rel_path, publish
-from pointline.vendors.quant360.upstream.runner import process_archive, run
+from pointline.vendors.quant360.upstream.runner import process_archive, run, run_quant360_upstream
 
 __all__ = [
     "ArchiveJob",
@@ -30,16 +28,15 @@ __all__ = [
     "ExtractionError",
     "Ledger",
     "MemberJob",
-    "MemberPayload",
     "PublishedFile",
     "RunResult",
     "build_rel_path",
     "discover_archives",
-    "extract_member",
     "iter_members",
     "list_csv_members",
     "plan_members",
     "process_archive",
     "publish",
     "run",
+    "run_quant360_upstream",
 ]

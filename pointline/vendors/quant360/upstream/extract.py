@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import gzip
 import os
 import shutil
 import subprocess
@@ -12,31 +13,13 @@ from tempfile import TemporaryDirectory
 import py7zr
 
 from pointline.vendors.quant360.upstream.discover import plan_members
-from pointline.vendors.quant360.upstream.models import ArchiveJob, MemberJob, MemberPayload
+from pointline.vendors.quant360.upstream.models import ArchiveJob, MemberJob
 
 
 class ExtractionError(Exception):
     """Raised when archive extraction fails or produces unexpected results."""
 
     pass
-
-
-def extract_member(member_job: MemberJob) -> MemberPayload:
-    """Extract a single member from an archive."""
-    with TemporaryDirectory() as tmpdir:
-        root = Path(tmpdir)
-        with py7zr.SevenZipFile(member_job.archive_job.archive_path, mode="r") as archive:
-            archive.extract(path=root, targets=[member_job.member_path])
-
-        extracted = root / member_job.member_path
-        if not extracted.exists():
-            raise ExtractionError(f"Member not found: {member_job.member_path}")
-
-        os.chmod(extracted, 0o600)
-        return MemberPayload(
-            member_job=member_job,
-            csv_bytes=extracted.read_bytes(),
-        )
 
 
 def _extract_all(job: ArchiveJob, extract_root: Path) -> set[str]:
@@ -55,13 +38,52 @@ def _extract_all(job: ArchiveJob, extract_root: Path) -> set[str]:
         with py7zr.SevenZipFile(job.archive_path, mode="r") as archive:
             archive.extract(path=extract_root)
 
-    # Collect all extracted CSV files
+    # Collect all extracted CSV files (case-insensitive suffix match).
     extracted: set[str] = set()
-    for path in extract_root.rglob("*.csv"):
-        # Get relative path from extract_root
+    for path in extract_root.rglob("*"):
+        if not path.is_file() or path.suffix.lower() != ".csv":
+            continue
         rel_path = path.relative_to(extract_root)
         extracted.add(str(rel_path))
     return extracted
+
+
+def _gzip_all_csvs(extract_root: Path) -> None:
+    """Gzip all CSV files in-place under extract_root.
+
+    Prefer CLI gzip for speed, fallback to Python gzip path-by-path.
+    """
+    csv_files = sorted(
+        [
+            path
+            for path in extract_root.rglob("*")
+            if path.is_file() and path.suffix.lower() == ".csv"
+        ]
+    )
+    if not csv_files:
+        return
+
+    for csv_path in csv_files:
+        os.chmod(csv_path, 0o600)
+
+    if gzip_bin := shutil.which("gzip"):
+        # Avoid overly long argv by batching.
+        batch_size = 500
+        for i in range(0, len(csv_files), batch_size):
+            batch = csv_files[i : i + batch_size]
+            subprocess.run(
+                [gzip_bin, "-f", *[str(path) for path in batch]],
+                check=True,
+                capture_output=True,
+            )
+        return
+
+    for csv_path in csv_files:
+        payload = csv_path.read_bytes()
+        gz_path = csv_path.with_name(f"{csv_path.name}.gz")
+        with gz_path.open("wb") as f, gzip.GzipFile(filename="", mode="wb", fileobj=f) as gz:
+            gz.write(payload)
+        csv_path.unlink(missing_ok=True)
 
 
 def iter_members(
@@ -69,16 +91,11 @@ def iter_members(
     *,
     member_jobs: list[MemberJob] | None = None,
     expected_members: list[str] | None = None,
-) -> Iterator[MemberPayload]:
-    """Iterate over all members in an archive (extracts once, yields all).
+) -> Iterator[tuple[MemberJob, Path]]:
+    """Iterate over all members as staged .csv.gz files.
 
-    Args:
-        job: The archive job to process
-        member_jobs: Pre-planned member jobs (optional)
-        expected_members: List of expected member paths for validation (optional)
-
-    Raises:
-        ExtractionError: If extracted files don't match expected members
+    The archive is extracted once to a temp directory, all CSV members are gzipped
+    in place, and each planned member yields `(member_job, gz_path)`.
     """
     planned = member_jobs if member_jobs is not None else plan_members(job)
     expected = (
@@ -90,7 +107,6 @@ def iter_members(
         root = Path(tmpdir)
         extracted = _extract_all(job, root)
 
-        # Validate extraction: all expected members must be present
         missing = expected_set - extracted
         if missing:
             raise ExtractionError(
@@ -98,14 +114,13 @@ def iter_members(
                 f"Archive: {job.archive_path}, Missing: {sorted(missing)[:5]}..."
             )
 
-        # Yield payloads for all planned members
-        for member_job in planned:
-            extracted_path = root / member_job.member_path
-            if not extracted_path.exists():
-                raise ExtractionError(f"Member missing after extraction: {member_job.member_path}")
+        _gzip_all_csvs(root)
 
-            os.chmod(extracted_path, 0o600)
-            yield MemberPayload(
-                member_job=member_job,
-                csv_bytes=extracted_path.read_bytes(),
-            )
+        for member_job in planned:
+            gz_path = root / f"{member_job.member_path}.gz"
+            if not gz_path.exists():
+                raise ExtractionError(
+                    f"Gzipped member missing after extraction: {member_job.member_path}"
+                )
+            os.chmod(gz_path, 0o600)
+            yield member_job, gz_path
