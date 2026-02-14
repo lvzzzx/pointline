@@ -1,147 +1,157 @@
-# Perp-Spot Features for Crypto MFT - Idea-First Research Proposal
-
-**Persona:** Quant Researcher (MFT)
-**Status:** Proposed
-**Date:** 2026-02-13
-**Scope:** Signal research design (not implementation)
-
----
+# Perp-Spot Features for Crypto MFT: Research Proposal
 
 ## Executive Summary
 
-This proposal reframes perp-spot feature research as an **idea and falsification program**. The central thesis is that the perp-spot relationship encodes leverage demand, inventory pressure, and price-discovery hierarchy, which can generate tradable short-horizon asymmetries when evaluated with strict PIT controls and realistic execution costs.
+This proposal evaluates perp-spot dislocation features as a market-structure layer for crypto MFT. The core thesis is that basis dynamics, funding-basis inconsistencies, and perp/spot flow divergences encode leverage pressure and price-discovery hierarchy that can produce tradable asymmetries.
 
-The prior guide includes useful intuition, but concrete IC tables, implementation pathways, and "production-ready" framing are time-sensitive and should not be treated as current evidence.
+Success requires robust out-of-sample signal value and positive net contribution after realistic costs.
 
-This document defines:
+## Research Objective and Hypothesis
 
-1. Which perp-spot ideas are robust enough to keep.
-2. Which claims require fresh evidence.
-3. A falsifiable research design for MFT horizons.
-4. Decision gates for promote/iterate/kill outcomes.
+Objective: determine when perp-spot relationships provide reliable forward-return asymmetry at MFT horizons.
 
----
+Hypothesis H1: Basis extremes mean-revert conditionally.
 
-## 1. Conceptual Model
+Hypothesis H2: Funding-basis dislocations predict convergence pressure.
 
-Perp-spot signals can be organized into three linked layers:
+Hypothesis H3: Perp often leads spot in normal regimes but fails in stress/fragmented regimes.
 
-1. **State (Relative Pricing):** basis level, basis percentile, and perp/spot volume ratio describe leverage pressure and market structure.
-2. **Change (Adjustment):** basis momentum, funding-basis gap dynamics, and flow divergence changes capture convergence/divergence processes.
-3. **Interaction (Transmission):** cross-signals (flow x basis, volatility x basis, settlement proximity x dislocation) determine whether moves continue, mean-revert, or regime-shift.
+Hypothesis H4: Perp-vs-spot flow divergence signals participant segmentation and short-term resolution.
 
-Research objective: identify when perp-spot dislocations produce **cost-adjusted forward return asymmetry**.
+Hypothesis H5: Perp/spot volume asymmetry modulates feature efficacy.
 
----
+Hypothesis H6: Funding settlement windows create nonlinear behavior.
 
-## 2. Hypothesis Set
+## Scope and Non-Goals
 
-### H1: Basis Extremes Mean-Revert Conditionally
-Large positive or negative basis should mean-revert, but only under sufficient liquidity and absent shock-regime continuation.
+In scope:
 
-### H2: Funding-Basis Dislocation Predicts Convergence
-When funding-implied carry and observed basis diverge materially, subsequent returns should reflect a convergence channel.
+- Basis, carry-alignment, lead-lag, and cross-flow features.
+- Regime-conditioned evaluation and settlement-aware tests.
+- Cost-aware tradability assessment.
 
-### H3: Perp Leads Spot in Normal Regimes
-Short-horizon perp moves should contain predictive information for subsequent spot adjustment, with breakdowns during stress or venue fragmentation.
+Non-goals:
 
-### H4: Flow Divergence Signals Participant Segmentation
-Perp and spot flow disagreement should forecast short-term rebalancing pressure and potential reversal/continuation asymmetry.
+- Treating static basis level as sufficient standalone signal.
+- Ignoring venue/latency effects in lead-lag claims.
 
-### H5: Volume-Asymmetry Regime Dependence
-Signal behavior should vary with perp/spot activity ratio; extreme asymmetry may increase signal strength for some features and degrade others via execution risk.
+## Data and PIT Constraints
 
-### H6: Settlement-Window Nonlinearity
-Feature efficacy and risk should change around funding settlement windows, requiring explicit event-time conditioning.
+Primary inputs:
 
----
+- `trades` (perp + spot), `quotes`, and `derivative_ticker`.
 
-## 3. Feature Families (Idea Definitions)
+PIT constraints:
 
-1. **Basis Structure Features:** basis level, z-score/percentile, slope, persistence.
-2. **Carry Alignment Features:** funding-basis gap, gap velocity, gap persistence.
-3. **Lead-Lag Features:** perp-minus-spot short-horizon return deltas and recovery profiles.
-4. **Cross-Flow Features:** perp/spot flow divergence and flow-basis interactions.
-5. **Regime Features:** perp/spot activity ratio, liquidity stress proxies, volatility regime, settlement proximity.
+- Strict stream alignment by arrival-time semantics.
+- Explicit age/staleness controls for funding/OI-derived terms.
+- No future pricing information in spread/dislocation features.
 
-No feature family should be accepted without out-of-sample and cost-adjusted robustness.
+## Feature or Model Concept
 
----
+Feature families:
 
-## 4. Evaluation Design (Falsifiable)
+- Basis structure: level, percentile, slope, persistence.
+- Carry alignment: funding-basis gap and gap velocity.
+- Lead-lag: perp-minus-spot short-horizon return deltas.
+- Cross-flow: perp/spot flow divergence and flow-basis interactions.
+- Regime controls: activity ratio, liquidity stress, settlement proximity.
 
-### 5.1 Targets and Horizons
+## Experiment Design
 
-1. Forward returns on executable prices over multiple MFT horizons (for example 1, 3, 5, 10 bars).
-2. Optional event-time targets around settlement windows and fast dislocation episodes.
+Phase 1: standalone family testing.
 
-### 5.2 Validation Protocol
+- Evaluate each feature family on multiple MFT horizons.
+- Segment by volatility/liquidity regimes.
 
-1. Rolling or walk-forward splits.
-2. Regime segmentation by volatility, liquidity, and trend context.
-3. Time-of-day and venue-state slices for stability testing.
+Phase 2: interaction and regime conditioning.
 
-### 5.3 Metrics
+- Add settlement-event and flow context.
+- Test stability of lead-lag behavior across regimes.
 
-1. Rank IC/Pearson IC by horizon and regime.
-2. Magnitude-bucket hit rates and monotonicity checks.
-3. Cost-adjusted Sharpe/IR and turnover burden.
-4. Drawdown/tail behavior during liquidation-like regimes.
+Phase 3: net tradability.
 
-### 5.4 Leakage and Bias Controls
+- Apply realistic fees/slippage and capacity constraints.
+- Evaluate net performance and drawdown behavior.
 
-1. Strict point-in-time stream alignment.
-2. Timestamp-choice sensitivity (arrival vs exchange-time assumptions).
-3. Staleness tests for funding and sparse spot updates.
-4. Venue availability and symbol-selection survivorship checks.
+## Evaluation Metrics and Acceptance Criteria
 
-### 5.5 Kill Criteria
+Primary metrics:
 
-Demote or reject a feature family if any hold after robust testing:
+- IC metrics by horizon and regime.
+- Magnitude-bucket monotonicity and hit rates.
+- Cost-adjusted Sharpe/IR and turnover.
+- Incremental value over baseline MFT stack.
 
-1. Alpha vanishes under conservative transaction-cost assumptions.
-2. Signal sign is unstable across adjacent periods.
-3. Performance depends on rare stress windows only.
-4. Incremental value disappears once simpler baseline features are included.
+Acceptance criteria:
 
----
+- Stable out-of-sample effect across major regimes.
+- Net-positive contribution after costs.
+- Clear incremental value beyond simpler baselines.
 
-## 5. Practical Tradability Lens
+Failure criteria:
 
-Interpretation must remain execution-aware:
+- Signal depends on rare stress windows only.
+- Sign instability across adjacent periods.
+- No incrementality after baseline controls.
 
-1. Perp-spot opportunities can be capacity-limited by spot depth and venue frictions.
-2. Signals may look strong on mid-prices but fail on executable pricing.
-3. Volume-asymmetry regimes can improve predictability while worsening slippage.
-4. Settlement windows can increase both edge and tail risk.
+## Risks and Mitigations
 
----
+Risk: venue fragmentation distorts lead-lag interpretation.
 
-## 6. Decision Gates
+Mitigation: regime splits by venue state and robustness checks.
 
-### Gate 1: Data Reliability
-Perp, spot, and funding streams have sufficient coverage/freshness for PIT-safe evaluation.
+Risk: stale funding updates contaminate carry alignment.
 
-### Gate 2: Idea Validity
-At least one perp-spot feature family shows stable directional behavior across regimes.
+Mitigation: feature age tracking and staleness filters.
 
-### Gate 3: Economic Viability
-Signal value survives fees, slippage, and conservative impact assumptions.
+Risk: strong gross signals fail under executable pricing.
 
-### Gate 4: Portfolio Incrementality
-Perp-spot features improve a baseline MFT stack on risk-adjusted metrics, not only standalone IC.
+Mitigation: enforce execution-aware evaluation and cost stress tests.
 
----
+## Implementation Readiness
 
-## 7. Expected Deliverables (Idea Phase)
+If approved:
 
-1. Hypothesis scoreboard (supported / mixed / rejected by regime).
-2. Regime map showing where perp-spot signals add value vs fail.
-3. Cost-aware go/no-go recommendation for each feature family.
-4. Clean handoff notes for a future implementation phase.
+- ExecPlan for feature extraction and validation phases.
+- Reproducible perp-spot benchmark suite.
+- PIT/staleness and execution-aware test coverage.
 
----
+## Related Proposals
 
-## 8. Recommendation
+- `funding-rate-features-mft-research-proposal.md`: Funding-basis gap is a core interaction in this family.
+- `multitimeframe-features-mft-research-proposal.md`: Provides fast/slow interaction framework for lead-lag behavior.
+- `adaptive-timeframe-features-mft-research-proposal.md`: Adaptive sampling can improve dislocation-state stability.
+- `crypto-mft-research-program-proposal.md`: Program-level sequencing and promotion criteria for derivatives families.
 
-Proceed with perp-spot research as a **market-structure alpha layer** centered on dislocation dynamics, not as a single static basis signal. Prioritize conditional modeling (regime + execution constraints + settlement context), and delay production promotion until the full falsification checklist is passed on recent data.
+## Clarifying Questions for Requester
+
+- Question: Is mean-reversion or continuation the primary objective in baseline model design?
+  Why it matters: It affects label design and feature gating.
+  Default if no answer: Evaluate both, promote only regime-conditional strategy.
+
+- Question: Should settlement-window features be mandatory in Phase 1?
+  Why it matters: Event-time modeling complexity is nontrivial.
+  Default if no answer: Include settlement features in Phase 1.
+
+- Question: Is cross-venue decomposition required before approval?
+  Why it matters: Lead-lag claims can be misleading without venue controls.
+  Default if no answer: Require at least one venue-robustness check.
+
+## Decision Needed
+
+Approve this perp-spot proposal rewrite and confirm clarifying-question defaults.
+
+## Decision Log
+
+- Decision: Rewrote prior idea-first content into canonical template while preserving hypothesis set and regime emphasis.
+  Rationale: Standardized structure improves comparability and implementation handoff quality.
+  Date/Author: 2026-02-14 / Codex
+
+## Handoff to ExecPlan
+
+If approved:
+
+- Milestone 1: PIT-safe basis/carry features.
+- Milestone 2: lead-lag and cross-flow integration with regime tests.
+- Milestone 3: cost-aware net evaluation and go/no-go.

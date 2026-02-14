@@ -6,9 +6,9 @@ import py7zr
 import pytest
 
 from pointline.vendors.quant360.upstream.discover import (
-    discover_quant360_archives,
-    list_archive_csv_members,
-    plan_archive_members,
+    discover_archives,
+    list_csv_members,
+    plan_members,
 )
 
 
@@ -18,7 +18,7 @@ def _write_archive(path: Path, members: dict[str, str]) -> None:
             archive.writestr(content, member_path)
 
 
-def test_discover_quant360_archives_and_members(tmp_path: Path) -> None:
+def test_discover_archives_and_members(tmp_path: Path) -> None:
     source_dir = tmp_path / "source"
     source_dir.mkdir()
     _write_archive(
@@ -36,20 +36,20 @@ def test_discover_quant360_archives_and_members(tmp_path: Path) -> None:
         },
     )
 
-    archive_jobs = discover_quant360_archives(source_dir)
+    archive_jobs = discover_archives(source_dir)
     assert [job.archive_path.name for job in archive_jobs] == [
         "tick_new_STK_SH_20240102.7z",
         "order_new_STK_SZ_20240102.7z",
     ]
     assert all(len(job.archive_sha256) == 64 for job in archive_jobs)
 
-    csv_members = list_archive_csv_members(archive_jobs[1])
+    csv_members = list_csv_members(archive_jobs[1])
     assert csv_members == [
         "order_new_STK_SZ_20240102/000001.csv",
         "order_new_STK_SZ_20240102/000002.csv",
     ]
 
-    planned_members = plan_archive_members(archive_jobs[1])
+    planned_members = plan_members(archive_jobs[1])
     assert [job.symbol for job in planned_members] == ["000001", "000002"]
     assert [job.member_path for job in planned_members] == csv_members
 
@@ -63,4 +63,4 @@ def test_discover_rejects_invalid_archive_name(tmp_path: Path) -> None:
     )
 
     with pytest.raises(ValueError, match="Quant360 archive filename"):
-        discover_quant360_archives(tmp_path)
+        discover_archives(tmp_path)

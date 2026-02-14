@@ -1,148 +1,160 @@
-# Adaptive Timeframe Features for Crypto MFT - Idea-First Research Proposal
-
-**Persona:** Quant Researcher (MFT)
-**Status:** Proposed
-**Date:** 2026-02-13
-**Scope:** Signal research design (not implementation)
-
----
+# Adaptive Timeframe Features for Crypto MFT: Research Proposal
 
 ## Executive Summary
 
-This proposal reframes adaptive-timeframe work as an **idea and falsification program**. The core thesis is that fixed sampling granularity causes regime-dependent failure modes, while volatility-aware adaptive sampling can stabilize information density and improve short-horizon signal quality.
+This proposal evaluates adaptive sampling as a conditioning layer for crypto MFT, not a standalone alpha source. The central thesis is that fixed bar definitions fail across regimes, while volatility/liquidity-aware sampling can stabilize information density and improve cost-adjusted signal reliability.
 
-The prior guide has strong intuition, but fixed IC tables, implementation pathways, and "production-ready" framing are time-sensitive and should be treated as stale until re-validated.
+Success requires measurable out-of-sample improvement over fixed-timeframe baselines after realistic trading costs and complexity penalties.
 
-This document defines:
+## Research Objective and Hypothesis
 
-1. Which adaptive-timeframe ideas are robust enough to keep.
-2. Which claims require fresh evidence.
-3. A falsifiable research design for MFT horizons.
-4. Decision gates for promote/iterate/kill outcomes.
+Objective: test whether adaptive timeframe policies improve robustness and tradability of MFT signals across changing market regimes.
 
----
+Hypothesis H1: Adaptive sampling stabilizes feature quality by reducing regime-driven variance in information density.
 
-## 1. Conceptual Model
+Hypothesis H2: At least one regime sees meaningful predictive improvement without severe degradation elsewhere.
 
-Adaptive timeframe research can be framed as a feedback loop:
+Hypothesis H3: Transition-state features become more informative when sampling adapts to state shifts.
 
-1. **State Estimation:** infer current market state (volatility, liquidity, transition risk).
-2. **Sampling Policy:** map state to sampling granularity (bar size/frequency targets).
-3. **Signal Extraction:** compute features on the resulting event stream.
-4. **Stability Control:** monitor whether adaptation improves information quality after costs.
+Hypothesis H4: Volatility-normalized features are more robust than raw features across regimes.
 
-Research objective: determine whether adaptive sampling improves **cost-adjusted predictive stability** versus fixed sampling.
+Hypothesis H5: There is a control-speed optimum between responsiveness and noise.
 
----
+Hypothesis H6: Symbol/venue-specific calibration outperforms global policy parameters.
 
-## 2. Hypothesis Set
+## Scope and Non-Goals
 
-### H1: Information-Density Stabilization
-Adaptive sampling should reduce regime-driven variance in feature quality by stabilizing information density per bar.
+In scope:
 
-### H2: Regime-Conditional Alpha Improvement
-Feature efficacy should improve in at least one regime (for example high-volatility flow features), without severe degradation in others.
+- Adaptive policy design for bar formation and state-conditioned sampling.
+- Regime-aware evaluation of adapted vs fixed feature stacks.
+- Cost-aware comparison including turnover and slippage impacts.
 
-### H3: Transition-State Predictability
-Signals tied to regime shifts should have incremental value beyond steady-state features.
+Non-goals:
 
-### H4: Volatility-Normalized Feature Superiority
-Volatility-scaled features should outperform raw features on cross-regime robustness.
+- Live policy auto-tuning in production.
+- Full execution engine redesign.
+- Treating adaptation itself as a direct directional alpha signal.
 
-### H5: Control-Lag Tradeoff
-Faster adaptation should improve responsiveness but can increase noise; there should be an optimal adaptation speed.
+## Data and PIT Constraints
 
-### H6: Symbol-Specific Calibration Necessity
-Adaptive policies should require symbol/venue-specific calibration; global parameters should underperform calibrated ones.
+Primary inputs:
 
----
+- `trades`, `quotes`, `orderbook_updates` for state and feature estimation.
+- Derived volatility/liquidity state metrics from PIT-aligned streams.
 
-## 3. Feature Families (Idea Definitions)
+PIT constraints:
 
-1. **State Features:** realized-vol proxies, liquidity stress, bar-formation speed diagnostics.
-2. **Policy Features:** target granularity, adaptation delta, adaptation smoothness.
-3. **Regime Features:** regime label, regime age, transition flags, transition direction.
-4. **Normalized Alpha Features:** volatility-scaled flow, momentum, and reversion measures.
-5. **Control-Risk Features:** adaptation frequency, threshold drift, stability penalties.
+- Policy decisions at time `t` may use only information with `ts_local_us <= t`.
+- State labels must be computed with backward-only windows.
+- Slow/derived context must carry age metadata to avoid stale implicit lookahead.
 
-No family should be accepted without demonstrating incremental value over fixed-timeframe baselines.
+## Feature or Model Concept
 
----
+Adaptive framework components:
 
-## 4. Evaluation Design (Falsifiable)
+- State features: realized-vol proxies, liquidity stress, bar-formation speed.
+- Policy features: target granularity, adaptation delta, smoothness/penalty terms.
+- Regime features: label, age, transition direction.
+- Stabilized alpha features: vol-scaled flow/momentum/reversion computed on adaptive bars.
+- Control-risk features: adaptation frequency and threshold drift.
 
-### 5.1 Targets and Horizons
+## Experiment Design
 
-1. Forward executable returns over multiple MFT horizons (for example 1, 3, 5, 10 bars).
-2. Optional transition-event targets around state changes.
+Phase 1: State reliability and adaptation mechanics.
 
-### 5.2 Validation Protocol
+- Validate state estimation stability and latency sensitivity.
+- Compare adaptive bar statistics vs fixed bars (dispersion, stale rate).
 
-1. Walk-forward or rolling-origin validation.
-2. Regime-sliced and transition-sliced performance evaluation.
-3. Cross-symbol and cross-period stability testing.
+Phase 2: Predictive value tests.
 
-### 5.3 Metrics
+- Evaluate adapted vs fixed features on multiple MFT horizons.
+- Slice performance by volatility, trend, and liquidity regime.
 
-1. Rank IC/Pearson IC by regime and horizon.
-2. Cost-adjusted Sharpe/IR and turnover burden.
-3. Signal monotonicity by feature magnitude buckets.
-4. Sampling-stability metrics (bar duration dispersion, stale-feature rate).
+Phase 3: Economic viability.
 
-### 5.4 Leakage and Bias Controls
+- Add realistic costs and turnover constraints.
+- Evaluate whether adaptation improves net outcomes, not just gross IC.
 
-1. Strict PIT state estimation (no future data in adaptation policy).
-2. State-estimation latency sensitivity tests.
-3. Missingness/staleness stress tests in low-activity periods.
-4. Baseline parity checks against fixed-timeframe controls.
+## Evaluation Metrics and Acceptance Criteria
 
-### 5.5 Kill Criteria
+Primary metrics:
 
-Demote or reject if any hold after robust testing:
+- Rank IC / Pearson IC by horizon and regime.
+- Cost-adjusted Sharpe/IR and turnover burden.
+- Bar stability metrics (duration dispersion, stale-feature rate).
+- Incremental lift over fixed-timeframe baseline.
 
-1. Improvement disappears after realistic transaction costs.
-2. Gains come only from one short historical window.
-3. Adaptation increases instability (higher drawdown/tail risk) without clear alpha gain.
-4. Fixed-timeframe baseline matches performance with lower complexity.
+Acceptance criteria:
 
----
+- Positive out-of-sample incremental value in at least one major regime.
+- Net improvement survives realistic cost assumptions.
+- Gains are stable across multiple periods and symbols.
 
-## 5. Practical Tradability Lens
+Failure criteria:
 
-Interpretation should stay execution-aware:
+- Fixed baseline matches performance at lower complexity.
+- Improvements vanish after costs.
+- Policy behavior is unstable under small parameter perturbations.
 
-1. Adaptive sampling can improve signal freshness but may increase turnover.
-2. Rapid adaptation can amplify execution noise in stressed conditions.
-3. Policy changes should be bounded to avoid unstable live behavior.
-4. Complexity cost must be justified by robust incremental PnL after costs.
+## Risks and Mitigations
 
----
+Risk: adaptation noise and control lag produce false transitions.
 
-## 6. Decision Gates
+Mitigation: use bounded policy moves, smoothing, and latency sensitivity tests.
 
-### Gate 1: State Reliability
-State estimates are PIT-safe and stable enough to drive sampling decisions.
+Risk: overfitting policy parameters to one period.
 
-### Gate 2: Idea Validity
-At least one adaptive feature family shows robust regime-conditional improvement versus fixed baseline.
+Mitigation: rolling out-of-sample validation and parameter plateau checks.
 
-### Gate 3: Economic Viability
-Adaptive gains survive fees, slippage, and conservative impact assumptions.
+Risk: higher turnover erases gross signal gains.
 
-### Gate 4: Complexity Justification
-Net benefit from adaptation exceeds additional operational/model complexity.
+Mitigation: enforce turnover budgets and evaluate net implementation metrics.
 
----
+## Implementation Readiness
 
-## 7. Expected Deliverables (Idea Phase)
+If approved:
 
-1. Hypothesis scoreboard (supported / mixed / rejected by regime).
-2. Regime map showing when adaptation helps, is neutral, or harms.
-3. Cost-aware recommendation: adaptive deploy, fixed baseline, or hybrid policy.
-4. Handoff criteria for future implementation phase.
+- ExecPlan for phased policy build-out.
+- PIT-safe adaptive bar builder and tests.
+- Reproducible benchmark suite (adaptive vs fixed).
+- Standardized reporting for regime-level outcomes.
 
----
+## Related Proposals
 
-## 8. Recommendation
+- `multitimeframe-features-mft-research-proposal.md`: Defines fast/slow context interactions that adaptive sampling conditions.
+- `funding-rate-features-mft-research-proposal.md`: Provides slower crowding-state context that adaptive policies may stabilize.
+- `perp-spot-features-mft-research-proposal.md`: Supplies dislocation features that are sensitive to sampling regime.
+- `crypto-mft-research-program-proposal.md`: Program-level phasing and promotion criteria for adaptive work.
 
-Proceed with adaptive timeframe research as a **sampling-policy layer** rather than a standalone alpha source. Focus on whether adaptation improves cross-regime robustness after costs, and promote only if the policy shows consistent incremental value versus simpler fixed-timeframe alternatives.
+## Clarifying Questions for Requester
+
+- Question: Should adaptation optimize prediction quality first or net tradability first?
+  Why it matters: It changes objective functions and gate ordering.
+  Default if no answer: Optimize prediction first, then require net tradability for promotion.
+
+- Question: Is per-symbol calibration allowed in Phase 1?
+  Why it matters: It changes complexity and risk of overfitting.
+  Default if no answer: Use shared defaults first, then test per-symbol calibration as extension.
+
+- Question: What complexity ceiling is acceptable for policy logic?
+  Why it matters: Complex controllers may overfit and slow iteration.
+  Default if no answer: Keep policy simple (bounded threshold mapping + smoothing).
+
+## Decision Needed
+
+Approve this adaptive-timeframe proposal as template-aligned and confirm the default clarifying-question assumptions.
+
+## Decision Log
+
+- Decision: Reframed the prior idea-first note into the canonical research proposal template.
+  Rationale: Standardized structure improves comparability across proposals and implementation handoff.
+  Date/Author: 2026-02-14 / Codex
+
+## Handoff to ExecPlan
+
+If approved:
+
+- Milestone 1: PIT-safe state estimation and adaptive bar policy prototype.
+- Milestone 2: Feature recomputation on adaptive bars and baseline comparison.
+- Milestone 3: Cost-aware evaluation and go/no-go recommendation.

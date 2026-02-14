@@ -198,6 +198,12 @@ If approved, expected deliverables are:
 
 A full formula catalog and extended feature variants can remain in supplementary documents. This proposal defines the canonical decision and validation scaffold.
 
+## Related Proposals
+
+- `chinese-stock-l3-mft-features-supplement.md`: Adds continuous-session microstructure families beyond auction-centric features.
+- `cotrading-networks-chinese-stocks.md`: Provides cross-stock dependency and covariance context.
+- `t1-adverse-selection-cotrading-integration.md`: Integrates T+1 adverse-selection signals with network contagion logic.
+
 ## Clarifying Questions for Requester
 
 - Question: What is the primary target for Phase 1 and Phase 2: pure prediction quality or immediate net tradability?

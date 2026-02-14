@@ -5,37 +5,42 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
+from time import time_ns
 
 from pointline.protocols import BronzeFileMetadata
 from pointline.vendors.quant360.types import Quant360ArchiveMeta
 
 
+def _now_us() -> int:
+    return time_ns() // 1_000
+
+
 @dataclass(frozen=True)
-class Quant360ArchiveKey:
+class ArchiveKey:
     source_filename: str
     archive_sha256: str
 
-    def as_string(self) -> str:
+    def __str__(self) -> str:
         return f"{self.source_filename}:{self.archive_sha256}"
 
 
 @dataclass(frozen=True)
-class Quant360ArchiveJob:
+class ArchiveJob:
     archive_path: Path
     archive_meta: Quant360ArchiveMeta
     archive_sha256: str
 
     @property
-    def archive_key(self) -> Quant360ArchiveKey:
-        return Quant360ArchiveKey(
+    def key(self) -> ArchiveKey:
+        return ArchiveKey(
             source_filename=self.archive_meta.source_filename,
             archive_sha256=self.archive_sha256,
         )
 
 
 @dataclass(frozen=True)
-class Quant360MemberJob:
-    archive_job: Quant360ArchiveJob
+class MemberJob:
+    archive_job: ArchiveJob
     member_path: str
     symbol: str
 
@@ -53,13 +58,13 @@ class Quant360MemberJob:
 
 
 @dataclass(frozen=True)
-class Quant360MemberPayload:
-    member_job: Quant360MemberJob
+class MemberPayload:
+    member_job: MemberJob
     csv_bytes: bytes
 
 
 @dataclass(frozen=True)
-class Quant360PublishedFile:
+class PublishedFile:
     bronze_rel_path: str
     output_path: Path
     output_sha256: str
@@ -70,7 +75,7 @@ class Quant360PublishedFile:
     trading_date: date
     already_exists: bool = False
 
-    def to_bronze_file_metadata(self, *, vendor: str = "quant360") -> BronzeFileMetadata:
+    def to_metadata(self, *, vendor: str = "quant360") -> BronzeFileMetadata:
         return BronzeFileMetadata(
             vendor=vendor,
             data_type=self.data_type,
@@ -83,22 +88,24 @@ class Quant360PublishedFile:
 
 
 @dataclass(frozen=True)
-class Quant360LedgerRecord:
-    archive_key: Quant360ArchiveKey
-    status: str
-    updated_at_us: int
+class ArchiveState:
+    """State of an archive processing attempt."""
+
+    archive_key: ArchiveKey
+    status: str  # "success" or "failed"
+    member_count: int
+    published_count: int
+    updated_at_us: int = field(default_factory=_now_us)
     failure_reason: str | None = None
     error_message: str | None = None
-    member_count: int | None = None
-    published_count: int | None = None
 
 
 @dataclass(frozen=True)
-class Quant360UpstreamRunResult:
+class RunResult:
     processed_archives: int
     total_members: int
     published: int
     skipped: int
     failed: int
-    published_files: list[Quant360PublishedFile] = field(default_factory=list)
-    failure_records: list[Quant360LedgerRecord] = field(default_factory=list)
+    published_files: list[PublishedFile] = field(default_factory=list)
+    failure_states: list[ArchiveState] = field(default_factory=list)

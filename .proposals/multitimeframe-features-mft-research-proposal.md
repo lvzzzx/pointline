@@ -1,147 +1,157 @@
-# Multi-Timeframe Features for Crypto MFT - Idea-First Research Proposal
-
-**Persona:** Quant Researcher (MFT)
-**Status:** Proposed
-**Date:** 2026-02-13
-**Scope:** Signal research design (not implementation)
-
----
+# Multi-Timeframe Features for Crypto MFT: Research Proposal
 
 ## Executive Summary
 
-This proposal reframes multi-timeframe work as an **idea and falsification program**. The core thesis is that combining fast and slow views of market state can separate noise from structure, improving short-horizon decision quality when joins are PIT-safe and evaluated with execution-aware metrics.
+This proposal evaluates multi-timeframe features as a context-and-interaction layer for crypto MFT. The core thesis is that combining fast microstructure signals with slower regime context can improve signal quality, if joins are PIT-safe and context staleness is controlled.
 
-The prior guide contains strong intuition, but fixed IC tables, implementation details, and "production-ready" framing are time-sensitive and should be treated as stale until re-validated.
+Success requires incremental net value versus strong single-timeframe baselines.
 
-This document defines:
+## Research Objective and Hypothesis
 
-1. Which multi-timeframe ideas are robust enough to keep.
-2. Which claims require fresh evidence.
-3. A falsifiable research design for MFT horizons.
-4. Decision gates for promote/iterate/kill outcomes.
+Objective: test whether cross-timeframe interactions provide robust, cost-adjusted value beyond single-timeframe models.
 
----
+Hypothesis H1: Fast features perform better when conditioned on slow context.
 
-## 1. Conceptual Model
+Hypothesis H2: Fast-vs-slow divergence predicts transition states.
 
-Multi-timeframe research can be modeled as hierarchical signal decomposition:
+Hypothesis H3: Cross-timeframe alignment captures higher-quality continuation.
 
-1. **Fast Layer:** short-horizon microstructure and local flow state.
-2. **Slow Layer:** trend, volatility, and participation context.
-3. **Interaction Layer:** alignment/divergence between layers to detect continuation vs reversal.
+Hypothesis H4: Performance depends on fast/slow ratio and has an optimal band.
 
-Research objective: test whether interaction-layer features provide **incremental, cost-adjusted value** over single-timeframe models.
+Hypothesis H5: Context staleness penalties improve robustness.
 
----
+Hypothesis H6: Incremental value survives controls for strong single-timeframe baselines.
 
-## 2. Hypothesis Set
+## Scope and Non-Goals
 
-### H1: Context-Conditioned Fast Signals Outperform Raw Fast Signals
-Fast features should perform better when conditioned on slow-layer regime context.
+In scope:
 
-### H2: Divergence Predicts Regime Transition
-Large fast-vs-slow divergence should forecast either reversion or breakout depending on slow-layer trend strength.
+- Fast/slow feature design and PIT-safe context joins.
+- Interaction feature engineering and ratio sweeps.
+- Cost-aware incremental evaluation.
 
-### H3: Alignment Captures Higher-Quality Flow
-When flow and momentum align across timeframes, continuation probability should increase.
+Non-goals:
 
-### H4: Ratio-Dependent Efficacy
-Predictive value should be sensitive to fast/slow granularity ratio; too-close and too-far ratios should degrade performance.
+- Blind expansion of feature count without incremental tests.
+- Ignoring context age and staleness effects.
 
-### H5: Staleness-Adjusted Context Improves Robustness
-Context features should decay with slow-layer age; stale slow context should weaken model confidence.
+## Data and PIT Constraints
 
-### H6: Incremental Value Survives Baseline Controls
-Multi-timeframe features should retain value after controlling for strong single-timeframe baselines.
+Primary inputs:
 
----
+- Fast streams: `trades`, `quotes`, `orderbook_updates`.
+- Slow context: derived trend/volatility/participation states.
 
-## 3. Feature Families (Idea Definitions)
+PIT constraints:
 
-1. **Fast-Layer Features:** short-horizon momentum, flow imbalance, microstructure reversion.
-2. **Slow-Layer Features:** trend state, slow volatility, slow participation proxies.
-3. **Interaction Features:** momentum divergence, flow alignment/divergence, trend-confirmation cross terms.
-4. **Structure Features:** timeframe ratio diagnostics, context age/staleness, layer consistency scores.
-5. **Regime Features:** trending/ranging/transition labels and confidence weights.
+- Slow context must join backward-only with explicit age features.
+- No future bar information in fast/slow alignment.
+- Null/staleness handling required at session edges and sparse periods.
 
-No family should be accepted without proving incrementality over single-timeframe alternatives.
+## Feature or Model Concept
 
----
+Feature families:
 
-## 4. Evaluation Design (Falsifiable)
+- Fast-layer: short-horizon flow/momentum/microstructure signals.
+- Slow-layer: trend, vol regime, participation context.
+- Interaction: alignment/divergence and confirmation terms.
+- Structure: ratio diagnostics and context-age metrics.
+- Regime: trend/range/transition classification.
 
-### 5.1 Targets and Horizons
+## Experiment Design
 
-1. Forward executable returns over multiple MFT horizons (for example 1, 3, 5, 10 bars).
-2. Optional transition-event targets for divergence and alignment events.
+Phase 1: PIT join and staleness validation.
 
-### 5.2 Validation Protocol
+- Verify context alignment correctness and age decay behavior.
 
-1. Walk-forward/rolling validation with strict PIT joins.
-2. Regime-sliced results (trend, range, transition).
-3. Ratio-sweep experiments to test granularity sensitivity.
+Phase 2: interaction value tests.
 
-### 5.3 Metrics
+- Compare interaction features against single-timeframe baselines.
+- Sweep fast/slow ratio grids.
 
-1. Rank IC/Pearson IC by horizon and regime.
-2. Cost-adjusted Sharpe/IR and turnover burden.
-3. Magnitude-bucket monotonicity for interaction features.
-4. Incremental lift versus single-timeframe benchmark models.
+Phase 3: economic and robustness checks.
 
-### 5.4 Leakage and Bias Controls
+- Apply execution costs and turnover constraints.
+- Evaluate regime stability and sensitivity.
 
-1. Backward-only contextual joins (no lookahead).
-2. Slow-context staleness limits and age sensitivity checks.
-3. Null-handling controls for early/edge bars.
-4. Timestamp semantics robustness under alternative latency assumptions.
+## Evaluation Metrics and Acceptance Criteria
 
-### 5.5 Kill Criteria
+Primary metrics:
 
-Demote or reject if any hold after robust testing:
+- IC metrics by horizon/regime.
+- Incremental lift vs single-timeframe baselines.
+- Cost-adjusted Sharpe/IR and turnover.
+- Ratio-sensitivity stability profile.
 
-1. Apparent gains disappear after costs and slippage.
-2. Improvement exists only in one narrow regime.
-3. Interaction features are unstable under small ratio changes.
-4. Single-timeframe baseline matches performance at lower complexity.
+Acceptance criteria:
 
----
+- Consistent incremental value out of sample.
+- Benefits survive cost assumptions.
+- No severe brittleness to minor ratio changes.
 
-## 5. Practical Tradability Lens
+Failure criteria:
 
-Interpretation should remain execution-aware:
+- Baseline parity at lower complexity.
+- Gains collapse under realistic costs.
+- Interaction signal sign instability across windows.
 
-1. Multi-timeframe context can reduce false positives but may increase model latency and complexity.
-2. Slow-context staleness can create stale conviction if not explicitly penalized.
-3. Additional joins and features are justified only if they improve net risk-adjusted returns after costs.
-4. Capacity and turnover constraints should be assessed per timeframe design.
+## Risks and Mitigations
 
----
+Risk: leakage in fast/slow joins.
 
-## 6. Decision Gates
+Mitigation: strict backward joins, timestamp tests, and age features.
 
-### Gate 1: Data & Join Reliability
-Fast and slow streams support PIT-safe context construction with controlled staleness.
+Risk: overfitting to one timeframe ratio.
 
-### Gate 2: Idea Validity
-At least one interaction feature family shows stable directional value across regimes.
+Mitigation: ratio plateau requirement and broad sensitivity analysis.
 
-### Gate 3: Economic Viability
-Incremental lift survives fees, slippage, and conservative impact assumptions.
+Risk: added latency/complexity without net benefit.
 
-### Gate 4: Incremental Complexity Test
-Added complexity is justified by robust, persistent improvement over single-timeframe baselines.
+Mitigation: explicit complexity-adjusted acceptance gates.
 
----
+## Implementation Readiness
 
-## 7. Expected Deliverables (Idea Phase)
+If approved:
 
-1. Hypothesis scoreboard (supported / mixed / rejected by regime).
-2. Ratio-sensitivity map (where multi-timeframe adds value).
-3. Cost-aware recommendation by feature family.
-4. Handoff criteria for future implementation phase.
+- ExecPlan for PIT-safe multi-timeframe feature pipeline.
+- Ratio sweep experiment harness.
+- Standard reports for incrementality and robustness.
 
----
+## Related Proposals
 
-## 8. Recommendation
+- `adaptive-timeframe-features-mft-research-proposal.md`: Adaptive policy can reshape the fast layer used in multi-timeframe joins.
+- `funding-rate-features-mft-research-proposal.md`: Key slow-context family for multi-timeframe conditioning.
+- `perp-spot-features-mft-research-proposal.md`: Major interaction target for fast/slow dislocation features.
+- `crypto-mft-research-program-proposal.md`: Defines program-level role of meta-conditioning layers.
 
-Proceed with multi-timeframe research as a **context-and-interaction alpha layer** rather than a broad feature expansion exercise. Prioritize robust incremental lift over single-timeframe baselines, enforce strict PIT context controls, and promote only after regime-stable, cost-adjusted evidence is established.
+## Clarifying Questions for Requester
+
+- Question: Should we optimize for robustness or peak IC in Phase 1?
+  Why it matters: It changes model selection pressure.
+  Default if no answer: Optimize for robustness first.
+
+- Question: Which slow context horizon is preferred as default anchor?
+  Why it matters: It sets baseline ratio and join design.
+  Default if no answer: Use a moderate slow horizon and evaluate ratio sweeps around it.
+
+- Question: Are cross-asset context joins in baseline scope?
+  Why it matters: Cross-asset context increases complexity materially.
+  Default if no answer: Defer cross-asset context to extension phase.
+
+## Decision Needed
+
+Approve this multi-timeframe proposal rewrite and confirm default clarifying assumptions.
+
+## Decision Log
+
+- Decision: Migrated prior idea-first content into canonical template with explicit PIT and staleness controls.
+  Rationale: Multi-timeframe work is leakage-prone and needs standardized gating.
+  Date/Author: 2026-02-14 / Codex
+
+## Handoff to ExecPlan
+
+If approved:
+
+- Milestone 1: join correctness and staleness infrastructure.
+- Milestone 2: interaction features and ratio experiments.
+- Milestone 3: cost-aware incrementality decision.

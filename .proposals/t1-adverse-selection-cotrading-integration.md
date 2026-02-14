@@ -1,294 +1,162 @@
-# T+1 Adverse Selection + Co-Trading Networks: Integration Guide
+# T+1 Adverse Selection + Co-Trading Networks: Research Proposal
 
-**Purpose:** Combine micro-level T+1 features with cross-stock network dynamics for enhanced alpha generation and risk management.
+## Executive Summary
 
----
+This proposal tests whether combining single-stock T+1 adverse-selection signals with co-trading network structure improves cross-sectional prediction and portfolio risk control in Chinese equities.
 
-## 1. The Core Insight
+The core thesis is contagion: high T+1 stress in one stock can propagate through co-trading links, so cluster-aware positioning may outperform single-name signals.
 
-### Why Integration Works
+## Research Objective and Hypothesis
 
-**Individual Stock Level (T+1 Features):**
-- Tells you: "Stock A has high adverse selection risk"
-- Action: Avoid or short Stock A
+Objective: evaluate whether network-aware T+1 features improve predictive and risk-adjusted outcomes versus standalone T+1 factors.
 
-**Network Level (Co-Trading):**
-- Tells you: "Stock B, C, D trade together with Stock A"
-- Action: Risk/volatility propagates across the cluster
+Hypothesis H1: Cluster-aggregated T+1 intensity improves next-day risk prediction versus individual-stock T+1 scores.
 
-**Combined:**
-- Tells you: "Stock A has high T1CI, and its entire cluster may be affected"
-- Action: **Short the cluster**, not just one stock
+Hypothesis H2: Network-informed pressure metrics improve directional signal quality and reduce idiosyncratic noise.
 
-### The T+1 Contagion Mechanism
+Hypothesis H3: Cluster-level positioning reduces drawdown relative to single-stock expressions at similar expected return.
 
-Stock A: High T1CI (informed selling at close)
-    [Co-trading link: they trade together]
-Stock B: Normal T1CI, but co-trades with A
+Hypothesis H4: Network-aware risk constraints improve tail behavior during correlated sell-offs.
 
-Result: Adverse selection RIPPLES through the network overnight
-Next morning: Cluster-wide gap down
+## Scope and Non-Goals
 
----
+In scope:
 
-## 2. Network-Aware T+1 Features
+- Network-augmented T+1 feature definitions.
+- Cluster-aware signal and portfolio construction research.
+- Comparative backtests versus single-name T+1 baselines.
 
-### 2.1 Cluster-Aggregate T1CI (CT1CI)
+Non-goals:
 
-**Intuition:** If a stock's neighbors have high T1CI, that stock is also at risk (contagion).
+- Immediate production portfolio rollout.
+- Hard-coding fixed thresholds as universal constants.
 
-```python
-def calculate_cluster_t1ci(
-    t1ci_scores: pd.Series,
-    similarity_matrix: pd.DataFrame,
-    threshold: float = 0.3,
-) -> pd.Series:
-    ct1ci = pd.Series(index=t1ci_scores.index, dtype=float)
+## Data and PIT Constraints
 
-    for symbol in t1ci_scores.index:
-        neighbors = similarity_matrix[symbol][
-            similarity_matrix[symbol] > threshold
-        ]
-        neighbors = neighbors.drop(symbol, errors='ignore')
+Primary inputs:
 
-        if len(neighbors) == 0:
-            ct1ci[symbol] = t1ci_scores[symbol]
-            continue
+- T+1 adverse-selection features from Chinese L3 proposal outputs.
+- Co-trading similarity/network outputs from co-trading proposal.
 
-        total_weight = neighbors.sum() + 1.0
-        weights = neighbors / total_weight
-        self_weight = 1.0 / total_weight
+PIT constraints:
 
-        neighbor_contribution = sum(
-            weights[neighbor] * t1ci_scores[neighbor]
-            for neighbor in neighbors.index
-            if neighbor in t1ci_scores.index
-        )
+- Use only network states available before decision time.
+- No contamination from future cluster assignments in historical simulation.
+- Keep daily boundary semantics explicit for close-to-open features.
 
-        ct1ci[symbol] = (
-            self_weight * t1ci_scores[symbol] +
-            neighbor_contribution
-        )
+## Feature or Model Concept
 
-    return ct1ci
-```
+Core network-aware features:
 
-**Interpretation:**
-| CT1CI | Meaning | Action |
-|-------|---------|--------|
-| > 0.7 | Stock + neighbors all at risk | Short cluster |
-| 0.4-0.7 | Elevated risk via contagion | Reduce exposure |
-| < 0.4 | Low individual and network risk | Safe to hold |
+- Cluster-aggregated T+1 intensity (self + weighted neighbors).
+- Network-informed pressure ratio (local pressure blended with neighbors).
+- Cluster inventory-pressure metrics and contagion state indicators.
 
----
+Strategy concepts to evaluate:
 
-### 2.2 Network Informed Pressure Ratio (NIPR)
+- Cluster-short when aggregate T+1 stress is elevated.
+- Long/short cluster spread by relative T+1 stress.
+- Intraday co-moving fade conditioned on prior-day T+1 stress.
 
-```python
-def calculate_network_informed_pressure(
-    informed_pressure: pd.Series,
-    similarity_matrix: pd.DataFrame,
-) -> pd.Series:
-    nipr = pd.Series(index=informed_pressure.index, dtype=float)
+Risk overlays:
 
-    for symbol in informed_pressure.index:
-        partners = similarity_matrix[symbol].nlargest(5)
-        partners = partners[partners.index != symbol]
+- Cluster concentration limits and exposure caps.
+- Correlation-aware position normalization.
 
-        weighted_pressure = sum(
-            similarity * informed_pressure.get(partner, 0)
-            for partner, similarity in partners.items()
-        ) / partners.sum() if partners.sum() > 0 else 0
+## Experiment Design
 
-        nipr[symbol] = (
-            0.6 * informed_pressure[symbol] +
-            0.4 * weighted_pressure
-        )
+Phase 1: Feature validation.
 
-    return nipr
-```
+- Build and test network-aware T+1 features.
+- Compare predictive value versus standalone T+1 metrics.
 
----
+Phase 2: Strategy comparison.
 
-## 3. Trading Strategies: Combined Approach
+- Evaluate cluster vs single-name expressions.
+- Test sensitivity to network construction parameters.
 
-### Strategy 1: "Cluster Short" Network T+1
+Phase 3: Risk and robustness.
 
-**Core Idea:** Short entire clusters where aggregate T1CI is high.
+- Assess concentration and drawdown behavior.
+- Stress test in high-volatility and broad-selloff regimes.
 
-```python
-def cluster_short_signal(
-    symbol: str,
-    t1ci: pd.Series,
-    ct1ci: pd.Series,
-    nipr: pd.Series,
-    cluster_inventory: pd.Series,
-    similarity_matrix: pd.DataFrame,
-) -> dict:
-    cluster_members = get_cluster_members(symbol, similarity_matrix)
+## Evaluation Metrics and Acceptance Criteria
 
-    cluster_t1ci_mean = ct1ci[cluster_members].mean()
-    cluster_nipr_mean = nipr[cluster_members].mean()
-    cluster_inventory_total = cluster_inventory[cluster_members].sum()
+Primary metrics:
 
-    enter_short = (
-        cluster_t1ci_mean > 0.65 and
-        cluster_nipr_mean > 0.50 and
-        cluster_inventory_total > 0.02 and
-        t1ci[symbol] > 0.55
-    )
+- IC / rank-IC for next-day outcomes.
+- Portfolio Sharpe, drawdown, and turnover.
+- Cluster concentration and contagion-risk diagnostics.
+- Incremental lift vs standalone T+1 baseline.
 
-    if enter_short:
-        conviction = min(cluster_t1ci_mean, 1.0)
-        position_per_stock = conviction / len(cluster_members)
+Acceptance criteria:
 
-        return {
-            "signal": "CLUSTER_SHORT",
-            "target_stocks": cluster_members,
-            "position_per_stock": position_per_stock,
-        }
+- Network-aware features improve predictive metrics out of sample.
+- Portfolio-level drawdown improves without unacceptable return decay.
+- Results are stable across parameter ranges.
 
-    return {"signal": "NO_TRADE"}
-```
+Failure criteria:
 
-**Why Better:**
-| Approach | Expected Return | Risk |
-|----------|----------------|------|
-| Short single stock | 10-20 bps | High (idiosyncratic) |
-| Short cluster | 8-15 bps per stock | Lower (diversified) |
-
----
+- Improvement disappears after costs and turnover controls.
+- Results depend on narrow parameter choices.
+- Cluster approach increases concentration risk without return benefit.
 
-### Strategy 2: "Network Hedge" Pair Trade
+## Risks and Mitigations
 
-```python
-def network_t1_hedge_strategy(
-    universe: list[str],
-    t1ci: pd.Series,
-    clusters: pd.DataFrame,
-) -> pd.Series:
-    cluster_t1ci = {}
-    for cluster_id in clusters['cluster'].unique():
-        members = clusters[clusters['cluster'] == cluster_id]['symbol'].tolist()
-        cluster_t1ci[cluster_id] = t1ci[members].mean()
+Risk: unstable network topology leads to noisy signals.
 
-    sorted_clusters = sorted(cluster_t1ci.items(), key=lambda x: x[1])
+Mitigation: use stability filters and rolling consistency checks.
 
-    long_cluster = sorted_clusters[0][0]
-    short_cluster = sorted_clusters[-1][0]
+Risk: contagion effects are confounded by market-wide beta.
 
-    long_members = clusters[clusters['cluster'] == long_cluster]['symbol'].tolist()
-    short_members = clusters[clusters['cluster'] == short_cluster]['symbol'].tolist()
+Mitigation: include beta/market controls and matched baselines.
 
-    positions = pd.Series(index=universe, data=0.0)
+Risk: cluster trades concentrate hidden factor risk.
 
-    for symbol in long_members:
-        positions[symbol] = +0.5 / len(long_members)
+Mitigation: enforce cluster exposure limits and cross-cluster diversification.
 
-    for symbol in short_members:
-        positions[symbol] = -0.5 / len(short_members)
+## Implementation Readiness
 
-    return positions
-```
+If approved:
 
----
+- ExecPlan for feature integration and cluster strategy tests.
+- Reproducible pipeline combining T+1 and co-trading outputs.
+- Risk-report templates focused on contagion and concentration.
 
-### Strategy 3: "Co-Moving Fade" Intraday
+## Related Proposals
 
-```python
-def comoving_fade_strategy(
-    gap_opens: pd.Series,
-    t1ci_yesterday: pd.Series,
-    similarity_matrix: pd.DataFrame,
-):
-    signals = []
+- `chinese-stock-l3-mft-features.md`: Source proposal for base T+1 adverse-selection factors.
+- `cotrading-networks-chinese-stocks.md`: Source proposal for dynamic co-trading network construction.
+- `chinese-stock-l3-mft-features-supplement.md`: Additional continuous microstructure features for contagion conditioning.
 
-    for symbol_a in gap_opens.index:
-        if gap_opens[symbol_a] > -20:
-            continue
+## Clarifying Questions for Requester
 
-        partners = similarity_matrix[symbol_a][
-            similarity_matrix[symbol_a] > 0.4
-        ]
+- Question: Is the primary objective alpha improvement or risk reduction?
+  Why it matters: It changes optimization target and strategy ranking.
+  Default if no answer: Optimize for risk-adjusted return improvement.
 
-        for symbol_b, similarity in partners.items():
-            if symbol_b not in gap_opens.index:
-                continue
+- Question: Should cluster-based strategies be benchmarked against market-neutral or directional baselines?
+  Why it matters: Benchmark choice changes interpretation of improvement.
+  Default if no answer: Use both market-neutral and directional baselines.
 
-            gap_b = gap_opens[symbol_b]
+- Question: What rebalancing frequency should be canonical for first pass?
+  Why it matters: Frequency strongly affects turnover and implementation cost.
+  Default if no answer: Daily rebalancing at close-related decision point.
 
-            if gap_b > -5 and t1ci_yesterday[symbol_b] > 0.5:
-                signals.append({
-                    "symbol": symbol_b,
-                    "action": "SHORT",
-                    "expected_gap": gap_opens[symbol_a] * similarity,
-                })
+## Decision Needed
 
-    return pd.DataFrame(signals)
-```
+Approve this integration proposal rewrite and confirm default clarifying assumptions.
 
----
+## Decision Log
 
-## 4. Risk Management: Network Perspective
+- Decision: Reframed the prior guide into a decision-ready proposal with explicit PIT and robustness gates.
+  Rationale: Integration work requires clearer acceptance criteria than code-snippet guidance.
+  Date/Author: 2026-02-14 / Codex
 
-### 4.1 Cluster Concentration Limits
+## Handoff to ExecPlan
 
-```python
-def check_cluster_concentration(
-    portfolio: pd.Series,
-    clusters: pd.DataFrame,
-    max_cluster_exposure: float = 0.3,
-):
-    cluster_exposure = {}
+If approved:
 
-    for cluster_id in clusters['cluster'].unique():
-        members = clusters[clusters['cluster'] == cluster_id]['symbol'].tolist()
-        exposure = sum(abs(portfolio.get(symbol, 0)) for symbol in members)
-        cluster_exposure[cluster_id] = exposure
-
-    violations = {
-        cluster: exposure
-        for cluster, exposure in cluster_exposure.items()
-        if exposure > max_cluster_exposure
-    }
-
-    return {
-        "violations": violations,
-        "needs_rebalancing": len(violations) > 0,
-    }
-```
-
----
-
-## 5. Expected Performance
-
-### Backtest Simulation
-
-| Parameter | Value |
-|-----------|-------|
-| Universe | CSI 300 |
-| Rebalance | Daily at 14:55 |
-| Position sizing | 5-10% per cluster |
-| Transaction costs | 3 bps |
-
-### Expected Metrics
-
-| Strategy | Sharpe Ratio | Max Drawdown |
-|----------|--------------|--------------|
-| Single-Stock T+1 | 0.8-1.0 | 15-20% |
-| Network T+1 | 1.2-1.6 | 10-14% |
-
----
-
-## 6. Summary
-
-| Aspect | Standalone T+1 | Network T+1 | Improvement |
-|--------|---------------|-------------|-------------|
-| Signal strength | Single stock | Cluster aggregate | +30% |
-| Risk management | Idiosyncratic | Systematic | -40% vol |
-| Capacity | Limited | Scalable | +5x AUM |
-
-**Key Takeaways:**
-1. T+1 adverse selection propagates through co-trading networks
-2. Cluster-level signals are more stable
-3. Network diversification improves risk-adjusted returns
+- Milestone 1: network-aware T+1 feature build and validation.
+- Milestone 2: cluster strategy experiments with risk constraints.
+- Milestone 3: cost-aware robustness analysis and go/no-go.

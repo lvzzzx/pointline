@@ -1,144 +1,156 @@
-# Funding Rate Features for Crypto MFT - Idea-First Research Proposal
-
-**Persona:** Quant Researcher (MFT)
-**Status:** Proposed
-**Date:** 2026-02-13
-**Scope:** Signal research design (not implementation)
-
----
+# Funding Rate Features for Crypto MFT: Research Proposal
 
 ## Executive Summary
 
-This proposal reframes funding-rate research as an **idea and hypothesis program** rather than an implementation guide. The core thesis remains strong: funding rates are the market-implied price of leveraged directional imbalance in perpetual futures, and that imbalance can help explain short-horizon returns, squeezes, and regime shifts.
+This proposal evaluates funding-rate signals as a crowding and leverage-state layer for crypto MFT. Funding is treated as conditional context that interacts with order flow, open interest, and settlement windows rather than as a universal standalone trigger.
 
-The prior guide contains useful intuition, but its concrete IC numbers, "production-ready" framing, and implementation pathways are time-sensitive and should be treated as stale unless re-validated.
+Success requires stable, out-of-sample predictive and economic value after costs across multiple regimes.
 
-This document defines:
+## Research Objective and Hypothesis
 
-1. Which ideas are robust enough to keep.
-2. Which claims require fresh evidence.
-3. A falsifiable experiment design for MFT horizons (seconds to minutes).
-4. Decision gates for promote/iterate/kill outcomes.
+Objective: determine when funding and related leverage-state features provide actionable forward-return asymmetry.
 
----
+Hypothesis H1: Extreme funding states mean-revert conditionally as crowding unwinds.
 
-## 1. Conceptual Model
+Hypothesis H2: Funding surprises (realized vs expected) carry near-term information.
 
-Funding-rate signals should be viewed as a three-layer system:
+Hypothesis H3: Joint funding and OI expansion predicts unstable squeeze-prone states.
 
-1. **State (Crowding):** level of funding and open interest describe directional crowding and leverage inventory.
-2. **Change (Shock):** first/second differences in funding and OI capture acceleration/deceleration of crowding.
-3. **Interaction (Trigger):** order-flow or return shocks interacting with crowding state determine whether imbalance resolves via continuation or reversal.
+Hypothesis H4: Funding signals become more informative when aligned with flow imbalance.
 
-Research objective: identify when funding conditions imply **predictable forward return asymmetry** after costs.
+Hypothesis H5: Settlement proximity introduces nonlinear behavior that must be modeled explicitly.
 
----
+## Scope and Non-Goals
 
-## 2. Hypothesis Set
+In scope:
 
-### H1: Crowding Mean Reversion
-When funding is extreme relative to recent distribution, short-horizon forward returns should mean-revert as crowded positioning unwinds.
+- Funding, OI, and interaction feature engineering.
+- Settlement-aware event-time modeling.
+- Cost-aware, regime-sliced validation.
 
-### H2: Funding Surprise Information
-Unexpected funding updates (realized minus expected) should forecast near-term directional pressure, with stronger effect during high-leverage regimes.
+Non-goals:
 
-### H3: Funding-OI Pressure
-Joint increases in funding and OI indicate unstable leverage expansion and higher squeeze probability; effect direction depends on sign of crowding and concurrent flow.
+- Assuming static effect direction across all regimes.
+- Production deployment decisions without full falsification.
 
-### H4: Flow x Funding Interaction
-Order-flow imbalance aligned with costly crowding indicates informed continuation; opposite alignment suggests exhaustion and reversal.
+## Data and PIT Constraints
 
-### H5: Event-Time Convexity Near Settlement
-Predictive strength and risk profile should change nonlinearly around funding settlement windows; these windows should be modeled explicitly, not treated as generic intraday time.
+Primary inputs:
 
----
+- `derivative_ticker` for funding and OI state.
+- `trades` and `quotes` for flow and execution context.
 
-## 3. Feature Families (Idea Definitions)
+PIT constraints:
 
-1. **Level Features:** funding percentile, annualized carry proxy, cross-venue funding spread.
-2. **Delta Features:** funding change, expected-vs-realized gap, OI change and acceleration.
-3. **Interaction Features:** funding x flow imbalance, funding x volatility, funding x OI change.
-4. **Regime Features:** volatility regime, trend regime, liquidity regime, settlement proximity.
-5. **Structure Features:** persistence of extreme funding states, transition probability between funding regimes.
+- Funding/OI snapshots must be aligned to actual arrival availability.
+- No use of later settlement outcomes in pre-settlement features.
+- Feature age/staleness must be explicit for slow-updating fields.
 
-No feature should be considered valid without regime-conditional and cost-adjusted evidence.
+## Feature or Model Concept
 
----
+Feature families:
 
-## 4. Evaluation Design (Falsifiable)
+- Level: funding percentile, annualized carry, cross-venue spread.
+- Delta: funding/OI change and acceleration.
+- Interaction: funding x flow, funding x vol, funding x OI change.
+- Regime: trend, volatility, liquidity, settlement proximity.
+- Structure: persistence of extreme states and transition probabilities.
 
-### 5.1 Targets and Horizons
+## Experiment Design
 
-1. Forward mid-return or executable-return over multiple MFT horizons (for example 1, 3, 5, 10 bars).
-2. Optional event-based targets around settlement windows.
+Phase 1: standalone family validation.
 
-### 5.2 Validation Protocol
+- Test each family on multiple MFT horizons.
+- Run regime-stratified diagnostics.
 
-1. Walk-forward or rolling-origin splits.
-2. Regime-sliced evaluation (trend, volatility, liquidity, bull/bear proxies).
-3. Cross-period stability checks instead of single-window averages.
+Phase 2: interaction and incremental value.
 
-### 5.3 Metrics
+- Add flow and volatility context.
+- Compare against simpler baseline models.
 
-1. Rank IC and Pearson IC by horizon.
-2. Hit rate conditioned on signal magnitude buckets.
-3. Turnover-adjusted and cost-adjusted Sharpe/IR.
-4. Drawdown and tail-risk sensitivity during squeeze events.
+Phase 3: tradability.
 
-### 5.4 Leakage and Bias Controls
+- Apply realistic fees/slippage/impact assumptions.
+- Evaluate net metrics and drawdown behavior around squeezes.
 
-1. Strict point-in-time alignment across all streams.
-2. Timestamp-latency sensitivity tests (arrival vs exchange time choices).
-3. Missingness/staleness stress tests for funding/OI updates.
-4. Survivorship and symbol-selection robustness checks.
+## Evaluation Metrics and Acceptance Criteria
 
-### 5.5 Kill Criteria
+Primary metrics:
 
-Kill or demote a feature family if any of the following hold after robust testing:
+- Rank IC and Pearson IC by horizon/regime.
+- Magnitude-bucket hit-rate monotonicity.
+- Cost-adjusted Sharpe/IR and drawdown sensitivity.
+- Incremental lift over baseline MFT feature set.
 
-1. Signal disappears after realistic costs/slippage.
-2. Performance is concentrated in one short regime window.
-3. Direction flips unpredictably across adjacent periods.
-4. Effect is explained away by simpler baseline features.
+Acceptance criteria:
 
----
+- Stable directional value in multiple out-of-sample windows.
+- Net-positive contribution after conservative costs.
+- Clear incremental value beyond simpler crowding proxies.
 
-## 5. Practical Tradability Lens
+Failure criteria:
 
-All interpretation should be filtered through execution reality:
+- Effect concentrated in one short historical regime.
+- Sign instability across adjacent windows.
+- Incrementality disappears with baseline controls.
 
-1. Funding signals are slower than pure microstructure signals; they are context variables, not always direct triggers.
-2. Settlement windows may provide edge but also concentrate execution risk.
-3. Signals should be assessed jointly with spread, depth, and impact proxies.
-4. Position sizing should tighten when funding and volatility both become extreme.
+## Risks and Mitigations
 
----
+Risk: timestamp/staleness mistakes in funding updates.
 
-## 6. Decision Gates
+Mitigation: strict PIT alignment and staleness auditing.
 
-### Gate 1: Data Reliability
-Funding/OI coverage, freshness, and timestamp integrity are sufficient for PIT-safe research.
+Risk: regime dependence causes brittle signals.
 
-### Gate 2: Idea Validity
-At least one funding feature family shows stable directional effect across regimes before full model integration.
+Mitigation: explicit regime conditioning and per-regime evaluation gates.
 
-### Gate 3: Economic Viability
-Signal retains value after fees, slippage, and conservative impact assumptions.
+Risk: execution risk spikes near settlement.
 
-### Gate 4: Portfolio Incrementality
-Funding features improve a baseline MFT stack on risk-adjusted metrics, not just standalone IC.
+Mitigation: settlement-window stress tests and stricter cost assumptions.
 
----
+## Implementation Readiness
 
-## 7. Expected Deliverables (Idea Phase)
+If approved:
 
-1. Hypothesis scoreboard (supported / mixed / rejected by regime).
-2. Regime map of when funding features are additive vs harmful.
-3. Cost-aware recommendation: deploy, monitor-only, or archive.
-4. Clear handoff notes for a future implementation phase.
+- ExecPlan for feature build and validation pipeline.
+- Reproducible funding-state dataset and benchmark reports.
+- Tests for PIT correctness and staleness handling.
 
----
+## Related Proposals
 
-## 8. Recommendation
+- `perp-spot-features-mft-research-proposal.md`: Funding-basis dislocation hypotheses directly interact with funding state.
+- `multitimeframe-features-mft-research-proposal.md`: Defines context-join framework for funding signals with faster layers.
+- `adaptive-timeframe-features-mft-research-proposal.md`: Sampling-policy layer for regime-aware funding evaluation.
+- `crypto-mft-research-program-proposal.md`: Unified gating and incrementality standards for derivatives features.
 
-Proceed with funding-rate research as a **conditional alpha layer** rather than a universal standalone signal. Treat funding as a crowding-state variable that becomes most useful when combined with flow, OI dynamics, and settlement-event context. Avoid production promotion until the full falsification checklist is passed on recent data.
+## Clarifying Questions for Requester
+
+- Question: Should funding features be treated mainly as directional signals or conditioning signals?
+  Why it matters: It changes model architecture and acceptance criteria.
+  Default if no answer: Treat funding as conditioning-first, directional-second.
+
+- Question: Is settlement-window behavior a required core result?
+  Why it matters: It determines priority of event-time modeling effort.
+  Default if no answer: Yes, settlement nonlinearity is required.
+
+- Question: Which assets are mandatory for first validation?
+  Why it matters: Cross-asset generalization claims depend on scope.
+  Default if no answer: BTC and ETH first, one additional liquid alt as extension.
+
+## Decision Needed
+
+Approve this funding proposal rewrite and confirm the default clarifying-question assumptions.
+
+## Decision Log
+
+- Decision: Converted prior idea-first document into canonical proposal template while preserving hypothesis set.
+  Rationale: Enables consistent review and implementation gating across the proposal set.
+  Date/Author: 2026-02-14 / Codex
+
+## Handoff to ExecPlan
+
+If approved:
+
+- Milestone 1: PIT-safe funding/OI feature tables.
+- Milestone 2: interaction features and regime-sliced validation.
+- Milestone 3: cost-aware evaluation and promotion decision.
