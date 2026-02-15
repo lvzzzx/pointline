@@ -282,7 +282,7 @@ def parse_tardis_derivative_ticker(df: pl.DataFrame) -> pl.DataFrame:
     Returns:
         pl.DataFrame: Parsed DataFrame with columns:
             symbol, exchange, ts_event_us, ts_local_us, mark_price, index_price,
-            last_price, open_interest, funding_rate, predicted_funding_rate, funding_timestamp
+            last_price, open_interest, funding_rate, predicted_funding_rate, funding_ts_us
     """
 
     context = "parse_tardis_derivative_ticker"
@@ -300,7 +300,7 @@ def parse_tardis_derivative_ticker(df: pl.DataFrame) -> pl.DataFrame:
             _optional_scaled(df, column="open_interest", scale=QTY_SCALE).alias("open_interest"),
             _optional_float64(df, column="funding_rate").alias("funding_rate"),
             _optional_float64(df, column="predicted_funding_rate").alias("predicted_funding_rate"),
-            _optional_int64(df, column="funding_timestamp").alias("funding_timestamp"),
+            _optional_int64(df, column="funding_timestamp").alias("funding_ts_us"),
         ]
     ).select(
         [
@@ -314,7 +314,7 @@ def parse_tardis_derivative_ticker(df: pl.DataFrame) -> pl.DataFrame:
             "open_interest",
             "funding_rate",
             "predicted_funding_rate",
-            "funding_timestamp",
+            "funding_ts_us",
         ]
     )
 

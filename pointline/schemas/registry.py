@@ -6,7 +6,7 @@ from pointline.schemas.control import CONTROL_SPECS
 from pointline.schemas.dimensions import DIMENSION_SPECS
 from pointline.schemas.events import EVENT_SPECS
 from pointline.schemas.events_cn import CN_EVENT_SPECS
-from pointline.schemas.events_tardis import TARDIS_EVENT_SPECS
+from pointline.schemas.events_crypto import CRYPTO_EVENT_SPECS
 from pointline.schemas.types import TableSpec
 
 TABLE_SPECS: dict[str, TableSpec] = {
@@ -14,7 +14,7 @@ TABLE_SPECS: dict[str, TableSpec] = {
     for spec in (
         *EVENT_SPECS,
         *CN_EVENT_SPECS,
-        *TARDIS_EVENT_SPECS,
+        *CRYPTO_EVENT_SPECS,
         *DIMENSION_SPECS,
         *CONTROL_SPECS,
     )

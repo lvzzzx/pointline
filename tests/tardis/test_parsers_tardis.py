@@ -225,7 +225,7 @@ def test_parse_tardis_derivative_ticker_scales_prices_and_keeps_rates() -> None:
         "open_interest",
         "funding_rate",
         "predicted_funding_rate",
-        "funding_timestamp",
+        "funding_ts_us",
     ]
     assert out["exchange"][0] == "binance-futures"
     assert out["symbol"][0] == "BTCUSDT"
@@ -237,7 +237,7 @@ def test_parse_tardis_derivative_ticker_scales_prices_and_keeps_rates() -> None:
     assert out["open_interest"][0] == int(round(1234.5 * QTY_SCALE))
     assert out["funding_rate"][0] == 0.0001
     assert out["predicted_funding_rate"][0] == 0.00012
-    assert out["funding_timestamp"][0] == 1_700_003_600_000_000
+    assert out["funding_ts_us"][0] == 1_700_003_600_000_000
 
 
 def test_parse_tardis_derivative_ticker_handles_optional_columns() -> None:
@@ -257,7 +257,7 @@ def test_parse_tardis_derivative_ticker_handles_optional_columns() -> None:
     assert out["open_interest"][0] is None
     assert out["funding_rate"][0] is None
     assert out["predicted_funding_rate"][0] is None
-    assert out["funding_timestamp"][0] is None
+    assert out["funding_ts_us"][0] is None
     assert out["ts_local_us"][0] is None
 
 

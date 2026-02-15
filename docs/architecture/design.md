@@ -507,7 +507,7 @@ pointline/
 │   ├── types.py      ← ColumnSpec, TableSpec, PRICE_SCALE, QTY_SCALE
 │   ├── events.py     ← depends on types
 │   ├── events_cn.py  ← depends on types
-│   ├── events_tardis.py ← depends on types
+│   ├── events_crypto.py ← depends on types
 │   ├── dimensions.py ← depends on types
 │   ├── control.py    ← depends on types
 │   └── registry.py   ← imports all specs

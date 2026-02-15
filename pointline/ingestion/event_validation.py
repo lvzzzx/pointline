@@ -18,6 +18,12 @@ def apply_event_validations(
         return _quarantine_invalid_quotes(df)
     if table_name == "orderbook_updates":
         return _quarantine_invalid_orderbook_updates(df)
+    if table_name == "derivative_ticker":
+        return _quarantine_invalid_derivative_ticker(df)
+    if table_name == "liquidations":
+        return _quarantine_invalid_liquidations(df)
+    if table_name == "options_chain":
+        return _quarantine_invalid_options_chain(df)
     return df, df.head(0), None
 
 
@@ -65,6 +71,47 @@ def _quarantine_invalid_orderbook_updates(
         ]
     )
     return _split(df, invalid_mask, reason="invalid_orderbook_update_values")
+
+
+def _quarantine_invalid_derivative_ticker(
+    df: pl.DataFrame,
+) -> tuple[pl.DataFrame, pl.DataFrame, str | None]:
+    _require_columns(df, ("mark_price",))
+
+    invalid_mask = (pl.col("mark_price") <= 0).fill_null(True)
+    return _split(df, invalid_mask, reason="invalid_derivative_ticker_mark_price")
+
+
+def _quarantine_invalid_liquidations(
+    df: pl.DataFrame,
+) -> tuple[pl.DataFrame, pl.DataFrame, str | None]:
+    _require_columns(df, ("side", "price", "qty"))
+
+    side_norm = pl.col("side").cast(pl.Utf8).str.strip_chars().str.to_lowercase()
+    invalid_mask = pl.any_horizontal(
+        [
+            (~side_norm.is_in(["buy", "sell"])).fill_null(True),
+            (pl.col("price") <= 0).fill_null(True),
+            (pl.col("qty") <= 0).fill_null(True),
+        ]
+    )
+    return _split(df, invalid_mask, reason="invalid_liquidation_side_or_values")
+
+
+def _quarantine_invalid_options_chain(
+    df: pl.DataFrame,
+) -> tuple[pl.DataFrame, pl.DataFrame, str | None]:
+    _require_columns(df, ("option_type", "strike", "expiration_ts_us"))
+
+    type_norm = pl.col("option_type").cast(pl.Utf8).str.strip_chars().str.to_lowercase()
+    invalid_mask = pl.any_horizontal(
+        [
+            (~type_norm.is_in(["call", "put"])).fill_null(True),
+            (pl.col("strike") <= 0).fill_null(True),
+            (pl.col("expiration_ts_us") <= 0).fill_null(True),
+        ]
+    )
+    return _split(df, invalid_mask, reason="invalid_options_chain_contract")
 
 
 def _require_columns(df: pl.DataFrame, required_cols: tuple[str, ...]) -> None:
