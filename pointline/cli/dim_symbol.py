@@ -115,7 +115,11 @@ def _handle_sync(args: argparse.Namespace) -> int:
 
     # Assign IDs + validate
     result = assign_symbol_ids(merged)
-    validate(result)
+    try:
+        validate(result)
+    except ValueError as exc:
+        print(f"FAILED: {exc}")
+        return 2
     print(f"  Final: {result.height} rows")
 
     # Summary
@@ -171,7 +175,8 @@ def _handle_show(args: argparse.Namespace) -> int:
         return 0
 
     if args.exchange:
-        dim = dim.filter(pl.col("exchange") == args.exchange.strip().lower())
+        exchange_filter = args.exchange.strip().upper()
+        dim = dim.filter(pl.col("exchange").str.to_uppercase() == exchange_filter)
         if dim.is_empty():
             print(f"No symbols found for exchange '{args.exchange}'")
             return 0

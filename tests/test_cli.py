@@ -312,6 +312,48 @@ class TestDimSymbolShow:
         assert result == 0
         assert "empty" in capsys.readouterr().out
 
+    def test_exchange_filter_is_case_insensitive(self, tmp_path, capsys):
+        import polars as pl
+        from deltalake import write_deltalake
+
+        from pointline.schemas.dimensions import DIM_SYMBOL
+
+        dim = pl.DataFrame(
+            {
+                "symbol_id": [1],
+                "exchange": ["SSE"],
+                "exchange_symbol": ["600000"],
+                "canonical_symbol": ["600000.SH"],
+                "market_type": ["spot"],
+                "base_asset": [None],
+                "quote_asset": [None],
+                "valid_from_ts_us": [1_700_000_000_000_000],
+                "valid_until_ts_us": [1_800_000_000_000_000],
+                "is_current": [True],
+                "tick_size": [None],
+                "lot_size": [None],
+                "contract_size": [None],
+                "updated_at_ts_us": [1_700_000_000_000_000],
+            },
+            schema=DIM_SYMBOL.to_polars(),
+        )
+        write_deltalake(str(tmp_path / "dim_symbol"), dim.to_arrow(), mode="overwrite")
+
+        result = main(
+            [
+                "dim-symbol",
+                "show",
+                "--silver-root",
+                str(tmp_path),
+                "--exchange",
+                "sse",
+            ]
+        )
+        assert result == 0
+        out = capsys.readouterr().out
+        assert "No symbols found" not in out
+        assert "SSE" in out
+
 
 # ---------------------------------------------------------------------------
 # query (error paths)

@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import argparse
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 import polars as pl
@@ -95,8 +95,8 @@ def validate_options_chain(silver_root: Path) -> dict:
     # 4. Timestamp range validation
     ts_min = df["ts_event_us"].min()
     ts_max = df["ts_event_us"].max()
-    dt_min = datetime.fromtimestamp(ts_min / 1e6)
-    dt_max = datetime.fromtimestamp(ts_max / 1e6)
+    dt_min = datetime.fromtimestamp(ts_min / 1e6, tz=timezone.utc)
+    dt_max = datetime.fromtimestamp(ts_max / 1e6, tz=timezone.utc)
     checks["timestamp_range"] = (dt_min, dt_max)
     print("\n⏰ Timestamp range:")
     print(f"   Min: {dt_min} ({ts_min:,})")
@@ -208,8 +208,8 @@ def validate_liquidations(silver_root: Path) -> dict:
     # 4. Timestamp range
     ts_min = df["ts_event_us"].min()
     ts_max = df["ts_event_us"].max()
-    dt_min = datetime.fromtimestamp(ts_min / 1e6)
-    dt_max = datetime.fromtimestamp(ts_max / 1e6)
+    dt_min = datetime.fromtimestamp(ts_min / 1e6, tz=timezone.utc)
+    dt_max = datetime.fromtimestamp(ts_max / 1e6, tz=timezone.utc)
     checks["timestamp_range"] = (dt_min, dt_max)
     print("\n⏰ Timestamp range:")
     print(f"   Min: {dt_min}")
@@ -316,8 +316,8 @@ def validate_derivative_ticker(silver_root: Path) -> dict:
     # 4. Timestamp range
     ts_min = df["ts_event_us"].min()
     ts_max = df["ts_event_us"].max()
-    dt_min = datetime.fromtimestamp(ts_min / 1e6)
-    dt_max = datetime.fromtimestamp(ts_max / 1e6)
+    dt_min = datetime.fromtimestamp(ts_min / 1e6, tz=timezone.utc)
+    dt_max = datetime.fromtimestamp(ts_max / 1e6, tz=timezone.utc)
     checks["timestamp_range"] = (dt_min, dt_max)
     print("\n⏰ Timestamp range:")
     print(f"   Min: {dt_min}")
