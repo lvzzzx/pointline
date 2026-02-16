@@ -81,7 +81,7 @@ def derive_market_type(symbol_expr: pl.Expr) -> pl.Expr:
         .then(pl.lit("option"))
         .when(is_future)
         .then(pl.lit("future"))
-        .otherwise(pl.lit("perpetual"))
+        .otherwise(pl.lit("unknown"))
     )
 
 

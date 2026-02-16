@@ -104,7 +104,12 @@ def validate_options_chain(silver_root: Path) -> dict:
 
     # Check if timestamps align with trading_date
     df_dt = df.with_columns(
-        [pl.from_epoch(pl.col("ts_event_us") // 1e6, time_unit="s").dt.date().alias("derived_date")]
+        [
+            pl.from_epoch(pl.col("ts_event_us"), time_unit="us")
+            .dt.replace_time_zone("UTC")
+            .dt.date()
+            .alias("derived_date")
+        ]
     )
     mismatched = df_dt.filter(pl.col("derived_date") != pl.col("trading_date"))
     if len(mismatched) > 0:
@@ -337,7 +342,11 @@ def validate_derivative_ticker(silver_root: Path) -> dict:
     print(f"   Extreme funding (|rate| > 1%): {funding_outliers}")
 
     # 7. Mark vs Index spread check
-    df_spread = df.with_columns(
+    zero_index_price = df.filter(pl.col("index_price") <= 0).height
+    if zero_index_price > 0:
+        issues.append(f"{zero_index_price} rows with zero/negative index_price (spread skipped)")
+
+    df_spread = df.filter(pl.col("index_price") > 0).with_columns(
         [
             (
                 (pl.col("mark_price") - pl.col("index_price")).abs() / pl.col("index_price") * 100
@@ -406,9 +415,24 @@ def main() -> None:
     print(f"Silver root: {silver_root}")
 
     results = []
-    results.append(validate_options_chain(silver_root))
-    results.append(validate_liquidations(silver_root))
-    results.append(validate_derivative_ticker(silver_root))
+    validators = [
+        ("options_chain", validate_options_chain),
+        ("liquidations", validate_liquidations),
+        ("derivative_ticker", validate_derivative_ticker),
+    ]
+    for table_name, validator in validators:
+        try:
+            results.append(validator(silver_root))
+        except Exception as exc:
+            print(f"\n❌ Cannot validate {table_name}: {exc}")
+            results.append(
+                {
+                    "table": table_name,
+                    "checks": {},
+                    "issues": [str(exc)],
+                    "passed": False,
+                }
+            )
 
     # Final summary
     print("\n" + "=" * 60)
