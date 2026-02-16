@@ -21,7 +21,7 @@ def register(subparsers: argparse._SubParsersAction) -> None:
     sync_p.add_argument("--token", default=None, help="Vendor API token")
     sync_p.add_argument(
         "--http-url",
-        default="http://lianghua.nanyangqiankun.top",
+        default="https://api.tushare.pro",
         help="Tushare API endpoint URL",
     )
     sync_p.add_argument(

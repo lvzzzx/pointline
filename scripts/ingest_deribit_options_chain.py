@@ -209,7 +209,10 @@ def main() -> None:
     print(f"File ID:          {result.file_id}")
     print(f"Trading dates:    {result.trading_date_min} → {result.trading_date_max}")
     print(f"Elapsed:          {elapsed:.1f}s")
-    print(f"Throughput:       {result.row_count / elapsed:,.0f} rows/s")
+    if elapsed > 0:
+        print(f"Throughput:       {result.row_count / elapsed:,.0f} rows/s")
+    else:
+        print("Throughput:       N/A")
     if result.skipped:
         print("  (skipped — already ingested)")
     if result.error_message:
