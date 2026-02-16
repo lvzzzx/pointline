@@ -63,6 +63,28 @@ def build_meta(path: Path) -> BronzeFileMetadata:
     )
 
 
+def derive_market_type(symbol_expr: pl.Expr) -> pl.Expr:
+    """Classify derivative market type from symbol naming patterns."""
+    sym = symbol_expr.cast(pl.Utf8).str.strip_chars().str.to_uppercase()
+    is_perpetual = sym.str.contains(r"(^|[-_])PERPETUAL$")
+    is_option = sym.str.contains(
+        r"^[A-Z0-9_]+-[0-9]{1,2}[A-Z]{3}[0-9]{2}-[0-9]+-(C|P)$"
+    ) | sym.str.contains(r"^[A-Z0-9_]+-[0-9]{6,8}-[0-9]+-(C|P)$")
+    is_future = sym.str.contains(r"^[A-Z0-9_]+-[0-9]{1,2}[A-Z]{3}[0-9]{2}$") | sym.str.contains(
+        r"^[A-Z0-9_]+-[0-9]{6,8}$"
+    )
+
+    return (
+        pl.when(is_perpetual)
+        .then(pl.lit("perpetual"))
+        .when(is_option)
+        .then(pl.lit("option"))
+        .when(is_future)
+        .then(pl.lit("future"))
+        .otherwise(pl.lit("perpetual"))
+    )
+
+
 def bootstrap_dim_symbol_from_csv(path: Path) -> pl.DataFrame:
     """Build a minimal dim_symbol from the unique (exchange, symbol) pairs in the CSV."""
     raw = pl.read_csv(path, columns=["exchange", "symbol"], n_rows=None)
@@ -75,7 +97,7 @@ def bootstrap_dim_symbol_from_csv(path: Path) -> pl.DataFrame:
         pl.col("exchange").str.strip_chars().str.to_lowercase(),
         pl.col("symbol").str.strip_chars().alias("exchange_symbol"),
         pl.col("symbol").str.strip_chars().alias("canonical_symbol"),
-        pl.lit("perpetual").alias("market_type"),
+        derive_market_type(pl.col("symbol")).alias("market_type"),
         pl.lit(None, dtype=pl.Utf8).alias("base_asset"),
         pl.lit(None, dtype=pl.Utf8).alias("quote_asset"),
         pl.lit(None, dtype=pl.Int64).alias("tick_size"),

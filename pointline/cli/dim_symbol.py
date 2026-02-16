@@ -45,7 +45,7 @@ def register(subparsers: argparse._SubParsersAction) -> None:
 
 
 def _handle_sync(args: argparse.Namespace) -> int:
-    from datetime import datetime
+    from datetime import datetime, timezone
     from typing import Literal
 
     import polars as pl
@@ -98,7 +98,7 @@ def _handle_sync(args: argparse.Namespace) -> int:
     print(f"  Total for snapshot: {len(all_raw)}")
 
     # Transform
-    effective_ts_us = int(datetime.now().timestamp() * 1_000_000)
+    effective_ts_us = int(datetime.now(timezone.utc).timestamp() * 1_000_000)
     snapshot = stock_basic_to_snapshot(all_raw, effective_ts_us=effective_ts_us)
     print(f"  Snapshot rows: {len(snapshot)}")
 

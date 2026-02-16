@@ -2,10 +2,16 @@
 
 Usage:
     python scripts/validate_ingested_data.py
+    python scripts/validate_ingested_data.py --silver-root /path/to/silver
+
+Environment:
+    SILVER_ROOT: Optional default silver root path when --silver-root is not set.
 """
 
 from __future__ import annotations
 
+import argparse
+import os
 from datetime import datetime
 from pathlib import Path
 
@@ -15,16 +21,33 @@ from deltalake import DeltaTable
 pl.Config.set_fmt_str_lengths(50)
 pl.Config.set_tbl_width_chars(120)
 
-SILVER_ROOT = Path("/Users/zjx/data/lake/silver")
+_ENV_SILVER_ROOT = os.environ.get("SILVER_ROOT")
+DEFAULT_SILVER_ROOT = (
+    Path(_ENV_SILVER_ROOT).expanduser() if _ENV_SILVER_ROOT else Path.home() / "data/lake/silver"
+)
 
 
-def validate_options_chain() -> dict:
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Validate ingested data in silver tables.")
+    parser.add_argument(
+        "--silver-root",
+        type=Path,
+        default=DEFAULT_SILVER_ROOT,
+        help=(
+            "Silver data root path. Defaults to $SILVER_ROOT when set, "
+            "otherwise ~/data/lake/silver."
+        ),
+    )
+    return parser.parse_args()
+
+
+def validate_options_chain(silver_root: Path) -> dict:
     """Validate options_chain table."""
     print("\n" + "=" * 60)
     print("VALIDATING: options_chain (Deribit)")
     print("=" * 60)
 
-    dt = DeltaTable(SILVER_ROOT / "options_chain")
+    dt = DeltaTable(silver_root / "options_chain")
     df = pl.from_arrow(dt.to_pyarrow_table())
 
     issues = []
@@ -144,13 +167,13 @@ def validate_options_chain() -> dict:
     }
 
 
-def validate_liquidations() -> dict:
+def validate_liquidations(silver_root: Path) -> dict:
     """Validate liquidations table."""
     print("\n" + "=" * 60)
     print("VALIDATING: liquidations (Deribit)")
     print("=" * 60)
 
-    dt = DeltaTable(SILVER_ROOT / "liquidations")
+    dt = DeltaTable(silver_root / "liquidations")
     df = pl.from_arrow(dt.to_pyarrow_table())
 
     issues = []
@@ -244,13 +267,13 @@ def validate_liquidations() -> dict:
     return {"table": "liquidations", "checks": checks, "issues": issues, "passed": len(issues) == 0}
 
 
-def validate_derivative_ticker() -> dict:
+def validate_derivative_ticker(silver_root: Path) -> dict:
     """Validate derivative_ticker table."""
     print("\n" + "=" * 60)
     print("VALIDATING: derivative_ticker (BitMEX)")
     print("=" * 60)
 
-    dt = DeltaTable(SILVER_ROOT / "derivative_ticker")
+    dt = DeltaTable(silver_root / "derivative_ticker")
     df = pl.from_arrow(dt.to_pyarrow_table())
 
     issues = []
@@ -373,15 +396,19 @@ def validate_derivative_ticker() -> dict:
     }
 
 
-def main():
+def main() -> None:
+    args = parse_args()
+    silver_root = args.silver_root.expanduser()
+
     print("\n" + "=" * 60)
     print("SILVER TABLE VALIDATION REPORT")
     print("=" * 60)
+    print(f"Silver root: {silver_root}")
 
     results = []
-    results.append(validate_options_chain())
-    results.append(validate_liquidations())
-    results.append(validate_derivative_ticker())
+    results.append(validate_options_chain(silver_root))
+    results.append(validate_liquidations(silver_root))
+    results.append(validate_derivative_ticker(silver_root))
 
     # Final summary
     print("\n" + "=" * 60)
