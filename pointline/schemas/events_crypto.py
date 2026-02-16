@@ -1,4 +1,4 @@
-"""Canonical v2 crypto derivative event table specs (Tardis Tier 2)."""
+"""Canonical v2 crypto-specific event table specs."""
 
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ DERIVATIVE_TICKER = TableSpec(
         ColumnSpec("open_interest", pl.Int64, nullable=True, scale=QTY_SCALE),
         ColumnSpec("funding_rate", pl.Float64, nullable=True),
         ColumnSpec("predicted_funding_rate", pl.Float64, nullable=True),
-        ColumnSpec("funding_timestamp", pl.Int64, nullable=True),
+        ColumnSpec("funding_ts_us", pl.Int64, nullable=True),
     ),
     partition_by=("exchange", "trading_date"),
     business_keys=(),
@@ -74,4 +74,4 @@ OPTIONS_CHAIN = TableSpec(
     schema_version="v2",
 )
 
-TARDIS_EVENT_SPECS: tuple[TableSpec, ...] = (DERIVATIVE_TICKER, LIQUIDATIONS, OPTIONS_CHAIN)
+CRYPTO_EVENT_SPECS: tuple[TableSpec, ...] = (DERIVATIVE_TICKER, LIQUIDATIONS, OPTIONS_CHAIN)

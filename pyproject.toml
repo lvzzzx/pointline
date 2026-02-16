@@ -17,9 +17,8 @@ dependencies = [
   "tomli>=2.0; python_version < '3.11'",
 ]
 
-# CLI temporarily removed during v2 cleanup
-# [project.scripts]
-# pointline = "pointline.cli:main"
+[project.scripts]
+pointline = "pointline.cli:cli"
 
 [project.optional-dependencies]
 dev = [
